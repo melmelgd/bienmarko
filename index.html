@@ -419,7 +419,6 @@ button{font-family:inherit;cursor:pointer;}
   display:flex;justify-content:space-between;align-items:flex-end;gap:24px;flex-wrap:wrap;
 }
 .cottage-text{flex:1;min-width:240px;}
-.cottage-body .btn-row{flex-shrink:0;}
 
 /* ---------- split sections (pool area / location) ---------- */
 .split-inner{
@@ -566,6 +565,11 @@ button{font-family:inherit;cursor:pointer;}
   .br-desktop{display:none;}
 }
 
+@media (max-width:560px){
+  .btn-row{flex-direction:column;align-items:stretch;flex-wrap:nowrap;width:100%;}
+  .btn-row .btn{width:100%;}
+}
+
 a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{
   outline:2px solid var(--gold);outline-offset:2px;
 }
@@ -579,7 +583,7 @@ a:focus-visible,button:focus-visible,select:focus-visible,input:focus-visible{
   <div class="nav-inner">
     <a href="#home" class="brand">
       <span class="brand-icon" aria-hidden="true">
-        <img src="logo/palm-tree.png" alt="bienmarko">
+        <img src="logo/palm-tree.png" alt="BienMarko logo" width="20" height="20">
       </span>
       <span class="brand-name">BienMarko</span>
     </a>
