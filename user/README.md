@@ -21,8 +21,9 @@ includes/
                       Required first (and only) by every page — it pulls in
                       nav-items.php, icons.php, and ui.php itself.
   nav-items.php       Single source of truth for the bottom navigation.
-  icons.php           Single source of truth for icon markup (auto-generated
-                      from the Lucide icon set, ISC License).
+  icons.php           Single source of truth for icon FILE PATHS (maps a key
+                      like 'bell' to assets/icons/bell.svg). Doesn't hold
+                      any markup — render_icon() just prints an <img>.
   ui.php              render_stat_card(), render_empty_state(), page_head().
   head.php            Shared <head> + opens <body> + includes header.php.
   header.php          Shared top bar: brand, notifications, user, logout.
@@ -34,6 +35,8 @@ assets/
   css/style.css       Full design system (tokens, layout, components).
   js/app.js           Notifications dropdown, support modal, star rating,
                       logout confirm, and simulated form submissions.
+  icons/*.svg         The actual icon files (starter set, ISC-licensed
+                      Lucide icons). Replace any file to swap that icon.
 
 dashboard.php   bookings.php   receipts.php   feedback.php
 user-guide.php  profile.php    logout.php     index.php
@@ -51,6 +54,30 @@ so it reads as an app rather than a desktop admin panel.
 Edit `includes/nav-items.php` only. Every page (`bottom-nav.php`) reads that
 array, so a new tab appears everywhere at once — no page file needs to
 change.
+
+## Swapping in your own icons
+
+Icons are plain files in `assets/icons/`, mapped by `includes/icons.php`.
+To replace one:
+
+- **Same look, new art** — overwrite the file at the same path (e.g. drop
+  your own `bell.svg` in place of the starter one). Nothing else changes.
+- **Different filename or format** (`.png`, `.webp`, etc.) — edit the one
+  line for that key in `includes/icons.php` to point at your file.
+
+**One trade-off to know about:** the old build inlined icons as raw `<svg>`
+markup, which let CSS recolor them dynamically (e.g. the active nav tab's
+icon turning amber). Icons now render as `<img>` tags, and a browser treats
+an `<img>` as an opaque file — CSS can no longer reach inside and recolor
+it. The starter icons are baked in a light neutral (`#F3F0E8`) that reads
+fine everywhere on the dark theme, and active/hover states now show up as
+background tints, borders, and glow instead of the icon itself changing
+color (see the bottom nav, stat cards, and star rating for examples).
+
+If you want an icon that visually changes on a specific state, keep your
+own icons that same light/neutral color, or save two versions (e.g.
+`star.svg` and `star-active.svg`) and point `render_icon()`'s lookup at
+whichever one applies — happy to wire that up if useful.
 
 ## Wiring up real data later
 

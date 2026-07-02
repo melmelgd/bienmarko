@@ -68,7 +68,7 @@ a { color: inherit; text-decoration: none; }
 button { font-family: inherit; cursor: pointer; }
 ul { margin: 0; padding: 0; list-style: none; }
 input, textarea, select, button { font-size: 15px; }
-svg { display: block; width: 100%; height: 100%; }
+.icon { display: block; width: 100%; height: 100%; object-fit: contain; }
 
 :focus-visible {
   outline: 2px solid var(--ember-strong);
@@ -80,7 +80,6 @@ svg { display: block; width: 100%; height: 100%; }
   *, *::before, *::after { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
 }
 
-.icon-xs svg, .icon-xs { width: 16px; height: 16px; }
 
 /* ---------- Layout shell ---------- */
 main.page {
@@ -153,7 +152,7 @@ main.page {
   justify-content: center;
   transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
 }
-.topbar__icon-btn svg { width: 19px; height: 19px; }
+.topbar__icon-btn .icon { width: 19px; height: 19px; }
 .topbar__icon-btn:hover { color: var(--paper); border-color: var(--ember); }
 .topbar__logout:hover { color: var(--danger); border-color: var(--danger); }
 
@@ -234,7 +233,7 @@ main.page {
   font-size: 13px;
   flex: none;
 }
-.topbar__avatar svg { width: 16px; height: 16px; }
+.topbar__avatar .icon { width: 16px; height: 16px; }
 .topbar__username { font-weight: 600; font-size: 13.5px; color: var(--paper); }
 
 /* ---------- Bottom navigation (the "sidebar", moved below) ---------- */
@@ -274,7 +273,7 @@ main.page {
   align-items: center;
   justify-content: center;
 }
-.bottom-nav__icon svg { width: 22px; height: 22px; }
+.bottom-nav__icon .icon { width: 22px; height: 22px; }
 
 .bottom-nav__label {
   font-size: 11px;
@@ -328,7 +327,7 @@ main.page {
   transition: transform 0.1s ease, background 0.15s ease, border-color 0.15s ease, opacity .15s ease;
   white-space: nowrap;
 }
-.btn svg { width: 16px; height: 16px; }
+.btn .icon { width: 16px; height: 16px; }
 .btn:active { transform: scale(0.98); }
 
 .btn--primary { background: var(--ember); color: var(--ember-ink); }
@@ -365,19 +364,22 @@ main.page {
   background: rgba(255, 255, 255, 0.08);
   margin-bottom: 14px;
 }
-.stat-card__icon svg { width: 18px; height: 18px; }
+.stat-card__icon .icon { width: 18px; height: 18px; }
 .stat-card__label { font-size: 13px; font-weight: 600; opacity: 0.85; margin-bottom: 8px; }
 .stat-card__value { font-family: var(--font-display); font-size: 26px; font-weight: 600; line-height: 1.2; margin-bottom: 6px; }
 .stat-card__meta { font-size: 13px; opacity: 0.72; }
 
 .stat-card--olive { background: var(--moss-bg); border-color: var(--moss-border); color: var(--moss-glow); }
 .stat-card--olive .stat-card__value, .stat-card--olive .stat-card__label { color: var(--paper); }
+.stat-card--olive .stat-card__icon { background: rgba(217, 199, 117, 0.22); }
 
 .stat-card--navy { background: var(--tide-bg); border-color: var(--tide-border); color: var(--tide-glow); }
 .stat-card--navy .stat-card__value, .stat-card--navy .stat-card__label { color: var(--paper); }
+.stat-card--navy .stat-card__icon { background: rgba(134, 184, 232, 0.22); }
 
 .stat-card--purple { background: var(--dusk-bg); border-color: var(--dusk-border); color: var(--dusk-glow); }
 .stat-card--purple .stat-card__value, .stat-card--purple .stat-card__label { color: var(--paper); }
+.stat-card--purple .stat-card__icon { background: rgba(198, 171, 232, 0.22); }
 
 /* ---------- Content grid / panels ---------- */
 .content-grid {
@@ -433,7 +435,7 @@ main.page {
   align-items: center;
   justify-content: center;
 }
-.quick-action__icon svg { width: 16px; height: 16px; }
+.quick-action__icon .icon { width: 16px; height: 16px; }
 
 /* ---------- Empty states ---------- */
 .empty-state {
@@ -448,21 +450,20 @@ main.page {
   width: 56px;
   height: 56px;
   border-radius: var(--radius-full);
-  background: var(--surface-raised);
-  border: 1px solid var(--line);
-  color: var(--ember);
+  background: rgba(232, 163, 61, 0.14);
+  border: 1px solid rgba(232, 163, 61, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;
   margin-bottom: 18px;
 }
-.empty-state__icon svg { width: 26px; height: 26px; }
+.empty-state__icon .icon { width: 26px; height: 26px; }
 .empty-state__title { font-size: 17px; margin-bottom: 6px; }
 .empty-state__message { font-size: 14px; max-width: 360px; margin-bottom: 20px; }
 
 .empty-state--compact { padding: 20px 10px; }
 .empty-state--compact .empty-state__icon { width: 40px; height: 40px; margin-bottom: 10px; }
-.empty-state--compact .empty-state__icon svg { width: 18px; height: 18px; }
+.empty-state--compact .empty-state__icon .icon { width: 18px; height: 18px; }
 .empty-state--compact .empty-state__message { margin-bottom: 0; font-size: 13px; }
 
 /* ---------- Forms ---------- */
@@ -512,14 +513,14 @@ main.page {
   border-radius: var(--radius-sm);
   background: var(--surface-raised);
   border: 1px solid var(--line);
-  color: var(--paper-faint);
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: color 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.star-rating__star svg { width: 16px; height: 16px; }
-.star-rating__star.is-active { color: var(--ember); border-color: var(--ember); }
+.star-rating__star .icon { width: 16px; height: 16px; opacity: 0.55; transition: opacity 0.15s ease; }
+.star-rating__star.is-active { background: rgba(232, 163, 61, 0.18); border-color: var(--ember); }
+.star-rating__star.is-active .icon { opacity: 1; }
 
 /* ---------- FAQ / details ---------- */
 .faq-list { display: flex; flex-direction: column; gap: 10px; }
@@ -563,7 +564,7 @@ main.page {
   background: var(--surface); border: 1px solid var(--line); color: var(--paper-dim);
   display: flex; align-items: center; justify-content: center;
 }
-.modal__close svg { width: 15px; height: 15px; }
+.modal__close .icon { width: 15px; height: 15px; }
 .modal__close:hover { color: var(--paper); border-color: var(--ember); }
 .modal__body p { color: var(--paper-dim); font-size: 14px; line-height: 1.6; margin-bottom: 14px; }
 .modal__contact {
@@ -597,7 +598,7 @@ body.standalone {
   display: flex; align-items: center; justify-content: center;
   margin: 0 auto 20px;
 }
-.standalone__icon svg { width: 26px; height: 26px; }
+.standalone__icon .icon { width: 26px; height: 26px; }
 .standalone__card h1 { font-size: 24px; margin-bottom: 10px; }
 .standalone__card p { color: var(--paper-dim); font-size: 14.5px; margin-bottom: 24px; }
 
