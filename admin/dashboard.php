@@ -7,6 +7,14 @@
  * topbar.php and foot.php.
  * -----------------------------------------------------------------------
  */
+require_once __DIR__ . '/../includes/auth-common.php';
+
+bienmarko_start_session();
+bienmarko_require_role('admin');
+
+require_once __DIR__ . '/../includes/db.php';
+
+
 $active_page = 'dashboard';
 $page_title = 'Dashboard Overview';
 $breadcrumb = 'Dashboard';

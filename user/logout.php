@@ -1,4 +1,11 @@
 <?php
+require_once __DIR__ . '/../includes/auth-common.php';
+
+bienmarko_start_session();
+bienmarko_require_role('user');
+
+require_once __DIR__ . '/../includes/db.php';
+
 require __DIR__ . '/includes/bootstrap.php';
 
 // TODO: once real authentication exists, invalidate the real session/user here.
@@ -24,7 +31,7 @@ $pageTitle = 'Logged Out';
         <span class="standalone__icon"><?php render_icon('log-out'); ?></span>
         <h1>You've been logged out</h1>
         <p>Thanks for visiting <?php echo htmlspecialchars(SITE_NAME); ?>. See you again soon!</p>
-        <a href="dashboard.php" class="btn btn--primary btn--block">Back to Dashboard</a>
+        <a href="../index.php" class="btn btn--primary btn--block">Back to You</a>
     </div>
 </body>
 </html>

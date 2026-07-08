@@ -9,6 +9,12 @@
  * redirecting to a login page.
  * -----------------------------------------------------------------------
  */
+session_start();
+session_unset();   
+session_destroy(); 
+header("Location: ../index.php");
+exit();
+
 $page_title = 'Logged Out';
 ?>
 <!DOCTYPE html>
@@ -30,7 +36,7 @@ $page_title = 'Logged Out';
       <p style="color:var(--text-tertiary); font-size:0.9rem; margin-bottom:20px;">
         Thanks for using the admin dashboard. Sign back in any time to pick up where you left off.
       </p>
-      <a href="dashboard.php" class="btn btn-primary" style="justify-content:center;">Back to Dashboard</a>
+      <a href="index.php" class="btn btn-primary" style="justify-content:center;">Back to gengeng</a>
     </div>
   </div>
 </body>

@@ -1,4 +1,11 @@
 <?php
+require_once __DIR__ . '/../includes/auth-common.php';
+
+bienmarko_start_session();
+bienmarko_require_role('admin');
+
+require_once __DIR__ . '/../includes/db.php';
+
 $active_page = 'payments';
 $page_title = 'Payments';
 $breadcrumb = 'Payments';
