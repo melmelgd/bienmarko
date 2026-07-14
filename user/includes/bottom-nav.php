@@ -1,11 +1,4 @@
 <?php
-/**
- * Shared bottom navigation. This is the "sidebar", repositioned as a fixed
- * app-style tab bar and included identically on every app page. It reads
- * $navItems from nav-items.php (never redeclares it) and $currentPage from
- * the calling page to mark the active tab — that is the only thing that
- * differs between pages, and it is normalized out when diff-checking.
- */
 $current = $currentPage ?? '';
 ?>
 <nav class="bottom-nav" aria-label="Primary">

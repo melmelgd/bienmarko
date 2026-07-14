@@ -1,8 +1,4 @@
 <?php
-/**
- * Shared <head> + opens <body> + renders the top header bar.
- * Expects $pageTitle to already be set by the including page.
- */
 $pageTitle = $pageTitle ?? SITE_NAME;
 ?>
 <!DOCTYPE html>

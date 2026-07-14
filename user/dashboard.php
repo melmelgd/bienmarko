@@ -11,12 +11,6 @@ require __DIR__ . '/includes/bootstrap.php';
 $currentPage = 'dashboard';
 $pageTitle   = 'Dashboard';
 
-/**
- * Placeholder data — no booking/payment backend exists yet.
- * Everything below is empty on purpose. Once bookings are wired to a real
- * database, populate $upcomingStay / $activeBookings / $pendingPayments and
- * the cards + panel below will render the populated state automatically.
- */
 $upcomingStay    = null; // e.g. ['date' => 'May 14, 2026', 'room' => 'Barkada Room', 'nights' => 2]
 $activeBookings  = [];   // e.g. [['room' => 'Barkada Room', 'dates' => 'May 14-16, 2026']]
 $pendingPayments = [];   // e.g. [['room' => 'Barkada Room', 'amount' => 4200]]

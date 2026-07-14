@@ -4,10 +4,7 @@
  * or stat card looks and behaves identically everywhere it appears.
  */
 
-/**
- * Renders one stat card.
- * Expected keys: variant, icon, label, value, meta.
- */
+
 function render_stat_card(array $card): void
 {
     $variant = htmlspecialchars($card['variant'] ?? 'olive');

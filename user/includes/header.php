@@ -1,9 +1,4 @@
 <?php
-/**
- * Shared top header. Included identically on every app page via head.php —
- * this file never reads $currentPage, so its output is byte-for-byte
- * identical everywhere it appears (verified in the build/test pass).
- */
 $initials = '';
 if (!empty($currentUser['name'])) {
     $parts = preg_split('/\s+/', trim($currentUser['name']));

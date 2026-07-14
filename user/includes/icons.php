@@ -1,23 +1,4 @@
 <?php
-/**
- * Single source of truth for icon FILE PATHS (not markup).
- *
- * Every icon is a plain file in assets/icons/. To use your own icon set,
- * just drop a replacement file at the same path — nothing else in the
- * project needs to change. To use a different filename or format (.png,
- * .webp, etc.), edit the path on the matching line below.
- *
- * NOTE on color: because icons now render as <img> tags, the browser
- * treats each one as an opaque image — page CSS can no longer reach in
- * and recolor it (the old inline-SVG version could, via currentColor).
- * The starter icons are baked in a light, neutral color (#F3F0E8) that
- * reads on the dark theme everywhere. Active/hover states are shown with
- * background tints, borders, and glows instead of glyph-color changes.
- * If you swap in your own icons, keep them a light/neutral color for the
- * same reason (or supply light + accent variants and swap the path
- * conditionally, if you want a color-changing icon for a specific state).
- */
-
 $iconLibrary = [
     'house'            => 'assets/icons/house.svg',
     'layout-dashboard' => 'assets/icons/layout-dashboard.svg',

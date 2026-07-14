@@ -66,7 +66,11 @@ require_once __DIR__ . '/includes/ui.php';
   margin-bottom: 20px;
 }
 .acc-search { position: relative; flex: 1; min-width: 220px; max-width: 360px; }
-.acc-search .icon {
+.acc-search svg {
+  /* Targets the element type rather than a specific size class: the icon
+     here renders as acc_icon('search', 'icon-sm'), i.e. class="icon-sm",
+     which a ".icon" selector never matches (that was the bug) — this stays
+     correct even if the size class passed to acc_icon() changes later. */
   position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
   color: var(--text-muted);
 }
@@ -201,15 +205,26 @@ require_once __DIR__ . '/includes/ui.php';
   overflow: hidden;
 }
 .acc-confirm-modal { max-width: 420px; }
+/* The <form> wraps both .acc-modal-body and .acc-modal-footer, so it also
+   needs to be a flex column — otherwise the form is sized to its natural,
+   unconstrained content height, .acc-modal-body's overflow-y never actually
+   engages, and .acc-modal's overflow:hidden silently clips whatever falls
+   past max-height, including the footer's confirm button. */
+.acc-modal > form {
+  display: flex; flex-direction: column;
+  flex: 1; min-height: 0;
+}
 .acc-modal-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 20px 20px 0;
+  flex-shrink: 0;
 }
 .acc-modal-header h2 { font-size: 1.1rem; }
-.acc-modal-body { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; }
+.acc-modal-body { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; flex: 1; min-height: 0; }
 .acc-modal-footer {
   display: flex; justify-content: flex-end; gap: 10px;
   padding: 16px 20px; border-top: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .acc-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
