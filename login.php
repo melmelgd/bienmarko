@@ -1,18 +1,4 @@
 <?php
-/**
- * login.php
- * -----------------------------------------------------------------------
- * The one login page both apps share, living outside /user and /admin on
- * purpose. A single form posts to user/api/auth.php — that endpoint (and
- * its admin/api/auth.php twin, which nothing links to anymore but is kept
- * fully working) now checks the submitted credentials against both the
- * guests and admins tables and signs the person into whichever one
- * actually matches, so this page no longer needs to ask Guest-or-Staff
- * before letting someone sign in. See the docblock on
- * bienmarko_attempt_login() in includes/auth-common.php for how that
- * detection works.
- * -----------------------------------------------------------------------
- */
 
 require_once __DIR__ . '/includes/auth-common.php';
 
@@ -30,10 +16,6 @@ $errorCode    = $_GET['error'] ?? '';
 $waitSeconds  = isset($_GET['wait']) ? max(0, (int) $_GET['wait']) : 0;
 $errorMessage = $errorCode !== '' ? bienmarko_auth_message($errorCode, $waitSeconds) : '';
 
-// Fixed on purpose, not a role choice: admin/api/auth.php would work
-// exactly as well as a target here, since both endpoints now check both
-// the guests and admins tables and log the person in as whichever one
-// actually matches. See bienmarko_attempt_login().
 $loginEndpoint = 'user/api/auth.php';
 
 $siteName    = 'BienMarko';
