@@ -1,16 +1,4 @@
--- =============================================================================
--- BienMarko's Pension House — Accommodations table
--- -----------------------------------------------------------------------------
--- Optional to run by hand: admin/includes/accommodations-data.php already
--- creates this table automatically (CREATE TABLE IF NOT EXISTS) the first
--- time admin/accommodations.php or admin/api/accommodations.php loads, so
--- the feature works even if this file is never run. It's provided so the
--- schema is easy to read, review, and back up separately.
---
--- Run it (once) with something like:
---   mysql -u your_db_user -p your_database_name < accommodations.sql
--- or paste it into phpMyAdmin's SQL tab for your database.
--- =============================================================================
+--paste after schema.sql
 
 CREATE TABLE IF NOT EXISTS `accommodations` (
   `id`             INT UNSIGNED NOT NULL AUTO_INCREMENT,

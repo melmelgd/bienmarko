@@ -1,26 +1,5 @@
--- =============================================================================
--- BienMarko — Database Schema
--- -----------------------------------------------------------------------------
--- Run this against an empty database (see README.md for how to create one).
--- Safe to import via phpMyAdmin or the mysql CLI — it only creates tables
--- and seeds two demo accounts, nothing that needs elevated privileges.
---
--- Three tables:
---   guests          Guest-side login accounts (was the DEMO_GUESTS array in
---                    user/api/auth.php). Column names match the fields
---                    already used on user/profile.php (firstName, lastName,
---                    email, phone) so wiring that page up to real data later
---                    is a straight mapping.
---   admins           Staff-side login accounts (was the DEMO_ADMINS array in
---                    admin/api/auth.php). created_by tracks which admin
---                    created which — nullable, since the first admin(s)
---                    weren't created by anyone through the app.
---   login_attempts   Failed-login log used for rate limiting. Replaces the
---                    session-based counter from the previous version, so a
---                    lockout now survives a cleared session/cookie and works
---                    the same regardless of which browser or device someone
---                    is attempting from.
--- =============================================================================
+-- create database name "bienmarko"
+--then paste this inside bienmarko database. K.
 
 CREATE TABLE IF NOT EXISTS guests (
     id             INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,

@@ -9,6 +9,7 @@ return [
     'charset'  => 'utf8mb4',
 ];
 
+//wa ni labot
 // Detect environment
 $isLocal = in_array($_SERVER['HTTP_HOST'], ['localhost', '192.168.120.212']);
 
