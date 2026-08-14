@@ -25,13 +25,12 @@ try {
         $guestProfile = $gRow;
     }
 } catch (Throwable $e) {
-    // non-fatal
+   
 }
 
 $prefillName  = trim($guestProfile['first_name'] . ' ' . $guestProfile['last_name']);
 $prefillPhone = $guestProfile['phone'] ?? '';
 
-// Pull guest's existing bookings (most recent first, limit 10)
 $myBookings = [];
 try {
     $pdo = bienmarko_db();

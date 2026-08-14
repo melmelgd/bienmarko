@@ -3,23 +3,14 @@
  * admin/includes/accommodations-data.php
  * -----------------------------------------------------------------------
  * Shared data-access layer for the Accommodations feature. Single source
- * of truth for its table schema, valid statuses, and small pure helpers
- * (amenities parsing, status counts) — same "shared include" principle
- * already used by includes/ui.php, includes/nav-items.php, and
- * includes/icons.php in this project.
+ * of truth for its table schema, valid statuses, and small pure helpers.
  *
  * Used by BOTH admin/accommodations.php (page) and
- * admin/api/accommodations.php (API), so the two never drift apart.
- *
- * This is a NEW file. It does not modify includes/db.php,
- * includes/auth-common.php, or any other pre-existing file — it only
- * *calls* bienmarko_db(), which must already be loaded (via
- * require_once '.../includes/db.php') before any function here runs.
+ * admin/api/accommodations.php (API).
  * -----------------------------------------------------------------------
  */
 
-/** The only four statuses an accommodation can have. Order matters for
- *  the stat cards and the status <select> on each card. */
+/** The only four statuses an accommodation can have. */
 const ACC_STATUSES = ['available', 'booked', 'unavailable', 'maintenance'];
 
 const ACC_STATUS_LABELS = [
@@ -29,7 +20,7 @@ const ACC_STATUS_LABELS = [
     'maintenance' => 'Under Maintenance',
 ];
 
-/** Physical folder + web-relative path (from admin/*.php) for uploaded photos. */
+/** Physical folder + web-relative path for uploaded photos. */
 const ACC_UPLOAD_DIR      = __DIR__ . '/../assets/uploads/accommodations';
 const ACC_UPLOAD_URL_BASE = 'assets/uploads/accommodations';
 
@@ -37,10 +28,7 @@ const ACC_MAX_IMAGE_BYTES    = 5 * 1024 * 1024; // 5 MB
 const ACC_ALLOWED_IMAGE_EXT  = ['jpg', 'jpeg', 'png', 'webp'];
 
 /**
- * Creates the accommodations table if it doesn't exist yet. Safe to call
- * on every request — CREATE TABLE IF NOT EXISTS is a cheap no-op once the
- * table is there. Means the feature works immediately even if nobody
- * manually runs database/accommodations.sql first.
+ * Creates the accommodations table if it doesn't exist yet.
  */
 function acc_ensure_table(): void
 {
@@ -61,10 +49,47 @@ function acc_ensure_table(): void
             `description` TEXT NULL,
             `amenities` TEXT NULL,
             `image_filename` VARCHAR(255) NULL,
+            `category_id` INT UNSIGNED NULL DEFAULT NULL,
             `created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             `updated_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
-            KEY `idx_status` (`status`)
+            KEY `idx_status` (`status`),
+            KEY `idx_category` (`category_id`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    // If the table already existed without category_id, add the column.
+    try {
+        $pdo->exec("ALTER TABLE `accommodations` ADD COLUMN `category_id` INT UNSIGNED NULL DEFAULT NULL");
+        $pdo->exec("ALTER TABLE `accommodations` ADD KEY `idx_category` (`category_id`)");
+    } catch (PDOException $e) {
+        // Column already exists — ignore duplicate column error (1060).
+    }
+
+    $done = true;
+}
+
+/**
+ * Creates the accommodation_categories table if it doesn't exist yet.
+ */
+function acc_ensure_categories_table(): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+
+    $pdo = bienmarko_db();
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS `accommodation_categories` (
+            `id`          INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `name`        VARCHAR(100) NOT NULL,
+            `description` TEXT NULL,
+            `sort_order`  SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+            `created_at`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            `updated_at`  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            UNIQUE KEY `uq_cat_name` (`name`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
 
@@ -161,19 +186,53 @@ function acc_status_counts(): array
 }
 
 /**
- * A few extra inline icons this feature needs that aren't in the shared
- * admin/includes/icons.php registry. Kept local here — same reasoning
- * admin/create-admin.php uses for its own page-scoped <style> block
- * ("matched here rather than editing that file") — rather than adding
- * to that shared file. Falls through to the shared icon() helper for
- * every other name, so page code can call acc_icon() uniformly.
+ * Returns all categories ordered by sort_order then name.
+ */
+function acc_get_categories(): array
+{
+    $pdo = bienmarko_db();
+    return $pdo->query(
+        'SELECT `id`, `name`, `description`, `sort_order`
+         FROM `accommodation_categories`
+         ORDER BY `sort_order` ASC, `name` ASC'
+    )->fetchAll();
+}
+
+/**
+ * Returns all accommodations keyed by category_id (null = uncategorised).
+ * Each item includes room count per category.
+ */
+function acc_get_accommodations_by_category(): array
+{
+    $pdo = bienmarko_db();
+    $rows = $pdo->query(
+        'SELECT `id`, `name`, `type`, `capacity`, `price`, `status`,
+                `description`, `amenities`, `image_filename`, `category_id`
+         FROM `accommodations`
+         ORDER BY `category_id` ASC, `name` ASC'
+    )->fetchAll();
+
+    $map = [];
+    foreach ($rows as $row) {
+        $key = $row['category_id'] ?? 'null';
+        $map[$key][] = $row;
+    }
+
+    return $map;
+}
+
+/**
+ * Extra inline icons this feature needs that aren't in the shared icons.php.
+ * Falls through to the shared icon() helper for everything else.
  */
 function acc_icon(string $name, string $class = 'icon'): string
 {
     $extra = [
-        'edit'   => '<path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>',
-        'trash'  => '<polyline points="4 7 20 7"></polyline><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"></path><path d="M19 7l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
-        'search' => '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.2" y2="16.2"></line>',
+        'edit'     => '<path d="M12 20h9"></path><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"></path>',
+        'trash'    => '<polyline points="4 7 20 7"></polyline><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"></path><path d="M19 7l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
+        'search'   => '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.2" y2="16.2"></line>',
+        'folder'   => '<path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>',
+        'tag'      => '<path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"></path><line x1="7" y1="7" x2="7.01" y2="7"></line>',
     ];
 
     if (isset($extra[$name])) {
