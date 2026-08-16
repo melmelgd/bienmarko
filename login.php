@@ -115,7 +115,7 @@ $siteTagline = "Bien Marko's Pension House";
             </form>
         </div>
 
-        <p class="lobby__footnote">Trouble signing in? Ask the front desk.</p>
+        <p class="lobby__footnote">Don't have an account? <a href="register.php">Sign up</a></p>
     </div>
 </div>
 <script src="assets/js/login.js"></script>

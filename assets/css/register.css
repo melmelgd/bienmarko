@@ -1,0 +1,229 @@
+/* =========================================================
+   register.css
+   Register-specific overrides that layer on top of login.css.
+   All base tokens, lobby layout, field, and btn styles come
+   from login.css — nothing is duplicated here.
+   ========================================================= */
+
+/* ---- Footnote link ---- */
+.lobby__footnote-link {
+    color: var(--accent, #c9860a);
+    font-weight: 600;
+    text-decoration: none;
+    transition: opacity 0.15s;
+}
+
+.lobby__footnote-link:hover {
+    opacity: 0.75;
+    text-decoration: underline;
+}
+
+/* ---- Password strength indicator ---- */
+.password-strength {
+    display: none;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.45rem;
+}
+
+.password-strength.is-visible {
+    display: flex;
+}
+
+.password-strength__bar {
+    flex: 1;
+    height: 4px;
+    background: rgba(0, 0, 0, 0.1);
+    border-radius: 99px;
+    overflow: hidden;
+}
+
+.password-strength__fill {
+    display: block;
+    height: 100%;
+    border-radius: 99px;
+    width: 0;
+    transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+.password-strength__fill[data-level="1"] { width: 25%;  background: #ef4444; }
+.password-strength__fill[data-level="2"] { width: 50%;  background: #f97316; }
+.password-strength__fill[data-level="3"] { width: 75%;  background: #eab308; }
+.password-strength__fill[data-level="4"] { width: 100%; background: #22c55e; }
+
+.password-strength__label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+    min-width: 3.5rem;
+    text-align: right;
+    color: var(--ink-muted, #6b7280);
+}
+
+.password-strength__label[data-level="1"] { color: #ef4444; }
+.password-strength__label[data-level="2"] { color: #f97316; }
+.password-strength__label[data-level="3"] { color: #eab308; }
+.password-strength__label[data-level="4"] { color: #22c55e; }
+
+/* ==========================================================
+   Success overlay
+   Full-screen backdrop that slides in after a successful
+   registration API response. Sequence (driven by JS classes):
+     1. .is-visible  → overlay fades in, spinner spins
+     2. .is-done     → spinner fades out, checkmark draws in
+     3. .has-text    → title + subtitle fade up into view
+   ========================================================== */
+.reg-success {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+
+    /* Backdrop */
+    background: rgba(15, 12, 8, 0.82);
+    backdrop-filter: blur(6px);
+    -webkit-backdrop-filter: blur(6px);
+
+    /* Hidden by default — no pointer events, invisible */
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.35s ease;
+}
+
+.reg-success.is-visible {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+/* White card in the centre */
+.reg-success__box {
+    background: #fff;
+    border-radius: 20px;
+    padding: 2.75rem 3rem;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+    min-width: 260px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.22);
+
+    /* Subtle scale-in when overlay opens */
+    transform: scale(0.88);
+    transition: transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.reg-success.is-visible .reg-success__box {
+    transform: scale(1);
+}
+
+/* Icon wrapper — fixed size so spinner and check occupy the same space */
+.reg-success__icon-wrap {
+    position: relative;
+    width: 72px;
+    height: 72px;
+    margin-bottom: 1.4rem;
+}
+
+/* ---- Spinner ---- */
+.reg-success__spinner {
+    position: absolute;
+    inset: 0;
+    width: 72px;
+    height: 72px;
+    animation: reg-spin 0.9s linear infinite;
+    opacity: 1;
+    transition: opacity 0.25s ease;
+}
+
+.reg-success__spinner circle {
+    stroke: var(--accent, #c9860a);
+    stroke-dasharray: 80, 200;
+    stroke-dashoffset: 0;
+    stroke-linecap: round;
+}
+
+.reg-success.is-done .reg-success__spinner {
+    opacity: 0;
+    animation: none;
+}
+
+@keyframes reg-spin {
+    100% { transform: rotate(360deg); }
+}
+
+/* ---- Checkmark ---- */
+.reg-success__check {
+    position: absolute;
+    inset: 0;
+    width: 72px;
+    height: 72px;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.reg-success__check circle {
+    stroke: #22c55e;
+    stroke-dasharray: 166;
+    stroke-dashoffset: 166;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 0.5s ease 0.1s;
+}
+
+.reg-success__check path {
+    stroke: #22c55e;
+    stroke-dasharray: 48;
+    stroke-dashoffset: 48;
+    transition: stroke-dashoffset 0.4s ease 0.45s;
+}
+
+.reg-success.is-done .reg-success__check {
+    opacity: 1;
+}
+
+/* Trigger the SVG path animations once .is-done is added */
+.reg-success.is-done .reg-success__check circle {
+    stroke-dashoffset: 0;
+}
+
+.reg-success.is-done .reg-success__check path {
+    stroke-dashoffset: 0;
+}
+
+/* ---- Title ---- */
+.reg-success__title {
+    font-family: 'Fraunces', Georgia, serif;
+    font-size: 1.45rem;
+    font-weight: 700;
+    color: #111;
+    margin: 0 0 0.35rem;
+
+    opacity: 0;
+    transform: translateY(10px);
+    transition: opacity 0.35s ease, transform 0.35s ease;
+}
+
+.reg-success.has-text .reg-success__title {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+/* ---- Subtitle ---- */
+.reg-success__sub {
+    font-family: 'Inter', sans-serif;
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin: 0;
+
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.35s ease 0.1s, transform 0.35s ease 0.1s;
+}
+
+.reg-success.has-text .reg-success__sub {
+    opacity: 1;
+    transform: translateY(0);
+}

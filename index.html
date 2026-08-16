@@ -25,8 +25,8 @@
         <a href="#contact">Contact</a>
     </nav>
     <div class="header-actions">
-        <a class="nav-link" href="login.html">Log in</a>
-        <a class="gold-button small" href="#signup">Sign up</a>
+        <a class="nav-link" href="user/login.php">Log in</a>
+        <a class="gold-button small" href="user/register.php">Sign up</a>
     </div>
     <button class="hamburger" id="hamburger" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenu">
         <span></span><span></span><span></span>
@@ -39,8 +39,8 @@
     <a href="#about">About</a>
     <a href="#contact">Contact</a>
     <div class="mobile-menu-actions">
-        <a class="nav-link" href="login.html">Log in</a>
-        <a class="gold-button" href="#signup">Sign up</a>
+        <a class="nav-link" href="user/login.php">Log in</a>
+        <a class="gold-button" href="user/register.php">Sign up</a>
     </div>
 </nav>
 
@@ -128,6 +128,23 @@
         </div>
     </section>
 
+    <!-- ═══════════════════════════════════════════════════════════
+         FEATURED ROOMS — dynamically populated from the database.
+         The section is hidden until JS confirms there are featured
+         rooms; if none are set, it stays hidden cleanly.
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="featured-section" id="featured" aria-label="Featured Rooms" hidden>
+        <div class="section-title">
+            <span>Handpicked for You</span>
+            <h2>Featured Rooms</h2>
+        </div>
+        <!-- Cards injected by script.js -->
+        <div class="featured-grid" id="featuredGrid" role="list"></div>
+        <div class="center-action">
+            <a class="outline-dark" href="#rooms">View All Accommodations</a>
+        </div>
+    </section>
+
     <section class="split-feature">
         <div class="split-copy">
             <p class="eyebrow">Cool Off, Your Way</p>
@@ -163,7 +180,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 2,000</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Barkada Room">Book Now</a>
                     </div>
                 </div>
                 <h3>Barkada Room</h3>
@@ -177,7 +194,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 1,500</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Standard Room">Book Now</a>
                     </div>
                 </div>
                 <h3>Standard Room</h3>
@@ -191,7 +208,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 1,000</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Couple Room">Book Now</a>
                     </div>
                 </div>
                 <h3>Couple Room</h3>
@@ -205,7 +222,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 10,000</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Pavilion">Book Now</a>
                     </div>
                 </div>
                 <h3>Pavilion</h3>
@@ -219,7 +236,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 5,000</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Coffee Venue">Book Now</a>
                     </div>
                 </div>
                 <h3>Coffee Venue</h3>
@@ -233,7 +250,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 1,000</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Veranda">Book Now</a>
                     </div>
                 </div>
                 <h3>Veranda</h3>
@@ -247,7 +264,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 300</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Nepa Hut 1">Book Now</a>
                     </div>
                 </div>
                 <h3>Nepa Hut 1</h3>
@@ -261,7 +278,7 @@
                     <div class="room-hover">
                         <span>From</span>
                         <strong>PHP 250</strong>
-                        <a href="#booking-strip">View Details</a>
+                        <a href="#" data-book-room="Pool Access">Book Now</a>
                     </div>
                 </div>
                 <h3>Pool Access</h3>
@@ -392,6 +409,9 @@
     </span>
 </div>
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     MAP MODAL
+     ═══════════════════════════════════════════════════════════════════ -->
 <div class="map-modal" data-map-modal aria-hidden="true">
     <div class="map-dialog" role="dialog" aria-modal="true" aria-labelledby="map-title">
         <button class="modal-close" type="button" data-close-map aria-label="Close map">&times;</button>
@@ -404,6 +424,64 @@
         <iframe title="Bien Marko's Pension House map" data-map-frame src="https://www.google.com/maps?q=Bien%20Marko%27s%20Pension%20House%2C%20Tabango%2C%20Leyte&output=embed" loading="lazy"></iframe>
     </div>
 </div>
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     BOOKING OPTION MODAL
+     Shown when a guest clicks "Book Now" on any room card.
+     Lets them choose: proceed as registered user (login/register)
+     or continue as guest (no account required).
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="booking-option-modal" id="bookingOptionModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="bookingOptionTitle">
+    <div class="booking-option-dialog">
+        <button class="modal-close" type="button" id="bookingOptionClose" aria-label="Close">&times;</button>
+
+        <div class="booking-option-header">
+            <p class="eyebrow">Ready to Book?</p>
+            <h2 id="bookingOptionTitle">How would you like to continue?</h2>
+            <p id="bookingOptionRoomName" class="booking-option-room"></p>
+        </div>
+
+        <div class="booking-option-cards">
+            <!-- Option A: Login / register -->
+            <div class="booking-option-card booking-option-card--account">
+                <div class="booking-option-card-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path></svg>
+                </div>
+                <h3>Book with Account</h3>
+                <ul class="booking-option-perks">
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        Modify or cancel your booking
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        View booking history &amp; receipts
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        Submit guest feedback
+                    </li>
+                </ul>
+                <div class="booking-option-actions">
+                    <a class="gold-button" id="bookingLoginBtn" href="user/login.php">Log in</a>
+                    <a class="outline-dark" id="bookingRegisterBtn" href="user/register.php">Create Account</a>
+                </div>
+            </div>
+
+            <!-- Option B: Guest booking -->
+            <div class="booking-option-card booking-option-card--guest">
+                <div class="booking-option-card-icon booking-option-card-icon--muted">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                </div>
+                <h3>Continue as Guest</h3>
+                <p class="booking-option-guest-note">No account needed. You can still make a reservation — just note that modifications and cancellations will require contacting us directly.</p>
+                <a class="outline-dark booking-option-guest-btn" id="bookingGuestBtn" href="user/book.php">Continue as Guest</a>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Backdrop for booking option modal -->
+<div class="booking-option-backdrop" id="bookingOptionBackdrop" aria-hidden="true"></div>
 
 <script src="script.js"></script>
 </body>

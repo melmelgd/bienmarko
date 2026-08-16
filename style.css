@@ -45,14 +45,7 @@ button, input, select, textarea { font: inherit; }
 h1, h2, h3, p { margin-top: 0; }
 .ic { flex-shrink: 0; }
 
-/* ---------- scroll reveal ----------
-   Hidden-by-default reveal effects are risky for primary content:
-   if the observer never fires for any reason, real content stays
-   invisible forever. So the hidden state only exists once JS adds
-   .reveal-ready to <body> (after IntersectionObserver is confirmed
-   working); with no JS, or before that class lands, everything is
-   fully visible. A hard timeout in script.js also force-reveals
-   anything left un-triggered as a safety net. */
+/* ---------- scroll reveal ---------- */
 body.reveal-ready [data-reveal] {
     opacity: 0;
     transform: translateY(20px);
@@ -152,10 +145,6 @@ body.reveal-ready [data-reveal].is-visible {
     text-transform: uppercase;
 }
 
-/* hamburger + mobile drawer — the reference collapses/centers the header
-   at narrow widths with no persistent nav; a fixed hotel-booking site
-   needs the nav reachable at any scroll position, so this keeps the
-   header fixed and adds a proper drawer instead, restyled to match. */
 .hamburger {
     display: none;
     flex-direction: column;
@@ -466,7 +455,8 @@ body.reveal-ready [data-reveal].is-visible {
 .accommodation-preview,
 .policies-section,
 .location-section,
-.feedback-section {
+.feedback-section,
+.featured-section {
     padding: clamp(76px, 8vw, 128px) clamp(18px, 5vw, 76px);
 }
 
@@ -512,6 +502,258 @@ body.reveal-ready [data-reveal].is-visible {
     font-size: 14px;
     font-weight: 600;
     line-height: 1.35;
+}
+
+/* ---------- FEATURED ROOMS SECTION ---------- */
+.featured-section {
+    background: var(--panel-soft);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+}
+
+/* hidden until JS reveals it */
+.featured-section[hidden] { display: none; }
+
+.featured-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: clamp(22px, 3vw, 38px);
+    margin-bottom: 44px;
+}
+
+/* Individual featured card */
+.featured-card {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    overflow: hidden;
+    transition: border-color 220ms ease, transform 220ms ease;
+}
+
+.featured-card:hover,
+.featured-card:focus-within {
+    border-color: rgba(198, 154, 84, 0.55);
+    transform: translateY(-4px);
+}
+
+.featured-card-media {
+    position: relative;
+    aspect-ratio: 1.2;
+    overflow: hidden;
+    background: var(--panel-soft);
+}
+
+.featured-card-media img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 500ms ease;
+}
+
+.featured-card:hover .featured-card-media img,
+.featured-card:focus-within .featured-card-media img {
+    transform: scale(1.05);
+}
+
+/* Placeholder when no image is set */
+.featured-card-placeholder {
+    width: 100%;
+    height: 100%;
+    display: grid;
+    place-items: center;
+    color: rgba(198, 154, 84, 0.3);
+}
+
+.featured-card-placeholder svg { width: 48px; height: 48px; }
+
+/* Gold badge top-left */
+.featured-card-badge {
+    position: absolute;
+    left: 12px;
+    top: 12px;
+    z-index: 1;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: var(--gold);
+    color: var(--black);
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    padding: 5px 10px;
+}
+
+.featured-card-badge svg {
+    width: 11px;
+    height: 11px;
+    fill: var(--black);
+    flex-shrink: 0;
+}
+
+/* Price pill bottom-right */
+.featured-card-price {
+    position: absolute;
+    right: 12px;
+    bottom: 12px;
+    z-index: 1;
+    background: rgba(5, 5, 5, 0.76);
+    color: var(--gold-soft);
+    border: 1px solid var(--line);
+    padding: 5px 11px;
+    font-size: 11.5px;
+    font-weight: 800;
+    letter-spacing: 0.03em;
+}
+
+/* Hover overlay with Book Now */
+.featured-card-hover {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    justify-items: center;
+    background: rgba(198, 154, 84, 0.9);
+    color: var(--black);
+    opacity: 0;
+    transition: opacity 220ms ease;
+}
+
+.featured-card:hover .featured-card-hover,
+.featured-card:focus-within .featured-card-hover { opacity: 1; }
+
+.featured-card-hover span {
+    font-weight: 800;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.featured-card-hover strong {
+    display: block;
+    margin: 4px 0 22px;
+    font-family: var(--serif);
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.featured-card-hover a {
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--black);
+    padding-bottom: 2px;
+}
+
+/* Card body */
+.featured-card-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    flex: 1;
+}
+
+.featured-card-body h3 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.featured-card-meta {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 14px;
+    color: var(--muted);
+    font-size: 13.5px;
+}
+
+.featured-card-meta span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.featured-card-meta svg { flex-shrink: 0; }
+
+.featured-card-desc {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.6;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* Amenity chips */
+.featured-card-amenities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+.featured-chip {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    background: rgba(198, 154, 84, 0.08);
+    border: 1px solid var(--line);
+    padding: 3px 10px;
+}
+
+/* Skeleton loaders while fetching */
+.featured-skeleton {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    overflow: hidden;
+}
+
+.featured-skeleton-media {
+    aspect-ratio: 1.2;
+    background: linear-gradient(90deg, var(--panel) 25%, rgba(198,154,84,0.06) 50%, var(--panel) 75%);
+    background-size: 200% 100%;
+    animation: featSkeleton 1.4s ease infinite;
+}
+
+.featured-skeleton-body {
+    padding: 18px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.featured-skeleton-line {
+    height: 14px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--panel) 25%, rgba(198,154,84,0.06) 50%, var(--panel) 75%);
+    background-size: 200% 100%;
+    animation: featSkeleton 1.4s ease infinite;
+}
+
+.featured-skeleton-line--title { height: 22px; width: 70%; }
+.featured-skeleton-line--sub   { width: 50%; }
+.featured-skeleton-line--desc  { width: 90%; }
+.featured-skeleton-line--desc2 { width: 75%; }
+
+@keyframes featSkeleton {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .featured-skeleton-media,
+    .featured-skeleton-line { animation: none; }
 }
 
 /* ---------- split feature (Pool Area) ---------- */
@@ -631,6 +873,7 @@ body.reveal-ready [data-reveal].is-visible {
     text-transform: uppercase;
     border-bottom: 1px solid var(--black);
     padding-bottom: 2px;
+    cursor: pointer;
 }
 
 .room-card h3 {
@@ -919,6 +1162,186 @@ body.reveal-ready [data-reveal].is-visible {
     filter: grayscale(1) contrast(1.05);
 }
 
+/* ---------- BOOKING OPTION MODAL ---------- */
+.booking-option-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 110;
+    background: rgba(0, 0, 0, 0.78);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 220ms ease, visibility 220ms;
+}
+
+.booking-option-backdrop.open {
+    opacity: 1;
+    visibility: visible;
+}
+
+.booking-option-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 111;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 22px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 220ms ease, visibility 220ms;
+    pointer-events: none;
+}
+
+.booking-option-modal.open {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
+.booking-option-dialog {
+    position: relative;
+    width: min(780px, 100%);
+    max-height: calc(100vh - 44px);
+    overflow-y: auto;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    padding: 40px clamp(24px, 5vw, 48px) 40px;
+}
+
+.booking-option-header {
+    margin-bottom: 32px;
+    padding-right: 40px;
+}
+
+.booking-option-header h2 {
+    font-family: var(--serif);
+    font-size: clamp(32px, 5vw, 52px);
+    font-weight: 700;
+    line-height: 1;
+    margin-bottom: 10px;
+}
+
+.booking-option-room {
+    color: var(--gold);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: 0;
+}
+
+.booking-option-cards {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+}
+
+.booking-option-card {
+    padding: 28px;
+    border: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    transition: border-color 220ms ease;
+}
+
+.booking-option-card:hover { border-color: rgba(198, 154, 84, 0.5); }
+
+.booking-option-card--account { border-color: rgba(198, 154, 84, 0.4); }
+
+.booking-option-card-icon {
+    width: 52px;
+    height: 52px;
+    display: grid;
+    place-items: center;
+    border-radius: 12px;
+    background: rgba(198, 154, 84, 0.12);
+    color: var(--gold);
+}
+
+.booking-option-card-icon--muted {
+    background: rgba(255, 247, 232, 0.06);
+    color: var(--muted);
+}
+
+.booking-option-card h3 {
+    margin: 0;
+    font-family: var(--serif);
+    font-size: 26px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.booking-option-perks {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+}
+
+.booking-option-perks li {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.4;
+}
+
+.booking-option-perks li svg {
+    flex-shrink: 0;
+    margin-top: 2px;
+    color: var(--gold);
+}
+
+.booking-option-actions {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: auto;
+    padding-top: 6px;
+}
+
+.booking-option-actions .gold-button,
+.booking-option-actions .outline-dark {
+    flex: 1;
+    min-width: 100px;
+}
+
+.booking-option-guest-note {
+    color: var(--muted);
+    font-size: 13.5px;
+    line-height: 1.6;
+    margin: 0;
+}
+
+.booking-option-guest-btn {
+    margin-top: auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 48px;
+    border: 1px solid var(--gold);
+    padding: 0 24px;
+    background: transparent;
+    color: var(--gold);
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    transition: transform 180ms ease, background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+
+.booking-option-guest-btn:hover {
+    transform: translateY(-2px);
+    background: var(--gold-soft);
+    border-color: var(--gold-soft);
+    color: var(--black);
+    box-shadow: 0 14px 30px rgba(198, 154, 84, 0.25);
+}
+
 /* =========================================================
    Responsive
    ========================================================= */
@@ -934,7 +1357,8 @@ body.reveal-ready [data-reveal].is-visible {
 
     .room-grid,
     .feedback-grid,
-    .amenity-grid {
+    .amenity-grid,
+    .featured-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
@@ -955,6 +1379,8 @@ body.reveal-ready [data-reveal].is-visible {
     }
     .brand { min-width: 0; }
     .brand strong { font-size: 30px; }
+
+    .booking-option-cards { grid-template-columns: 1fr; }
 }
 
 @media (min-width: 901px) {
@@ -975,7 +1401,8 @@ body.reveal-ready [data-reveal].is-visible {
     .accommodation-preview,
     .policies-section,
     .location-section,
-    .feedback-section {
+    .feedback-section,
+    .featured-section {
         padding-inline: 16px;
     }
 
@@ -990,6 +1417,7 @@ body.reveal-ready [data-reveal].is-visible {
     .policy-list article > span { margin-bottom: 4px; }
 
     .room-hover { opacity: 1; background: rgba(198, 154, 84, 0.85); }
+    .featured-card-hover { opacity: 1; background: rgba(198, 154, 84, 0.85); }
 
     /* swipeable row instead of a long vertical stack */
     .room-grid {
@@ -1008,9 +1436,29 @@ body.reveal-ready [data-reveal].is-visible {
         scroll-snap-align: start;
     }
 
+    .featured-grid {
+        display: flex;
+        overflow-x: auto;
+        scroll-snap-type: x mandatory;
+        gap: 16px;
+        padding-bottom: 14px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .featured-grid::-webkit-scrollbar { display: none; }
+    .featured-grid .featured-card,
+    .featured-grid .featured-skeleton {
+        flex: 0 0 auto;
+        width: min(78%, 300px);
+        scroll-snap-align: start;
+    }
+
     .booking-cta { min-height: 380px; }
     .booking-cta h2 { font-size: clamp(32px, 11vw, 52px); }
     .map-dialog iframe { height: 320px; }
+
+    .booking-option-dialog { padding: 28px 20px; }
+    .booking-option-header h2 { font-size: clamp(26px, 8vw, 38px); }
 }
 
 @media (max-width: 560px) {
@@ -1019,6 +1467,9 @@ body.reveal-ready [data-reveal].is-visible {
     .hero-actions { flex-direction: column; width: 100%; }
     .hero-actions .gold-button,
     .hero-actions .outline-light { width: 100%; }
+    .booking-option-actions { flex-direction: column; }
+    .booking-option-actions .gold-button,
+    .booking-option-actions .outline-dark { flex: none; width: 100%; }
 }
 
 @media (max-width: 380px) {

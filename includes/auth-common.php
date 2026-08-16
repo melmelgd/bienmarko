@@ -1,47 +1,5 @@
 <?php
-/**
- * includes/auth-common.php
- * -----------------------------------------------------------------------
- * Shared helpers for the login page (login.php), both auth endpoints
- * (user/api/auth.php and admin/api/auth.php), and admin/create-admin.php.
- * Kept in one place so a security-relevant change — session cookie
- * hardening, CSRF checking, lockout thresholds, error wording — only ever
- * needs to happen once and everything stays in sync. Same reasoning
- * nav-items.php and icons.php already follow inside each app; this is
- * that pattern applied to the pieces that sit outside either one.
- *
- * As of this update, the login page no longer needs the person to have
- * the "right" tab selected before signing in. Both auth endpoints now
- * delegate to bienmarko_handle_login_request() below, which checks the
- * submitted email/password against BOTH the guests and admins tables via
- * bienmarko_attempt_login() and honors whichever one actually matches.
- * The Guest/Staff toggle on login.php still exists and still decides
- * which of the two endpoint files receives the POST, but that no longer
- * determines who gets logged in as what — only which tab the person is
- * sent back to if the attempt fails. See the docblocks on those two
- * functions for the full reasoning.
- *
- * Rate limiting is backed by the database (see includes/db.php and the
- * login_attempts table) rather than the session, so a lockout survives a
- * cleared cookie or a switch to a different browser/device. It's now
- * keyed on email alone rather than (role, email) — see the comment above
- * bienmarko_seconds_until_unlocked() for why that changed alongside the
- * rest of this update.
- *
- * Deliberately NOT loaded from user/includes/bootstrap.php: bootstrap.php
- * calls a bare session_start() with no cookie hardening, and PHP silently
- * ignores session_set_cookie_params() if it runs after the session is
- * already active (verified while building this — it's a real footgun,
- * not a theoretical one). Pulling bootstrap.php in here would quietly
- * break the "keep me signed in" cookie lifetime below. Going forward,
- * bootstrap.php is the one that should eventually read what this file's
- * endpoints write into the session — not the other way around.
- * -----------------------------------------------------------------------
- */
-
 require_once __DIR__ . '/db.php';
-
-// ---- Tunable constants ---------------------------------------------------
 
 define('BIENMARKO_MAX_LOGIN_ATTEMPTS', 5);                // failed attempts allowed...
 define('BIENMARKO_LOCKOUT_SECONDS', 60);                  // ...before this cooldown kicks in
