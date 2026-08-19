@@ -20,7 +20,8 @@
  *       "status": "available",
  *       "description": "...",
  *       "amenities": ["Wi-Fi", "Air Conditioning"],
- *       "image_url": "admin/assets/uploads/accommodations/abc123.jpg"
+ *       "image_url": "admin/assets/uploads/accommodations/abc123.jpg",
+ *       "tour_url": "admin/assets/uploads/tours/def456.html"
  *     },
  *     ...
  *   ]
@@ -80,6 +81,17 @@ try {
         exit;
     }
 
+    // Same check for tour_filename — a newer column than is_featured, so
+    // an install that already has is_featured may still predate this one.
+    $tourColCheck = $pdo->prepare(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = :db
+           AND TABLE_NAME   = 'accommodations'
+           AND COLUMN_NAME  = 'tour_filename'"
+    );
+    $tourColCheck->execute(['db' => $dbName]);
+    $tourColExists = (int) $tourColCheck->fetchColumn() > 0;
+
     $stmt = $pdo->query(
         "SELECT
             `id`,
@@ -90,7 +102,7 @@ try {
             `status`,
             `description`,
             `amenities`,
-            `image_filename`
+            `image_filename`" . ($tourColExists ? ", `tour_filename`" : "") . "
          FROM `accommodations`
          WHERE `is_featured` = 1
          ORDER BY `name` ASC
@@ -118,6 +130,12 @@ try {
             $imageUrl = 'admin/assets/uploads/accommodations/' . rawurlencode($row['image_filename']);
         }
 
+        // Same reasoning for the 360° tour file, when this deployment has it.
+        $tourUrl = null;
+        if ($tourColExists && !empty($row['tour_filename'])) {
+            $tourUrl = 'admin/assets/uploads/tours/' . rawurlencode($row['tour_filename']);
+        }
+
         $rooms[] = [
             'id'          => (int) $row['id'],
             'name'        => $row['name'],
@@ -128,6 +146,7 @@ try {
             'description' => $row['description'] ?? '',
             'amenities'   => $amenities,
             'image_url'   => $imageUrl,
+            'tour_url'    => $tourUrl,
         ];
     }
 

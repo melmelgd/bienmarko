@@ -99,6 +99,23 @@
         <button type="submit">Check Availability</button>
     </form>
 
+    <!-- ═══════════════════════════════════════════════════════════
+         FEATURED ROOMS — directly below the booking strip.
+         Dynamically populated from the database via script.js.
+         Hidden until JS confirms there are featured rooms.
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="featured-section" id="featured" aria-label="Featured Rooms" hidden>
+        <div class="section-title">
+            <span>Handpicked for You</span>
+            <h2>Featured Rooms</h2>
+        </div>
+        <!-- Cards injected by script.js -->
+        <div class="featured-grid" id="featuredGrid" role="list"></div>
+        <div class="center-action">
+            <a class="outline-dark" href="#rooms">View All Accommodations</a>
+        </div>
+    </section>
+
     <section class="intro-block" id="about">
         <div>
             <p class="eyebrow">Welcome to Bien Marko's</p>
@@ -125,23 +142,6 @@
                 <span class="amenity-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6Z"></path><path d="M9.5 12l2 2 3.5-3.5"></path></svg></span>
                 <p>Secured gate with curfew for peace of mind</p>
             </div>
-        </div>
-    </section>
-
-    <!-- ═══════════════════════════════════════════════════════════
-         FEATURED ROOMS — dynamically populated from the database.
-         The section is hidden until JS confirms there are featured
-         rooms; if none are set, it stays hidden cleanly.
-         ═══════════════════════════════════════════════════════════ -->
-    <section class="featured-section" id="featured" aria-label="Featured Rooms" hidden>
-        <div class="section-title">
-            <span>Handpicked for You</span>
-            <h2>Featured Rooms</h2>
-        </div>
-        <!-- Cards injected by script.js -->
-        <div class="featured-grid" id="featuredGrid" role="list"></div>
-        <div class="center-action">
-            <a class="outline-dark" href="#rooms">View All Accommodations</a>
         </div>
     </section>
 
@@ -468,14 +468,27 @@
                 </div>
             </div>
 
-            <!-- Option B: Guest booking -->
+            <!-- Option B: Guest booking — separate page, no account required -->
             <div class="booking-option-card booking-option-card--guest">
                 <div class="booking-option-card-icon booking-option-card-icon--muted">
                     <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
                 </div>
                 <h3>Continue as Guest</h3>
-                <p class="booking-option-guest-note">No account needed. You can still make a reservation — just note that modifications and cancellations will require contacting us directly.</p>
-                <a class="outline-dark booking-option-guest-btn" id="bookingGuestBtn" href="user/book.php">Continue as Guest</a>
+                <ul class="booking-option-perks booking-option-perks--muted">
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        No account or login needed
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        Instant booking confirmation
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        Modifications require contacting us
+                    </li>
+                </ul>
+                <a class="gold-button booking-option-guest-btn" id="bookingGuestBtn" href="user/guest-book.php">Book as Guest</a>
             </div>
         </div>
     </div>

@@ -73,20 +73,6 @@ try {
     $myBookings = [];
 }
 
-// Fetch all rooms for the room list panel
-$allRooms = [];
-try {
-    $pdo = bienmarko_db();
-    $roomStmt = $pdo->query(
-        "SELECT id, name, type, capacity, price, status, description, amenities, image_filename
-         FROM accommodations
-         ORDER BY name ASC"
-    );
-    $allRooms = $roomStmt->fetchAll();
-} catch (Throwable $e) {
-    $allRooms = [];
-}
-
 $csrfToken = bienmarko_csrf_token();
 $today     = date('Y-m-d');
 
@@ -232,151 +218,15 @@ require __DIR__ . '/includes/head.php';
 }
 .night-summary .icon { width: 16px; height: 16px; }
 
-/* ---------- All Rooms panel ---------- */
-.all-rooms-section { display: flex; flex-direction: column; gap: 16px; }
-.all-rooms-header {
-  display: flex; align-items: center; justify-content: space-between;
-  flex-wrap: wrap; gap: 8px;
-}
-.all-rooms-header h2 { font-size: 18px; }
-.all-rooms-subtitle { font-size: 13px; color: var(--paper-dim); margin-top: 2px; }
-
-.all-rooms-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 16px;
-}
-
-/* ---------- Room thumb card (in Step 1) ---------- */
-.rthumb {
-  background: var(--surface);
-  border: 2px solid var(--line);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  display: flex; flex-direction: column;
-  cursor: pointer;
-  transition: border-color .2s, transform .15s, box-shadow .2s;
-  position: relative;
-}
-.rthumb:hover {
-  border-color: var(--ember);
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px -8px rgba(232,163,61,.25);
-}
-.rthumb.is-selected {
-  border-color: var(--ember);
-  box-shadow: 0 0 0 3px rgba(232,163,61,.2);
-}
-.rthumb__media {
-  position: relative;
-  aspect-ratio: 16/9;
-  background: var(--surface-raised);
-  display: flex; align-items: center; justify-content: center;
-  overflow: hidden;
-}
-.rthumb__media img {
-  width: 100%; height: 100%; object-fit: cover; display: block;
-}
-.rthumb__media-icon { width: 38px; height: 38px; color: var(--paper-faint); }
-.rthumb__status-badge {
-  position: absolute; left: 8px; top: 8px;
-  border-radius: var(--radius-full);
-  font-size: 10px; font-weight: 700;
-  padding: 3px 8px;
-  display: flex; align-items: center; gap: 4px;
-  pointer-events: none;
-}
-.rthumb__status-badge .dot {
-  width: 5px; height: 5px; border-radius: 50%; flex-shrink: 0;
-}
-.rstatus--available   { background: rgba(40,160,90,.9);  color: #fff; }
-.rstatus--available .dot { background: #7fffa8; }
-.rstatus--booked      { background: rgba(220,100,50,.9); color: #fff; }
-.rstatus--booked .dot { background: #ffd080; }
-.rstatus--unavailable { background: rgba(80,80,100,.9);  color: #ddd; }
-.rstatus--unavailable .dot { background: #aaa; }
-.rstatus--maintenance { background: rgba(160,120,20,.9); color: #fff; }
-.rstatus--maintenance .dot { background: #ffe97a; }
-
-.rthumb__cal-btn {
-  position: absolute; right: 8px; top: 8px;
-  background: rgba(11,13,15,.82);
-  border: 1px solid rgba(255,255,255,.15);
-  border-radius: var(--radius-full);
-  color: var(--paper-dim);
-  font-size: 11px; font-weight: 700;
-  padding: 4px 10px;
-  display: flex; align-items: center; gap: 5px;
-  cursor: pointer;
-  transition: color .15s, border-color .15s;
-  pointer-events: all;
-}
-.rthumb__cal-btn:hover { color: var(--ember); border-color: var(--ember); }
-.rthumb__cal-btn svg { width: 11px; height: 11px; flex-shrink: 0; }
-
-.rthumb__price-badge {
-  position: absolute; right: 8px; bottom: 8px;
-  background: rgba(11,13,15,.85);
-  border: 1px solid rgba(255,255,255,.12);
-  border-radius: var(--radius-full);
-  font-family: var(--font-display); font-weight: 700;
-  font-size: 13px; color: var(--paper);
-  padding: 4px 10px;
-}
-.rthumb__price-badge small {
-  font-family: var(--font-body); font-size: 10px;
-  color: var(--paper-dim); font-weight: 400;
-}
-
-.rthumb__body {
-  padding: 12px 14px;
-  display: flex; flex-direction: column; gap: 8px;
-  flex: 1;
-}
-.rthumb__name { font-size: 15px; font-weight: 700; }
-.rthumb__type { font-size: 12px; color: var(--paper-dim); margin-top: -4px; }
-.rthumb__meta {
-  display: flex; align-items: center; gap: 5px;
-  font-size: 12px; color: var(--paper-dim);
-}
-.rthumb__amenities { display: flex; flex-wrap: wrap; gap: 4px; }
-.rthumb__tag {
-  font-size: 10px; font-weight: 600;
-  background: var(--surface-raised); border: 1px solid var(--line);
-  border-radius: var(--radius-full); padding: 2px 7px;
-  color: var(--paper-dim);
-}
-.rthumb__tag--more { color: var(--ember); border-color: rgba(232,163,61,.4); }
-
-.rthumb__footer {
-  padding: 10px 14px;
-  border-top: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 8px;
-}
-.rthumb__select-btn {
-  display: inline-flex; align-items: center; gap: 5px;
-  padding: 7px 13px;
-  background: var(--ember); color: var(--ember-ink);
-  border-radius: var(--radius-full);
-  font-weight: 700; font-size: 12px;
-  border: none; cursor: pointer;
-  transition: background .15s;
-}
-.rthumb__select-btn:hover { background: var(--ember-strong); }
-.rthumb__unavail-label {
-  font-size: 11px; color: var(--paper-faint); font-weight: 600;
-  padding: 7px 0;
-}
-
 /* ---------- Room grid in Step 2 ---------- */
 .rooms-section { display: flex; flex-direction: column; gap: 20px; }
 .rooms-header {
-  display: flex; align-items: center; justify-content: space-between;
+  display: flex; align-items: flex-start; justify-content: space-between;
   flex-wrap: wrap; gap: 12px;
 }
 .rooms-header h2 { font-size: 19px; }
-.rooms-meta { font-size: 13.5px; color: var(--paper-dim); }
+.rooms-subtitle { font-size: 13px; color: var(--paper-dim); margin-top: 4px; max-width: 520px; }
+.rooms-meta { font-size: 13.5px; color: var(--paper-dim); white-space: nowrap; }
 .rooms-meta strong { color: var(--paper); }
 
 .rooms-grid {
@@ -439,6 +289,55 @@ require __DIR__ . '/includes/head.php';
 .avail--occupied .dot { background: #ffd080; }
 .avail--unavailable { background: rgba(80,80,100,.9);  color: #ddd; }
 .avail--unavailable .dot { background: #aaa; }
+
+/* "View Calendar" button on each Step 2 room card */
+.room-card__cal-btn {
+  position: absolute; right: 10px; top: 10px;
+  background: rgba(11,13,15,.82);
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: var(--radius-full);
+  color: var(--paper-dim);
+  font-size: 11px; font-weight: 700;
+  padding: 5px 11px;
+  display: flex; align-items: center; gap: 5px;
+  cursor: pointer; z-index: 2;
+  transition: color .15s, border-color .15s;
+}
+.room-card__cal-btn:hover { color: var(--ember); border-color: var(--ember); }
+.room-card__cal-btn svg { width: 11px; height: 11px; flex-shrink: 0; }
+
+/* "360° Tour" button on each Step 2 room card — stacks below View Calendar */
+.room-card__tour-btn {
+  position: absolute; right: 10px; top: 42px;
+  background: rgba(11,13,15,.82);
+  border: 1px solid rgba(255,255,255,.15);
+  border-radius: var(--radius-full);
+  color: var(--paper-dim);
+  font-size: 11px; font-weight: 700;
+  padding: 5px 11px;
+  display: flex; align-items: center; gap: 5px;
+  cursor: pointer; z-index: 2;
+  transition: color .15s, border-color .15s;
+}
+.room-card__tour-btn:hover { color: var(--ember); border-color: var(--ember); }
+.room-card__tour-btn svg { width: 11px; height: 11px; flex-shrink: 0; }
+
+/* Click-to-enlarge room photo */
+.room-card__media--zoomable { cursor: zoom-in; }
+.room-card__zoom-hint {
+  position: absolute; left: 10px; bottom: 10px;
+  display: flex; align-items: center; gap: 5px;
+  background: rgba(11,13,15,.78);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: var(--radius-full);
+  font-size: 11px; font-weight: 600; color: var(--paper-dim);
+  padding: 4px 10px;
+  opacity: 0; transform: translateY(4px);
+  transition: opacity .15s, transform .15s;
+  pointer-events: none;
+}
+.room-card__media--zoomable:hover .room-card__zoom-hint { opacity: 1; transform: translateY(0); }
+.room-card__zoom-hint svg { width: 12px; height: 12px; flex-shrink: 0; }
 
 .room-card__body { padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
 .room-card__head { display: flex; flex-direction: column; gap: 3px; }
@@ -926,14 +825,92 @@ require __DIR__ . '/includes/head.php';
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* ============================================================
+   PHOTO MODAL — enlarged view of a room photo (Step 2)
+   ============================================================ */
+.photo-modal {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--paper);
+  padding: 0;
+  width: min(94vw, 720px);
+  box-shadow: 0 24px 60px -20px rgba(0,0,0,.75);
+  overflow: hidden;
+}
+.photo-modal::backdrop { background: rgba(0,0,0,.78); backdrop-filter: blur(4px); }
+.photo-modal__close {
+  position: absolute; right: 12px; top: 12px; z-index: 2;
+  width: 32px; height: 32px; border-radius: var(--radius-full);
+  background: rgba(11,13,15,.75); border: 1px solid rgba(255,255,255,.18);
+  color: var(--paper); display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.photo-modal__close:hover { color: var(--ember); border-color: var(--ember); }
+.photo-modal__close svg { width: 15px; height: 15px; }
+.photo-modal__img-wrap {
+  position: relative;
+  width: 100%; max-height: 78vh;
+  background: var(--surface);
+  display: flex; align-items: center; justify-content: center;
+  overflow: hidden;
+}
+.photo-modal__img-wrap img {
+  width: 100%; max-height: 78vh; object-fit: contain; display: block;
+}
+.photo-modal__caption {
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 14.5px; font-weight: 700; color: var(--paper);
+}
+
+/* ============================================================
+   TOUR MODAL — 360° virtual tour viewer (Step 2)
+   ============================================================ */
+.tour-modal {
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--surface-raised);
+  color: var(--paper);
+  padding: 0;
+  width: min(94vw, 960px);
+  box-shadow: 0 24px 60px -20px rgba(0,0,0,.75);
+  overflow: hidden;
+}
+.tour-modal::backdrop { background: rgba(0,0,0,.82); backdrop-filter: blur(4px); }
+.tour-modal__close {
+  position: absolute; right: 12px; top: 12px; z-index: 2;
+  width: 32px; height: 32px; border-radius: var(--radius-full);
+  background: rgba(11,13,15,.75); border: 1px solid rgba(255,255,255,.18);
+  color: var(--paper); display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+}
+.tour-modal__close:hover { color: var(--ember); border-color: var(--ember); }
+.tour-modal__close svg { width: 15px; height: 15px; }
+.tour-modal__frame-wrap {
+  position: relative;
+  width: 100%; height: min(70vh, 560px);
+  background: #000;
+}
+.tour-modal__frame-wrap iframe {
+  width: 100%; height: 100%; border: 0; display: block;
+}
+.tour-modal__caption {
+  padding: 14px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 14.5px; font-weight: 700; color: var(--paper);
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 600px) {
   .date-row { grid-template-columns: 1fr; }
   .booking-step__label { display: none; }
   .bk-item { flex-direction: column; gap: 8px; }
   .bk-item__right { flex-direction: row; align-items: center; }
-  .all-rooms-grid { grid-template-columns: 1fr; }
   .cal-modal { width: 96vw; }
+  .photo-modal { width: 96vw; }
+  .tour-modal { width: 96vw; }
+  .tour-modal__frame-wrap { height: 60vh; }
   .guest-info-grid { grid-template-columns: 1fr; }
 }
 </style>
@@ -1020,127 +997,14 @@ require __DIR__ . '/includes/head.php';
             </div>
         </section>
 
-        <!-- ===== ALL ROOMS panel (always visible in Step 1) ===== -->
-        <section class="panel" id="allRoomsPanel">
-            <div class="all-rooms-section">
-                <div class="all-rooms-header">
-                    <div>
-                        <h2>All Rooms</h2>
-                        <p class="all-rooms-subtitle">Click <strong>View Calendar</strong> on any room to see its booking schedule. Click <strong>Select &amp; Check</strong> then pick your dates to book.</p>
-                    </div>
-                    <span style="font-size:13px;color:var(--paper-dim);font-weight:600">
-                        <?php echo count($allRooms); ?> room<?php echo count($allRooms) !== 1 ? 's' : ''; ?>
-                    </span>
-                </div>
-
-                <?php if (empty($allRooms)): ?>
-                    <?php render_empty_state(
-                        'bed-double',
-                        'No rooms yet',
-                        'No accommodations have been added yet. Check back soon.'
-                    ); ?>
-                <?php else: ?>
-                    <div class="all-rooms-grid" id="allRoomsGrid">
-                        <?php foreach ($allRooms as $room):
-                            $amenities = [];
-                            if ($room['amenities']) {
-                                $dec = json_decode($room['amenities'], true);
-                                if (is_array($dec)) $amenities = $dec;
-                            }
-                            $imgBase = '../admin/assets/uploads/accommodations/';
-
-                            $statusKey   = $room['status'];
-                            $statusLabel = match ($statusKey) {
-                                'available'   => 'Available',
-                                'booked'      => 'Booked',
-                                'unavailable' => 'Unavailable',
-                                'maintenance' => 'Under Maintenance',
-                                default       => ucfirst($statusKey),
-                            };
-                            $statusClass = 'rstatus--' . ($statusKey === 'booked' ? 'booked' : $statusKey);
-                            $canBook     = ($statusKey === 'available' || $statusKey === 'booked');
-                        ?>
-                        <div class="rthumb" data-room-id="<?php echo (int)$room['id']; ?>"
-                             data-room-name="<?php echo htmlspecialchars($room['name']); ?>"
-                             data-room-status="<?php echo htmlspecialchars($statusKey); ?>">
-                            <div class="rthumb__media">
-                                <?php if (!empty($room['image_filename'])): ?>
-                                    <img src="<?php echo htmlspecialchars($imgBase . $room['image_filename']); ?>"
-                                         alt="<?php echo htmlspecialchars($room['name']); ?>"
-                                         loading="lazy">
-                                <?php else: ?>
-                                    <span class="rthumb__media-icon">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:100%;height:100%"><path d="M2 4v16"/><path d="M2 8h18a2 2 0 0 1 2 2v10"/><path d="M2 17h20"/><path d="M6 8v9"/></svg>
-                                    </span>
-                                <?php endif; ?>
-
-                                <span class="rthumb__status-badge <?php echo $statusClass; ?>">
-                                    <span class="dot"></span>
-                                    <?php echo htmlspecialchars($statusLabel); ?>
-                                </span>
-
-                                <button type="button" class="rthumb__cal-btn"
-                                        data-cal-room-id="<?php echo (int)$room['id']; ?>"
-                                        data-cal-room-name="<?php echo htmlspecialchars($room['name']); ?>"
-                                        data-cal-room-type="<?php echo htmlspecialchars($room['type']); ?>"
-                                        aria-label="View booking calendar for <?php echo htmlspecialchars($room['name']); ?>">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-                                    View Calendar
-                                </button>
-
-                                <span class="rthumb__price-badge">
-                                    ₱<?php echo number_format((float)$room['price'], 0); ?><small>/night</small>
-                                </span>
-                            </div>
-
-                            <div class="rthumb__body">
-                                <div class="rthumb__name"><?php echo htmlspecialchars($room['name']); ?></div>
-                                <div class="rthumb__type"><?php echo htmlspecialchars($room['type']); ?></div>
-                                <div class="rthumb__meta">
-                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:12px;height:12px;flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                                    Up to <?php echo (int)$room['capacity']; ?> guest<?php echo (int)$room['capacity'] !== 1 ? 's' : ''; ?>
-                                </div>
-                                <?php if (!empty($amenities)): ?>
-                                <div class="rthumb__amenities">
-                                    <?php
-                                    $shown = array_slice($amenities, 0, 3);
-                                    $more  = count($amenities) - 3;
-                                    foreach ($shown as $a): ?>
-                                        <span class="rthumb__tag"><?php echo htmlspecialchars($a); ?></span>
-                                    <?php endforeach;
-                                    if ($more > 0): ?>
-                                        <span class="rthumb__tag rthumb__tag--more">+<?php echo $more; ?> more</span>
-                                    <?php endif; ?>
-                                </div>
-                                <?php endif; ?>
-                            </div>
-
-                            <div class="rthumb__footer">
-                                <span style="font-size:13px;color:var(--paper-dim)">
-                                    ₱<?php echo number_format((float)$room['price'], 2); ?>/night
-                                </span>
-                                <?php if ($canBook): ?>
-                                    <button type="button" class="rthumb__select-btn"
-                                            data-select-room-id="<?php echo (int)$room['id']; ?>">
-                                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:11px;height:11px"><polyline points="20 6 9 17 4 12"/></svg>
-                                        Select &amp; Check
-                                    </button>
-                                <?php else: ?>
-                                    <span class="rthumb__unavail-label">Not available</span>
-                                <?php endif; ?>
-                            </div>
-                        </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-            </div>
-        </section>
-
         <!-- ===== STEP 2: Room results ===== -->
         <section class="panel" id="step2Panel" style="display:none">
             <div class="rooms-section">
                 <div class="rooms-header">
-                    <h2>Available Rooms</h2>
+                    <div>
+                        <h2>Available Rooms</h2>
+                        <p class="rooms-subtitle">Click <strong>View Calendar</strong> on a room to check its booking schedule, or click a room's photo to view it larger.</p>
+                    </div>
                     <span class="rooms-meta" id="roomsMeta"></span>
                 </div>
 
@@ -1422,9 +1286,31 @@ require __DIR__ . '/includes/head.php';
     </div>
 </dialog>
 
+<!-- ===== Photo modal — enlarged view of the selected room's photo ===== -->
+<dialog class="photo-modal" id="photoModal" aria-labelledby="photoModalCaption" aria-modal="true">
+    <button type="button" class="photo-modal__close" id="photoModalClose" aria-label="Close photo">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="photo-modal__img-wrap">
+        <img id="photoModalImg" src="" alt="">
+    </div>
+    <div class="photo-modal__caption" id="photoModalCaption"></div>
+</dialog>
+
+<dialog class="tour-modal" id="tourModal" aria-labelledby="tourModalCaption" aria-modal="true">
+    <button type="button" class="tour-modal__close" id="tourModalClose" aria-label="Close 360&deg; tour">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+    </button>
+    <div class="tour-modal__frame-wrap">
+        <iframe id="tourModalFrame" src="about:blank" title="360 degree room tour" loading="lazy" allow="accelerometer; gyroscope; fullscreen" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
+    </div>
+    <div class="tour-modal__caption" id="tourModalCaption"></div>
+</dialog>
+
 <!-- Hidden tokens for JS -->
 <input type="hidden" id="csrfToken" value="<?php echo htmlspecialchars($csrfToken); ?>">
 <input type="hidden" id="imgBase" value="../admin/assets/uploads/accommodations/">
+<input type="hidden" id="tourBase" value="../admin/assets/uploads/tours/">
 
 <?php require __DIR__ . '/includes/support-modal.php'; ?>
 <?php require __DIR__ . '/includes/foot.php'; ?>
@@ -1452,7 +1338,6 @@ require __DIR__ . '/includes/head.php';
   var step1Panel    = document.getElementById('step1Panel');
   var step2Panel    = document.getElementById('step2Panel');
   var step3Panel    = document.getElementById('step3Panel');
-  var allRoomsPanel = document.getElementById('allRoomsPanel');
 
   var elSkeleton   = document.getElementById('roomsSkeleton');
   var elGrid       = document.getElementById('roomsGrid');
@@ -1499,14 +1384,27 @@ require __DIR__ . '/includes/head.php';
   var calApplyBtn     = document.getElementById('calApplyBtn');
   var calLegendSel    = document.getElementById('calLegendSelected');
 
+  // Photo modal
+  var photoModal        = document.getElementById('photoModal');
+  var photoModalClose   = document.getElementById('photoModalClose');
+  var photoModalImg     = document.getElementById('photoModalImg');
+  var photoModalCaption = document.getElementById('photoModalCaption');
+
+  // 360° Tour modal
+  var tourModal        = document.getElementById('tourModal');
+  var tourModalClose   = document.getElementById('tourModalClose');
+  var tourModalFrame   = document.getElementById('tourModalFrame');
+  var tourModalCaption = document.getElementById('tourModalCaption');
+
   // Step 3
   var elStep3Error    = document.getElementById('step3Error');
   var elStep3ErrorTxt = document.getElementById('step3ErrorText');
   var elGuestName     = document.getElementById('guestFullName');
   var elGuestPhone    = document.getElementById('guestPhone');
 
-  var csrf    = (document.getElementById('csrfToken') || {}).value || '';
-  var imgBase = (document.getElementById('imgBase') || {}).value || '';
+  var csrf     = (document.getElementById('csrfToken') || {}).value || '';
+  var imgBase  = (document.getElementById('imgBase') || {}).value || '';
+  var tourBase = (document.getElementById('tourBase') || {}).value || '';
 
   /* ---- Global state ---- */
   var currentCheckIn  = '';
@@ -1906,28 +1804,82 @@ require __DIR__ . '/includes/head.php';
     }
   }
 
-  /* ---- "Select & Check" on room thumbnails ---- */
-  document.getElementById('allRoomsGrid') && document.getElementById('allRoomsGrid').addEventListener('click', function (e) {
-    var btn = e.target.closest('[data-select-room-id]');
+  /* ============================================================
+     PHOTO MODAL — enlarged view of a room photo (Step 2 cards)
+     ============================================================ */
+  function openPhotoModal(src, name) {
+    if (!src) return;
+    photoModalImg.src         = src;
+    photoModalImg.alt         = name || 'Room photo';
+    photoModalCaption.textContent = name || '';
+    photoModal.showModal ? photoModal.showModal() : photoModal.setAttribute('open', '');
+  }
+
+  function closePhotoModal() {
+    if (photoModal.close) photoModal.close();
+    else photoModal.removeAttribute('open');
+    photoModalImg.src = '';
+  }
+
+  photoModalClose.addEventListener('click', closePhotoModal);
+  photoModal.addEventListener('click', function (e) {
+    var rect = photoModal.getBoundingClientRect();
+    if (e.clientY < rect.top || e.clientY > rect.bottom ||
+        e.clientX < rect.left || e.clientX > rect.right) { closePhotoModal(); }
+  });
+  photoModal.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closePhotoModal();
+  });
+
+  /* Click on a room-card's photo (Step 2) opens the lightbox.
+     The "View Calendar" and "360° Tour" buttons live inside the same
+     media block, so both are excluded here to avoid double-triggering. */
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('[data-cal-room-id]')) return;
+    if (e.target.closest('[data-tour-file]')) return;
+    var media = e.target.closest('[data-photo-src]');
+    if (!media) return;
+    openPhotoModal(media.getAttribute('data-photo-src'), media.getAttribute('data-photo-name'));
+  });
+
+  /* ============================================================
+     TOUR MODAL — 360° virtual tour viewer (Step 2 cards)
+     ============================================================ */
+  function openTourModal(filename, name) {
+    if (!filename) return;
+    tourModalFrame.src = tourBase + encodeURIComponent(filename);
+    tourModalCaption.textContent = name ? (name + ' — 360° Tour') : '360° Tour';
+    tourModal.showModal ? tourModal.showModal() : tourModal.setAttribute('open', '');
+  }
+
+  function closeTourModal() {
+    if (tourModal.close) tourModal.close();
+    else tourModal.removeAttribute('open');
+    tourModalFrame.src = 'about:blank'; // stop the tour running in the background once closed
+  }
+
+  tourModalClose.addEventListener('click', closeTourModal);
+  tourModal.addEventListener('click', function (e) {
+    var rect = tourModal.getBoundingClientRect();
+    if (e.clientY < rect.top || e.clientY > rect.bottom ||
+        e.clientX < rect.left || e.clientX > rect.right) { closeTourModal(); }
+  });
+  tourModal.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeTourModal();
+  });
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('[data-tour-file]');
     if (!btn) return;
-    step1Panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    if (!currentCheckIn || !currentCheckOut) {
-      // Flash the date triggers
-      [triggerCI, triggerCO].forEach(function (el) {
-        el.style.transition = 'box-shadow .3s';
-        el.style.boxShadow  = '0 0 0 3px rgba(232,163,61,.5)';
-        setTimeout(function () { el.style.boxShadow = ''; }, 1400);
-      });
-      openPickCalendar('checkin');
-    }
+    e.stopPropagation();
+    openTourModal(btn.getAttribute('data-tour-file'), btn.getAttribute('data-tour-name'));
   });
 
   /* ---- Step management ---- */
   function setStep(n) {
-    step1Panel.style.display    = n === 1 ? '' : 'none';
-    step2Panel.style.display    = n === 2 ? '' : 'none';
-    step3Panel.style.display    = n === 3 ? '' : 'none';
-    allRoomsPanel.style.display = n === 1 ? '' : 'none';
+    step1Panel.style.display = n === 1 ? '' : 'none';
+    step2Panel.style.display = n === 2 ? '' : 'none';
+    step3Panel.style.display = n === 3 ? '' : 'none';
 
     sI1.className = 'booking-step' + (n === 1 ? ' is-active' : (n > 1 ? ' is-done' : ''));
     sI2.className = 'booking-step' + (n === 2 ? ' is-active' : (n > 2 ? ' is-done' : ''));
@@ -1964,11 +1916,31 @@ require __DIR__ . '/includes/head.php';
       (room.availability === 'unavailable' ? ' is-unavailable' : '');
 
     var availClass = 'avail--' + room.availability;
+    var hasPhoto    = !!room.image_filename;
+    var photoSrc    = hasPhoto ? (imgBase + encodeURIComponent(room.image_filename)) : '';
 
-    var mediaHtml = room.image_filename
-      ? '<img src="' + imgBase + encodeURIComponent(room.image_filename) +
-        '" alt="' + escHtml(room.name) + '" loading="lazy">'
+    var mediaHtml = hasPhoto
+      ? '<img src="' + photoSrc + '" alt="' + escHtml(room.name) + '" loading="lazy">' +
+        '<span class="room-card__zoom-hint" aria-hidden="true">' + zoomIcon() + 'View photo</span>'
       : '<span class="room-card__media-icon">' + bedIcon() + '</span>';
+
+    var calBtnHtml =
+      '<button type="button" class="room-card__cal-btn" ' +
+        'data-cal-room-id="' + room.id + '" ' +
+        'data-cal-room-name="' + escHtml(room.name) + '" ' +
+        'data-cal-room-type="' + escHtml(room.type) + '" ' +
+        'aria-label="View booking calendar for ' + escHtml(room.name) + '">' +
+        calIcon() + 'View Calendar' +
+      '</button>';
+
+    var tourBtnHtml = room.tour_filename
+      ? '<button type="button" class="room-card__tour-btn" ' +
+          'data-tour-file="' + escHtml(room.tour_filename) + '" ' +
+          'data-tour-name="' + escHtml(room.name) + '" ' +
+          'aria-label="View 360 degree tour of ' + escHtml(room.name) + '">' +
+          globeIcon() + '360&deg; Tour' +
+        '</button>'
+      : '';
 
     var amenHtml = '';
     if (room.amenities && room.amenities.length) {
@@ -1992,8 +1964,12 @@ require __DIR__ . '/includes/head.php';
         escHtml(room.availability_label) + '</span>';
 
     card.innerHTML =
-      '<div class="room-card__media">' +
+      '<div class="room-card__media' + (hasPhoto ? ' room-card__media--zoomable' : '') + '"' +
+        (hasPhoto ? ' data-photo-src="' + photoSrc + '" data-photo-name="' + escHtml(room.name) + '"' : '') +
+        '>' +
         mediaHtml +
+        calBtnHtml +
+        tourBtnHtml +
         '<span class="room-card__price-badge">' + escHtml(room.price_formatted) +
           '<small>/night</small></span>' +
         '<span class="room-card__avail-badge ' + availClass + '">' +
@@ -2336,6 +2312,16 @@ require __DIR__ . '/includes/head.php';
   }
   function usersIcon() {
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:14px;height:14px;flex-shrink:0"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>';
+  }
+  function zoomIcon() {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:12px;height:12px;flex-shrink:0"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="11" y1="8" x2="11" y2="14"/><line x1="8" y1="11" x2="14" y2="11"/></svg>';
+  }
+  function calIcon() {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:11px;height:11px;flex-shrink:0"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>';
+  }
+
+  function globeIcon() {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:11px;height:11px;flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/></svg>';
   }
 
 })();

@@ -2,7 +2,7 @@
 /**
  * user/api/bookings.php
  * -----------------------------------------------------------------------
- * JSON API for the guest booking feature. Handles three actions:
+ * JSON API for the registered-user booking feature. Handles three actions:
  *
  *   action=availability   – given check_in + check_out, returns all
  *                           accommodations with their real-time status.
@@ -69,11 +69,13 @@ function bk_ensure_tables(PDO $pdo): void
         return;
     }
 
+    // Unified bookings table — supports both registered users (guest_id set)
+    // and walk-in guest bookings (guest_id NULL, guest_name/email/phone set).
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS `bookings` (
             `id`               INT UNSIGNED NOT NULL AUTO_INCREMENT,
             `reference`        VARCHAR(20)  NOT NULL UNIQUE,
-            `guest_id`         INT UNSIGNED NOT NULL,
+            `guest_id`         INT UNSIGNED NULL DEFAULT NULL,
             `accommodation_id` INT UNSIGNED NOT NULL,
             `check_in`         DATE         NOT NULL,
             `check_out`        DATE         NOT NULL,
@@ -81,6 +83,12 @@ function bk_ensure_tables(PDO $pdo): void
             `notes`            TEXT         NULL,
             `status`           ENUM('pending','confirmed','cancelled','completed') NOT NULL DEFAULT 'confirmed',
             `total_amount`     DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+            `guest_name`       VARCHAR(200) NULL DEFAULT NULL,
+            `email`            VARCHAR(200) NULL DEFAULT NULL,
+            `phone`            VARCHAR(30)  NULL DEFAULT NULL,
+            `address`          VARCHAR(255) NULL DEFAULT NULL,
+            `payment_method`   ENUM('cash','gcash') NULL DEFAULT 'cash',
+            `booking_type`     ENUM('registered','guest') NOT NULL DEFAULT 'registered',
             `created_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
             `updated_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
@@ -91,10 +99,35 @@ function bk_ensure_tables(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
 
+    // If the table already existed with the old schema (guest_id NOT NULL,
+    // missing guest columns), run safe migrations to bring it up to date.
+    try {
+        // Allow guest_id to be NULL for walk-in guest bookings.
+        $pdo->exec(
+            "ALTER TABLE `bookings`
+             MODIFY COLUMN `guest_id` INT UNSIGNED NULL DEFAULT NULL"
+        );
+
+        // Add guest-booking columns if missing.
+        $pdo->exec(
+            "ALTER TABLE `bookings`
+                 ADD COLUMN IF NOT EXISTS `guest_name`     VARCHAR(200) NULL DEFAULT NULL,
+                 ADD COLUMN IF NOT EXISTS `email`          VARCHAR(200) NULL DEFAULT NULL,
+                 ADD COLUMN IF NOT EXISTS `phone`          VARCHAR(30)  NULL DEFAULT NULL,
+                 ADD COLUMN IF NOT EXISTS `address`        VARCHAR(255) NULL DEFAULT NULL,
+                 ADD COLUMN IF NOT EXISTS `payment_method` ENUM('cash','gcash') NULL DEFAULT 'cash',
+                 ADD COLUMN IF NOT EXISTS `booking_type`   ENUM('registered','guest') NOT NULL DEFAULT 'registered'"
+        );
+    } catch (Throwable $e) {
+        error_log('[bienmarko] bookings table migration warning: ' . $e->getMessage());
+    }
+
+    // Admin notifications table.
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS `admin_notifications` (
             `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `booking_id` INT UNSIGNED NOT NULL,
+            `booking_id` INT UNSIGNED NULL DEFAULT NULL,
+            `type`       VARCHAR(60)  NOT NULL DEFAULT 'booking',
             `message`    VARCHAR(400) NOT NULL,
             `is_read`    TINYINT(1)   NOT NULL DEFAULT 0,
             `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -103,6 +136,17 @@ function bk_ensure_tables(PDO $pdo): void
             KEY `idx_read`    (`is_read`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
+
+    // Add missing columns to admin_notifications if created with older schema.
+    try {
+        $pdo->exec(
+            "ALTER TABLE `admin_notifications`
+                 ADD COLUMN IF NOT EXISTS `booking_id` INT UNSIGNED NULL DEFAULT NULL,
+                 ADD COLUMN IF NOT EXISTS `type`       VARCHAR(60) NOT NULL DEFAULT 'booking'"
+        );
+    } catch (Throwable $e) {
+        error_log('[bienmarko] admin_notifications migration warning: ' . $e->getMessage());
+    }
 
     $done = true;
 }
@@ -119,8 +163,8 @@ function bk_notify_admin(PDO $pdo, int $bookingId, string $reference, string $gu
         $message = "New booking {$reference}: {$guestName} booked {$roomName} ({$ci} – {$co})";
 
         $stmt = $pdo->prepare(
-            "INSERT INTO admin_notifications (booking_id, message, is_read)
-             VALUES (:booking_id, :message, 0)"
+            "INSERT INTO admin_notifications (booking_id, type, message, is_read)
+             VALUES (:booking_id, 'booking', :message, 0)"
         );
         $stmt->execute([
             'booking_id' => $bookingId,
@@ -199,6 +243,35 @@ function bk_has_conflict(
 
 // ---- Action: availability ---------------------------------------------------
 
+/**
+ * Defensively adds the `tour_filename` column if this deployment's DB
+ * hasn't been migrated yet (e.g. no admin has opened admin/accommodations.php
+ * since updating). Same information_schema-guarded pattern used by
+ * admin/includes/accommodations-data.php's acc_ensure_table(), duplicated
+ * here so this endpoint never hard-fails just because of load order.
+ */
+function bk_ensure_tour_column(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+        $stmt = $pdo->prepare(
+            "SELECT COUNT(*) FROM information_schema.COLUMNS
+             WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'accommodations' AND COLUMN_NAME = 'tour_filename'"
+        );
+        $stmt->execute(['db' => $dbName]);
+        if ((int) $stmt->fetchColumn() === 0) {
+            $pdo->exec("ALTER TABLE `accommodations` ADD COLUMN `tour_filename` VARCHAR(255) NULL AFTER `image_filename`");
+        }
+    } catch (Throwable $e) {
+        // Best-effort — if this fails, the SELECT below simply won't find the column and callers handle a missing key.
+    }
+    $done = true;
+}
+
 function bk_action_availability(PDO $pdo, array $input): never
 {
     $checkIn  = bk_parse_date($input['check_in']  ?? null);
@@ -213,9 +286,11 @@ function bk_action_availability(PDO $pdo, array $input): never
         bk_fail(400, $dateError);
     }
 
+    bk_ensure_tour_column($pdo);
+
     $accStmt = $pdo->query(
         "SELECT id, name, type, capacity, price, status,
-                description, amenities, image_filename
+                description, amenities, image_filename, tour_filename
          FROM accommodations
          ORDER BY name ASC"
     );
@@ -262,6 +337,7 @@ function bk_action_availability(PDO $pdo, array $input): never
             'description'        => $row['description'] ?? '',
             'amenities'          => $amenities,
             'image_filename'     => $row['image_filename'],
+            'tour_filename'      => $row['tour_filename'] ?? null,
             'availability'       => $availability,
             'availability_label' => $availabilityLabel,
         ];
@@ -277,18 +353,6 @@ function bk_action_availability(PDO $pdo, array $input): never
 
 // ---- Action: room_calendar --------------------------------------------------
 
-/**
- * Returns the admin-set room status and all active (confirmed/pending)
- * booking date ranges for a given room.
- *
- * The front-end JS uses this to paint each calendar day:
- *   - admin status unavailable/maintenance → every future day is painted accordingly
- *   - booked ranges → days within [check_in, check_out) are painted red
- *   - everything else → green (available)
- *
- * We return ranges from 3 months back to 12 months ahead so the user
- * can scroll through a useful window without re-fetching.
- */
 function bk_action_room_calendar(PDO $pdo, array $input): never
 {
     $roomId = filter_var($input['room_id'] ?? null, FILTER_VALIDATE_INT);
@@ -296,7 +360,6 @@ function bk_action_room_calendar(PDO $pdo, array $input): never
         bk_fail(400, 'Invalid room ID.');
     }
 
-    // Verify the room exists and get its admin status
     $roomStmt = $pdo->prepare(
         "SELECT id, name, type, status
          FROM accommodations
@@ -310,13 +373,9 @@ function bk_action_room_calendar(PDO $pdo, array $input): never
         bk_fail(404, 'Room not found.');
     }
 
-    // Date window: 3 months back → 12 months ahead
     $windowStart = date('Y-m-d', strtotime('-3 months'));
     $windowEnd   = date('Y-m-d', strtotime('+12 months'));
 
-    // Fetch all active bookings for this room within the window.
-    // A booking overlaps the window when:
-    //   check_in  < windowEnd  AND  check_out > windowStart
     $bkStmt = $pdo->prepare(
         "SELECT check_in, check_out
          FROM bookings
@@ -345,8 +404,8 @@ function bk_action_room_calendar(PDO $pdo, array $input): never
         'room_id'     => (int) $room['id'],
         'room_name'   => $room['name'],
         'room_type'   => $room['type'],
-        'room_status' => $room['status'],   // available|booked|unavailable|maintenance
-        'bookings'    => $bookings,          // [{check_in, check_out}, …]
+        'room_status' => $room['status'],
+        'bookings'    => $bookings,
         'window'      => [
             'start' => $windowStart,
             'end'   => $windowEnd,
@@ -436,10 +495,10 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
         $stmt = $pdo->prepare(
             "INSERT INTO bookings
                 (reference, guest_id, accommodation_id, check_in, check_out,
-                 guests_count, notes, status, total_amount)
+                 guests_count, notes, status, total_amount, booking_type)
              VALUES
                 (:reference, :guest_id, :accommodation_id, :check_in, :check_out,
-                 :guests_count, :notes, 'confirmed', :total_amount)"
+                 :guests_count, :notes, 'confirmed', :total_amount, 'registered')"
         );
 
         $stmt->execute([

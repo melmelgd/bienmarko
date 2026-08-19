@@ -213,13 +213,25 @@ document.addEventListener("DOMContentLoaded", () => {
             bookingRoomName.textContent = roomName ? "Selected: " + roomName : "";
         }
 
-        // Build book.php URL with the room pre-selected
-        const param = roomName ? "?room=" + encodeURIComponent(roomName) : "";
-        const bookUrl = "user/book.php" + param;
+        // Build URLs — registered users go to user/book.php, guests to user/guest-book.php.
+        // Both receive the room name, checkin, and checkout as query params so the
+        // destination page can pre-fill those fields without extra clicks.
+        const bookParams = [];
+        if (roomName)     bookParams.push("room="    + encodeURIComponent(roomName));
 
-        if (bookingLoginBtn)    bookingLoginBtn.href    = "user/login.php" + (roomName ? "?next=" + encodeURIComponent(bookUrl) : "");
-        if (bookingRegisterBtn) bookingRegisterBtn.href = "user/register.php" + (roomName ? "?next=" + encodeURIComponent(bookUrl) : "");
-        if (bookingGuestBtn)    bookingGuestBtn.href    = bookUrl;
+        // Forward strip dates if they were filled before opening the modal
+        const stripCheckin  = document.getElementById("checkin");
+        const stripCheckout = document.getElementById("checkout");
+        if (stripCheckin  && stripCheckin.value)  bookParams.push("checkin="  + encodeURIComponent(stripCheckin.value));
+        if (stripCheckout && stripCheckout.value) bookParams.push("checkout=" + encodeURIComponent(stripCheckout.value));
+
+        const qs       = bookParams.length ? "?" + bookParams.join("&") : "";
+        const bookUrl  = "user/book.php"       + qs;  // for registered users
+        const guestUrl = "user/guest-book.php" + qs;  // for guest users
+
+        if (bookingLoginBtn)    bookingLoginBtn.href    = "user/login.php"    + (bookUrl ? "?next=" + encodeURIComponent(bookUrl) : "");
+        if (bookingRegisterBtn) bookingRegisterBtn.href = "user/register.php" + (bookUrl ? "?next=" + encodeURIComponent(bookUrl) : "");
+        if (bookingGuestBtn)    bookingGuestBtn.href    = guestUrl;
 
         bookingModal.classList.add("open");
         bookingModal.setAttribute("aria-hidden", "false");

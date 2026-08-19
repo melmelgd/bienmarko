@@ -15,6 +15,16 @@
  * rooms that appear in the landing page "Featured Rooms" section.
  * The column is added via ALTER TABLE IF NOT EXISTS the key pattern
  * so existing deployments pick it up without manual SQL.
+ *
+ * CHANGE: added `tour_filename` VARCHAR(255) column — one uploaded
+ * self-contained 360° tour HTML file per room (e.g. a Pannellum export
+ * like the sample the client provided). Same ALTER-if-missing pattern.
+ *
+ * CHANGE: added the `accommodation_photos` table — extra gallery photos
+ * per room, on top of the single `image_filename` "cover" photo. Cover
+ * stays on `accommodations.image_filename` so every existing page that
+ * already reads that column (cards, guest-book, the booking flow, the
+ * landing page) keeps working unchanged; the gallery is purely additive.
  * -----------------------------------------------------------------------
  */
 
@@ -35,6 +45,16 @@ const ACC_UPLOAD_URL_BASE = 'assets/uploads/accommodations';
 
 const ACC_MAX_IMAGE_BYTES    = 5 * 1024 * 1024; // 5 MB
 const ACC_ALLOWED_IMAGE_EXT  = ['jpg', 'jpeg', 'png', 'webp'];
+
+/** Extra gallery photos allowed per room, on top of the cover photo. */
+const ACC_GALLERY_MAX_PHOTOS = 8;
+
+/** Physical folder + web-relative path (from admin/*.php) for uploaded 360° tour files. */
+const ACC_TOUR_UPLOAD_DIR      = __DIR__ . '/../assets/uploads/tours';
+const ACC_TOUR_UPLOAD_URL_BASE = 'assets/uploads/tours';
+
+const ACC_MAX_TOUR_BYTES   = 30 * 1024 * 1024; // 30 MB — self-contained tours embed panorama images as base64
+const ACC_ALLOWED_TOUR_EXT = ['html', 'htm'];
 
 /**
  * Creates the accommodations table if it doesn't exist yet. Safe to call
@@ -72,10 +92,12 @@ function acc_ensure_table(): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
 
-    // For existing tables that pre-date the is_featured column, add it
-    // if missing. We check information_schema first so there's no error
-    // on databases that don't support ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
+    // For existing tables that pre-date the is_featured / tour_filename
+    // columns, add whichever is missing. We check information_schema first
+    // so there's no error on databases that don't support
+    // ALTER TABLE ... ADD COLUMN IF NOT EXISTS.
     $dbName = $pdo->query('SELECT DATABASE()')->fetchColumn();
+
     $exists = $pdo->prepare(
         "SELECT COUNT(*) FROM information_schema.COLUMNS
          WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'accommodations' AND COLUMN_NAME = 'is_featured'"
@@ -89,21 +111,67 @@ function acc_ensure_table(): void
         );
     }
 
+    $tourExists = $pdo->prepare(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'accommodations' AND COLUMN_NAME = 'tour_filename'"
+    );
+    $tourExists->execute(['db' => $dbName]);
+    if ((int) $tourExists->fetchColumn() === 0) {
+        $pdo->exec(
+            "ALTER TABLE `accommodations`
+             ADD COLUMN `tour_filename` VARCHAR(255) NULL AFTER `image_filename`"
+        );
+    }
+
     $done = true;
 }
 
-/** Makes sure the upload folder exists and is locked down against script execution. */
-function acc_ensure_upload_dir(): void
+/**
+ * Creates the accommodation_photos table if it doesn't exist yet — extra
+ * gallery photos per room, beyond the single `image_filename` cover photo.
+ * Safe to call on every request, same reasoning as acc_ensure_table().
+ */
+function acc_ensure_photos_table(): void
 {
-    if (!is_dir(ACC_UPLOAD_DIR)) {
-        mkdir(ACC_UPLOAD_DIR, 0755, true);
+    static $done = false;
+    if ($done) {
+        return;
     }
 
-    $htaccess = ACC_UPLOAD_DIR . '/.htaccess';
+    $pdo = bienmarko_db();
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS `accommodation_photos` (
+            `id`               INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `accommodation_id` INT UNSIGNED NOT NULL,
+            `filename`         VARCHAR(255) NOT NULL,
+            `sort_order`       SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+            `created_at`       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (`id`),
+            KEY `idx_accommodation` (`accommodation_id`),
+            CONSTRAINT `fk_acc_photos_accommodation` FOREIGN KEY (`accommodation_id`)
+                REFERENCES `accommodations` (`id`) ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+
+    $done = true;
+}
+
+/**
+ * Locks a folder down against script execution + a blank index.html guard.
+ * Shared by acc_ensure_upload_dir() and acc_ensure_tour_upload_dir() so the
+ * lockdown logic lives in exactly one place.
+ */
+function acc_lockdown_upload_dir(string $dir): void
+{
+    if (!is_dir($dir)) {
+        mkdir($dir, 0755, true);
+    }
+
+    $htaccess = $dir . '/.htaccess';
     if (!file_exists($htaccess)) {
         file_put_contents(
             $htaccess,
-            "# Uploaded photos only — never execute scripts from this folder.\n"
+            "# Uploaded files only — never execute scripts from this folder.\n"
             . "php_flag engine off\n"
             . "<FilesMatch \"\\.(php|phtml|php\\d|phar)$\">\n"
             . "  Require all denied\n"
@@ -111,10 +179,27 @@ function acc_ensure_upload_dir(): void
         );
     }
 
-    $indexGuard = ACC_UPLOAD_DIR . '/index.html';
+    $indexGuard = $dir . '/index.html';
     if (!file_exists($indexGuard)) {
         file_put_contents($indexGuard, '');
     }
+}
+
+/** Makes sure the photo upload folder exists and is locked down against script execution. */
+function acc_ensure_upload_dir(): void
+{
+    acc_lockdown_upload_dir(ACC_UPLOAD_DIR);
+}
+
+/**
+ * Makes sure the 360° tour upload folder exists and is locked down against
+ * script execution. Tour files themselves are static self-contained HTML
+ * (a Pannellum-style export) — they still render normally as HTML, this
+ * only blocks anything with a server-executable extension from running.
+ */
+function acc_ensure_tour_upload_dir(): void
+{
+    acc_lockdown_upload_dir(ACC_TOUR_UPLOAD_DIR);
 }
 
 function acc_valid_status(string $status): bool
@@ -196,6 +281,9 @@ function acc_icon(string $name, string $class = 'icon'): string
         'trash'  => '<polyline points="4 7 20 7"></polyline><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"></path><path d="M19 7l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
         'search' => '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.2" y2="16.2"></line>',
         'star'   => '<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon>',
+        'camera' => '<path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2Z"></path><circle cx="12" cy="13" r="4"></circle>',
+        'globe'  => '<circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"></path>',
+        'check'  => '<polyline points="20 6 9 17 4 12"></polyline>',
     ];
 
     if (isset($extra[$name])) {
@@ -206,4 +294,29 @@ function acc_icon(string $name, string $class = 'icon'): string
     }
 
     return icon($name, $class);
+}
+
+/** All gallery photos for one accommodation, oldest-first by sort order. */
+function acc_get_photos(PDO $pdo, int $accommodationId): array
+{
+    $stmt = $pdo->prepare(
+        'SELECT `id`, `filename`, `sort_order`
+         FROM `accommodation_photos`
+         WHERE `accommodation_id` = :id
+         ORDER BY `sort_order` ASC, `id` ASC'
+    );
+    $stmt->execute(['id' => $accommodationId]);
+    return $stmt->fetchAll();
+}
+
+/** Deletes one uploaded 360° tour file from disk, if present. */
+function acc_delete_tour_file(?string $filename): void
+{
+    if (!$filename) {
+        return;
+    }
+    $path = ACC_TOUR_UPLOAD_DIR . '/' . basename($filename);
+    if (is_file($path)) {
+        @unlink($path);
+    }
 }

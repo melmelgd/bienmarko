@@ -13,9 +13,12 @@ $counts = ['total' => 0, 'available' => 0, 'booked' => 0, 'unavailable' => 0, 'm
 
 try {
     acc_ensure_table();
+    acc_ensure_photos_table();
     $pdo = bienmarko_db();
     $accommodations = $pdo->query(
-        'SELECT `id`, `name`, `type`, `capacity`, `price`, `status`, `description`, `amenities`, `image_filename`, `is_featured`
+        'SELECT `id`, `name`, `type`, `capacity`, `price`, `status`, `description`, `amenities`,
+                `image_filename`, `is_featured`, `tour_filename`,
+                (SELECT COUNT(*) FROM `accommodation_photos` WHERE `accommodation_id` = `accommodations`.`id`) AS `photo_count`
          FROM `accommodations`
          ORDER BY `name` ASC'
     )->fetchAll();
@@ -305,6 +308,96 @@ require_once __DIR__ . '/includes/ui.php';
 .btn-danger { background: var(--red-bg-strong); color: var(--red); }
 .btn-danger:hover { background: var(--red-bg); }
 
+/* 360° tour badge — top-right corner of the photo, opposite the Featured badge */
+.acc-tour-badge {
+  position: absolute; right: 10px; top: 10px;
+  display: flex; align-items: center; gap: 4px;
+  background: rgba(10, 10, 11, 0.82);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: var(--r-full);
+  pointer-events: none;
+}
+.acc-tour-badge svg { width: 11px; height: 11px; }
+
+/* 360° tour toggle button — gold ring when a tour is uploaded */
+.acc-card-actions .icon-btn--tour.is-tour-active {
+  color: var(--gold-400);
+  background: var(--amber-bg);
+  border-color: var(--gold-600);
+}
+
+/* ---------- Manage Photos modal ---------- */
+.acc-photos-hint { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.5; }
+.acc-photos-hint strong { color: var(--text); }
+.acc-photos-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  gap: 10px;
+}
+.acc-photo-tile {
+  position: relative;
+  aspect-ratio: 1 / 1;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  background: var(--input-bg);
+  border: 1px solid var(--border);
+}
+.acc-photo-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.acc-photo-tile.is-cover { border-color: var(--gold-500); }
+.acc-photo-cover-tag {
+  position: absolute; left: 6px; top: 6px;
+  background: rgba(198, 154, 84, 0.92); color: #0a0a0b;
+  font-size: 0.62rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  padding: 2px 7px; border-radius: var(--r-full);
+}
+.acc-photo-tile-actions {
+  position: absolute; inset: auto 0 0 0;
+  display: flex; gap: 4px; padding: 6px;
+  background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+  opacity: 0; transition: opacity var(--transition);
+}
+.acc-photo-tile:hover .acc-photo-tile-actions,
+.acc-photo-tile:focus-within .acc-photo-tile-actions { opacity: 1; }
+.acc-photo-tile-actions button {
+  flex: 1;
+  border: none; border-radius: var(--r-md);
+  font-size: 0.65rem; font-weight: 700;
+  padding: 5px 4px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  transition: background var(--transition);
+}
+.acc-photo-tile-actions button svg { width: 11px; height: 11px; }
+.acc-photo-set-cover-btn { background: rgba(198, 154, 84, 0.9); color: #0a0a0b; }
+.acc-photo-set-cover-btn:hover { background: var(--gold-500); }
+.acc-photo-delete-btn { background: rgba(220, 60, 60, 0.85); color: #fff; }
+.acc-photo-delete-btn:hover { background: var(--red); }
+.acc-photos-empty, .acc-photos-loading {
+  text-align: center; padding: 24px 10px;
+  color: var(--text-tertiary); font-size: 0.825rem;
+}
+
+/* ---------- 360° Tour modal ---------- */
+.acc-tour-status-card {
+  display: flex; flex-direction: column; gap: 12px;
+  padding: 16px; border: 1px solid var(--border); border-radius: var(--r-md);
+  background: var(--panel-alt);
+}
+.acc-tour-status-head { display: flex; align-items: center; gap: 10px; }
+.acc-tour-status-icon {
+  width: 40px; height: 40px; flex-shrink: 0;
+  border-radius: var(--r-full);
+  display: flex; align-items: center; justify-content: center;
+}
+.acc-tour-status-icon--active { background: var(--amber-bg); color: var(--gold-400); }
+.acc-tour-status-icon--empty { background: var(--panel); color: var(--text-muted); }
+.acc-tour-status-text strong { display: block; font-size: 0.9rem; color: var(--text); }
+.acc-tour-status-text span { font-size: 0.78rem; color: var(--text-secondary); }
+.acc-tour-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
 @media (max-width: 640px) {
   .acc-field-row { grid-template-columns: 1fr; }
   .acc-toolbar { flex-direction: column; align-items: stretch; }
@@ -353,6 +446,8 @@ require_once __DIR__ . '/includes/ui.php';
         <?php
           $amenities = acc_decode_amenities($row['amenities']);
           $isFeatured = (int) $row['is_featured'];
+          $hasTour = !empty($row['tour_filename']);
+          $photoCount = (int) $row['photo_count'];
           $editPayload = [
               'id'             => (int) $row['id'],
               'name'           => $row['name'],
@@ -364,15 +459,18 @@ require_once __DIR__ . '/includes/ui.php';
               'amenities'      => $amenities,
               'image_filename' => $row['image_filename'],
               'is_featured'    => $isFeatured,
+              'tour_filename'  => $row['tour_filename'],
+              'photo_count'    => $photoCount,
           ];
           $searchText = mb_strtolower($row['name'] . ' ' . $row['type']);
         ?>
         <div class="acc-card" data-acc-card
+             data-acc-id="<?php echo (int) $row['id']; ?>"
              data-acc-status="<?php echo htmlspecialchars($row['status'], ENT_QUOTES, 'UTF-8'); ?>"
              data-acc-search-text="<?php echo htmlspecialchars($searchText, ENT_QUOTES, 'UTF-8'); ?>"
              data-acc-featured="<?php echo $isFeatured; ?>">
 
-          <div class="acc-card-media">
+          <div class="acc-card-media" data-acc-cover-media>
             <?php if ($row['image_filename']): ?>
               <img src="<?php echo ACC_UPLOAD_URL_BASE . '/' . rawurlencode($row['image_filename']); ?>" alt="<?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>" loading="lazy">
             <?php else: ?>
@@ -383,6 +481,11 @@ require_once __DIR__ . '/includes/ui.php';
               <span class="acc-featured-badge">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
                 Featured
+              </span>
+            <?php endif; ?>
+            <?php if ($hasTour): ?>
+              <span class="acc-tour-badge" data-acc-tour-badge title="360&deg; virtual tour uploaded">
+                <?php echo acc_icon('globe', 'icon-sm'); ?> 360&deg;
               </span>
             <?php endif; ?>
           </div>
@@ -427,6 +530,23 @@ require_once __DIR__ . '/includes/ui.php';
                       aria-label="<?php echo $isFeatured ? 'Remove from featured' : 'Mark as featured'; ?>"
                       title="<?php echo $isFeatured ? 'Remove from featured' : 'Mark as featured'; ?>">
                 <?php echo acc_icon('star', 'icon-sm'); ?>
+              </button>
+              <!-- Manage Photos -->
+              <button type="button" class="icon-btn"
+                      data-acc-photos-toggle="<?php echo (int) $row['id']; ?>"
+                      data-acc-photos-name="<?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                      aria-label="Manage photos for <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                      title="Manage Photos<?php echo $photoCount ? ' (' . $photoCount . ')' : ''; ?>">
+                <?php echo acc_icon('camera', 'icon-sm'); ?>
+              </button>
+              <!-- 360° Tour -->
+              <button type="button" class="icon-btn icon-btn--tour <?php echo $hasTour ? 'is-tour-active' : ''; ?>"
+                      data-acc-tour-toggle="<?php echo (int) $row['id']; ?>"
+                      data-acc-tour-name="<?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                      data-acc-tour-current="<?php echo htmlspecialchars((string) $row['tour_filename'], ENT_QUOTES, 'UTF-8'); ?>"
+                      aria-label="Manage 360&deg; tour for <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>"
+                      title="360&deg; Tour">
+                <?php echo acc_icon('globe', 'icon-sm'); ?>
               </button>
               <button type="button" class="icon-btn"
                       data-acc-edit='<?php echo htmlspecialchars((string) json_encode($editPayload, JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8'); ?>'
@@ -575,6 +695,59 @@ require_once __DIR__ . '/includes/ui.php';
     <div class="acc-modal-footer">
       <button type="button" class="btn btn-secondary" data-acc-confirm-close>Cancel</button>
       <button type="button" class="btn btn-danger" data-acc-confirm-yes>Delete</button>
+    </div>
+  </div>
+</div>
+
+<!-- Manage Photos modal -->
+<div class="acc-modal-overlay" data-acc-photos-modal aria-hidden="true">
+  <div class="acc-modal" role="dialog" aria-modal="true" aria-labelledby="accPhotosModalTitle">
+    <div class="acc-modal-header">
+      <h2 id="accPhotosModalTitle" data-acc-photos-modal-title>Manage Photos</h2>
+      <button type="button" class="icon-btn" data-acc-photos-modal-close aria-label="Close dialog">
+        <?php echo icon('close', 'icon-sm'); ?>
+      </button>
+    </div>
+    <div class="acc-modal-body">
+      <p class="acc-photos-hint">Upload extra photos guests can browse for this room. The photo marked <strong>Cover</strong> is the one shown on cards, the booking page, and the public site.</p>
+
+      <div class="form-alert form-alert--error" data-acc-photos-alert style="display:none;" role="alert"></div>
+
+      <div class="acc-photos-loading" data-acc-photos-loading>Loading photos&hellip;</div>
+      <div class="acc-photos-empty" data-acc-photos-empty style="display:none;">No additional photos yet. Add some below.</div>
+      <div class="acc-photos-grid" data-acc-photos-grid></div>
+
+      <div class="acc-image-controls">
+        <label class="btn btn-secondary acc-upload-btn" data-acc-photos-upload-label>
+          <?php echo icon('upload', 'icon-sm'); ?> Add Photos
+          <input type="file" data-acc-photos-input accept="image/png, image/jpeg, image/webp" multiple style="display:none;">
+        </label>
+        <p class="acc-image-hint">JPG, PNG, or WEBP. Max 5MB each, up to <?php echo ACC_GALLERY_MAX_PHOTOS; ?> extra photos per room.</p>
+      </div>
+    </div>
+    <div class="acc-modal-footer">
+      <button type="button" class="btn btn-secondary" data-acc-photos-modal-close>Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- 360° Tour modal -->
+<div class="acc-modal-overlay" data-acc-tour-modal aria-hidden="true">
+  <div class="acc-modal" role="dialog" aria-modal="true" aria-labelledby="accTourModalTitle">
+    <div class="acc-modal-header">
+      <h2 id="accTourModalTitle" data-acc-tour-modal-title>360&deg; Virtual Tour</h2>
+      <button type="button" class="icon-btn" data-acc-tour-modal-close aria-label="Close dialog">
+        <?php echo icon('close', 'icon-sm'); ?>
+      </button>
+    </div>
+    <div class="acc-modal-body">
+      <div class="form-alert form-alert--error" data-acc-tour-alert style="display:none;" role="alert"></div>
+      <div class="acc-tour-status" data-acc-tour-status></div>
+      <input type="file" data-acc-tour-input accept=".html,.htm,text/html" style="display:none;">
+      <p class="acc-image-hint">Upload a self-contained 360&deg; tour export (HTML file). Max 30MB. Guests and registered users will be able to view it when browsing this room.</p>
+    </div>
+    <div class="acc-modal-footer">
+      <button type="button" class="btn btn-secondary" data-acc-tour-modal-close>Close</button>
     </div>
   </div>
 </div>

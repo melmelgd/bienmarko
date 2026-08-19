@@ -413,11 +413,520 @@
   });
 
   /* ---------------------------------------------------------------------
+     Manage Photos modal — extra gallery photos per room, on top of the
+     single cover photo the add/edit form controls. Every mutation here
+     updates the modal AND the underlying card in place (no full page
+     reload) so uploading several photos in a row stays smooth.
+     --------------------------------------------------------------------- */
+  var PHOTOS_URL_BASE = 'assets/uploads/accommodations/';
+  var TOURS_URL_BASE  = 'assets/uploads/tours/';
+
+  var photosModalOverlay  = document.querySelector('[data-acc-photos-modal]');
+  var photosModalTitle    = document.querySelector('[data-acc-photos-modal-title]');
+  var photosGrid          = document.querySelector('[data-acc-photos-grid]');
+  var photosLoadingEl     = document.querySelector('[data-acc-photos-loading]');
+  var photosEmptyEl       = document.querySelector('[data-acc-photos-empty]');
+  var photosAlertEl       = document.querySelector('[data-acc-photos-alert]');
+  var photosInput         = document.querySelector('[data-acc-photos-input]');
+  var photosModalCloseEls = Array.prototype.slice.call(document.querySelectorAll('[data-acc-photos-modal-close]'));
+
+  var currentPhotosAccId = null;
+  var photosLastFocused  = null;
+
+  function showPhotosAlert(msg) {
+    if (!photosAlertEl) return;
+    photosAlertEl.textContent = msg;
+    photosAlertEl.style.display = 'block';
+  }
+  function hidePhotosAlert() {
+    if (!photosAlertEl) return;
+    photosAlertEl.style.display = 'none';
+    photosAlertEl.textContent = '';
+  }
+
+  function starIconSmall() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"></polygon></svg>';
+  }
+  function trashIconSmall() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="4 7 20 7"></polyline><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"></path><path d="M19 7l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"></path></svg>';
+  }
+  function globeIconSmall() {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"></path></svg>';
+  }
+
+  function findCard(id) {
+    return grid ? grid.querySelector('[data-acc-card][data-acc-id="' + id + '"]') : null;
+  }
+
+  /** Merges new fields into a card's data-acc-edit JSON payload so the
+      Edit modal stays accurate even though it wasn't the one that changed
+      the data. Silently no-ops on malformed/missing payloads. */
+  function patchCardEditPayload(card, patch) {
+    var editBtn = card.querySelector('[data-acc-edit]');
+    if (!editBtn) return;
+    try {
+      var payload = JSON.parse(editBtn.getAttribute('data-acc-edit'));
+      Object.keys(patch).forEach(function (key) { payload[key] = patch[key]; });
+      editBtn.setAttribute('data-acc-edit', JSON.stringify(payload));
+    } catch (e) { /* malformed payload — leave it alone rather than crash */ }
+  }
+
+  /** Keeps a card's cover image, edit payload, and "Manage Photos" button
+      label in sync after a photo mutation — without a full page reload. */
+  function updateCardCover(id, filename, photoCount) {
+    var card = findCard(id);
+    if (!card) return;
+
+    var media = card.querySelector('[data-acc-cover-media]');
+    if (media) {
+      var img = media.querySelector('img');
+      if (filename) {
+        var src = PHOTOS_URL_BASE + encodeURIComponent(filename);
+        if (img) {
+          img.src = src;
+        } else {
+          img = document.createElement('img');
+          img.src = src;
+          img.loading = 'lazy';
+          img.alt = '';
+          media.insertBefore(img, media.firstChild);
+          var placeholderIcon = media.querySelector('svg.icon-lg');
+          if (placeholderIcon) placeholderIcon.remove();
+        }
+      } else if (img) {
+        img.remove();
+      }
+    }
+
+    patchCardEditPayload(card, { image_filename: filename || null });
+
+    if (typeof photoCount === 'number') {
+      patchCardEditPayload(card, { photo_count: photoCount });
+      var photosBtn = card.querySelector('[data-acc-photos-toggle]');
+      if (photosBtn) {
+        photosBtn.title = photoCount ? ('Manage Photos (' + photoCount + ')') : 'Manage Photos';
+      }
+    }
+  }
+
+  /** Keeps a card's 360° badge + toggle button state in sync after a tour
+      mutation — without a full page reload. */
+  function updateCardTour(id, tourFilename) {
+    var card = findCard(id);
+    if (!card) return;
+
+    var toggleBtn = card.querySelector('[data-acc-tour-toggle]');
+    if (toggleBtn) {
+      toggleBtn.setAttribute('data-acc-tour-current', tourFilename || '');
+      toggleBtn.classList.toggle('is-tour-active', !!tourFilename);
+    }
+
+    var media = card.querySelector('[data-acc-cover-media]');
+    if (media) {
+      var badge = media.querySelector('[data-acc-tour-badge]');
+      if (tourFilename && !badge) {
+        badge = document.createElement('span');
+        badge.className = 'acc-tour-badge';
+        badge.setAttribute('data-acc-tour-badge', '');
+        badge.title = '360\u00B0 virtual tour uploaded';
+        badge.innerHTML = globeIconSmall() + ' 360\u00B0';
+        media.appendChild(badge);
+      } else if (!tourFilename && badge) {
+        badge.remove();
+      }
+    }
+
+    patchCardEditPayload(card, { tour_filename: tourFilename || null });
+  }
+
+  function renderPhotosGrid(photos, cover) {
+    if (!photosGrid) return;
+    photosGrid.innerHTML = '';
+
+    if (!photos.length) {
+      if (photosEmptyEl) photosEmptyEl.style.display = 'block';
+      return;
+    }
+    if (photosEmptyEl) photosEmptyEl.style.display = 'none';
+
+    photos.forEach(function (photo) {
+      var isCover = !!cover && photo.filename === cover;
+      var tile = document.createElement('div');
+      tile.className = 'acc-photo-tile' + (isCover ? ' is-cover' : '');
+      tile.innerHTML =
+        '<img src="' + PHOTOS_URL_BASE + encodeURIComponent(photo.filename) + '" alt="">' +
+        (isCover ? '<span class="acc-photo-cover-tag">Cover</span>' : '') +
+        '<div class="acc-photo-tile-actions">' +
+          (isCover ? '' :
+            '<button type="button" class="acc-photo-set-cover-btn" data-set-cover="' + photo.id + '">' + starIconSmall() + 'Cover</button>') +
+          '<button type="button" class="acc-photo-delete-btn" data-delete-photo="' + photo.id + '">' + trashIconSmall() + 'Delete</button>' +
+        '</div>';
+      photosGrid.appendChild(tile);
+    });
+  }
+
+  function fetchPhotos(id) {
+    if (photosLoadingEl) photosLoadingEl.style.display = 'block';
+    if (photosGrid) photosGrid.innerHTML = '';
+    if (photosEmptyEl) photosEmptyEl.style.display = 'none';
+    hidePhotosAlert();
+
+    var formData = new FormData();
+    formData.set('action', 'list_photos');
+    formData.set('id', id);
+    formData.set('csrf_token', csrfToken());
+
+    fetch(API_URL, { method: 'POST', body: formData })
+      .then(function (res) { return res.json(); })
+      .then(function (json) {
+        if (photosLoadingEl) photosLoadingEl.style.display = 'none';
+        if (json && json.success) {
+          renderPhotosGrid(json.photos || [], json.cover);
+        } else {
+          showPhotosAlert((json && json.error) || 'Could not load photos.');
+        }
+      })
+      .catch(function () {
+        if (photosLoadingEl) photosLoadingEl.style.display = 'none';
+        showPhotosAlert('Network error. Please try again.');
+      });
+  }
+
+  function openPhotosModal(id, name) {
+    if (!photosModalOverlay) return;
+    photosLastFocused = document.activeElement;
+    currentPhotosAccId = id;
+
+    if (photosModalTitle) photosModalTitle.textContent = 'Manage Photos \u2014 ' + name;
+    if (photosInput) photosInput.value = '';
+
+    photosModalOverlay.classList.add('is-open');
+    photosModalOverlay.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+
+    fetchPhotos(id);
+  }
+
+  function closePhotosModal() {
+    if (!photosModalOverlay) return;
+    photosModalOverlay.classList.remove('is-open');
+    photosModalOverlay.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    currentPhotosAccId = null;
+    if (photosLastFocused && typeof photosLastFocused.focus === 'function') photosLastFocused.focus();
+  }
+
+  document.querySelectorAll('[data-acc-photos-toggle]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-acc-photos-toggle');
+      var name = btn.getAttribute('data-acc-photos-name') || 'this room';
+      openPhotosModal(id, name);
+    });
+  });
+
+  photosModalCloseEls.forEach(function (btn) {
+    btn.addEventListener('click', closePhotosModal);
+  });
+  if (photosModalOverlay) {
+    photosModalOverlay.addEventListener('click', function (e) {
+      if (e.target === photosModalOverlay) closePhotosModal();
+    });
+  }
+
+  if (photosInput) {
+    photosInput.addEventListener('change', function () {
+      var files = photosInput.files;
+      if (!files || !files.length || !currentPhotosAccId) return;
+      hidePhotosAlert();
+
+      var formData = new FormData();
+      formData.set('action', 'upload_photos');
+      formData.set('id', currentPhotosAccId);
+      formData.set('csrf_token', csrfToken());
+      Array.prototype.forEach.call(files, function (file) {
+        formData.append('photos[]', file);
+      });
+
+      photosInput.disabled = true;
+
+      fetch(API_URL, { method: 'POST', body: formData })
+        .then(function (res) { return res.json(); })
+        .then(function (json) {
+          photosInput.disabled = false;
+          photosInput.value = '';
+          if (json && json.success) {
+            renderPhotosGrid(json.photos || [], json.cover);
+            updateCardCover(currentPhotosAccId, json.cover, (json.photos || []).length);
+            if (json.warning) showPhotosAlert(json.warning);
+          } else {
+            showPhotosAlert((json && json.error) || 'Could not upload photos.');
+          }
+        })
+        .catch(function () {
+          photosInput.disabled = false;
+          photosInput.value = '';
+          showPhotosAlert('Network error. Please try again.');
+        });
+    });
+  }
+
+  if (photosGrid) {
+    photosGrid.addEventListener('click', function (e) {
+      var setCoverBtn = e.target.closest('[data-set-cover]');
+      var deleteBtn   = e.target.closest('[data-delete-photo]');
+
+      if (setCoverBtn && currentPhotosAccId) {
+        var photoId = setCoverBtn.getAttribute('data-set-cover');
+        setCoverBtn.disabled = true;
+
+        var fd = new FormData();
+        fd.set('action', 'set_cover_photo');
+        fd.set('id', currentPhotosAccId);
+        fd.set('photo_id', photoId);
+        fd.set('csrf_token', csrfToken());
+
+        fetch(API_URL, { method: 'POST', body: fd })
+          .then(function (res) { return res.json(); })
+          .then(function (json) {
+            if (json && json.success) {
+              fetchPhotos(currentPhotosAccId);
+              updateCardCover(currentPhotosAccId, json.cover);
+            } else {
+              setCoverBtn.disabled = false;
+              showPhotosAlert((json && json.error) || 'Could not set cover photo.');
+            }
+          })
+          .catch(function () {
+            setCoverBtn.disabled = false;
+            showPhotosAlert('Network error. Please try again.');
+          });
+        return;
+      }
+
+      if (deleteBtn && currentPhotosAccId) {
+        if (!window.confirm('Delete this photo?')) return;
+        var delPhotoId = deleteBtn.getAttribute('data-delete-photo');
+        deleteBtn.disabled = true;
+
+        var fd2 = new FormData();
+        fd2.set('action', 'delete_photo');
+        fd2.set('id', currentPhotosAccId);
+        fd2.set('photo_id', delPhotoId);
+        fd2.set('csrf_token', csrfToken());
+
+        fetch(API_URL, { method: 'POST', body: fd2 })
+          .then(function (res) { return res.json(); })
+          .then(function (json) {
+            if (json && json.success) {
+              renderPhotosGrid(json.photos || [], json.cover);
+              updateCardCover(currentPhotosAccId, json.cover, (json.photos || []).length);
+            } else {
+              deleteBtn.disabled = false;
+              showPhotosAlert((json && json.error) || 'Could not delete photo.');
+            }
+          })
+          .catch(function () {
+            deleteBtn.disabled = false;
+            showPhotosAlert('Network error. Please try again.');
+          });
+      }
+    });
+  }
+
+  /* ---------------------------------------------------------------------
+     360° Tour modal — upload/replace/remove the self-contained tour HTML
+     file for a room. Same in-place update approach as Manage Photos.
+     --------------------------------------------------------------------- */
+  var tourModalOverlay   = document.querySelector('[data-acc-tour-modal]');
+  var tourModalTitle     = document.querySelector('[data-acc-tour-modal-title]');
+  var tourStatusEl       = document.querySelector('[data-acc-tour-status]');
+  var tourAlertEl        = document.querySelector('[data-acc-tour-alert]');
+  var tourInput          = document.querySelector('[data-acc-tour-input]');
+  var tourModalCloseEls  = Array.prototype.slice.call(document.querySelectorAll('[data-acc-tour-modal-close]'));
+
+  var currentTourAccId = null;
+  var tourLastFocused  = null;
+  var TOUR_MAX_BYTES   = 30 * 1024 * 1024; // mirrors ACC_MAX_TOUR_BYTES server-side
+
+  function showTourAlert(msg) {
+    if (!tourAlertEl) return;
+    tourAlertEl.textContent = msg;
+    tourAlertEl.style.display = 'block';
+  }
+  function hideTourAlert() {
+    if (!tourAlertEl) return;
+    tourAlertEl.style.display = 'none';
+    tourAlertEl.textContent = '';
+  }
+
+  function handleTourRemove() {
+    if (!currentTourAccId) return;
+    if (!window.confirm('Remove the 360\u00B0 tour from this room?')) return;
+
+    var formData = new FormData();
+    formData.set('action', 'delete_tour');
+    formData.set('id', currentTourAccId);
+    formData.set('csrf_token', csrfToken());
+
+    fetch(API_URL, { method: 'POST', body: formData })
+      .then(function (res) { return res.json(); })
+      .then(function (json) {
+        if (json && json.success) {
+          renderTourStatus(null);
+          updateCardTour(currentTourAccId, null);
+        } else {
+          showTourAlert((json && json.error) || 'Could not remove tour file.');
+        }
+      })
+      .catch(function () {
+        showTourAlert('Network error. Please try again.');
+      });
+  }
+
+  function renderTourStatus(filename) {
+    if (!tourStatusEl) return;
+
+    if (filename) {
+      tourStatusEl.innerHTML =
+        '<div class="acc-tour-status-card">' +
+          '<div class="acc-tour-status-head">' +
+            '<span class="acc-tour-status-icon acc-tour-status-icon--active">' + globeIconSmall() + '</span>' +
+            '<div class="acc-tour-status-text"><strong>360\u00B0 tour uploaded</strong><span>Guests and users can view this room in 360\u00B0 when browsing.</span></div>' +
+          '</div>' +
+          '<div class="acc-tour-actions">' +
+            '<a class="btn btn-secondary" href="' + TOURS_URL_BASE + encodeURIComponent(filename) + '" target="_blank" rel="noopener">Preview</a>' +
+            '<label class="btn btn-secondary acc-upload-btn" data-acc-tour-replace-label>Replace File</label>' +
+            '<button type="button" class="btn btn-danger" data-acc-tour-remove>Remove</button>' +
+          '</div>' +
+        '</div>';
+
+      var replaceLabel = tourStatusEl.querySelector('[data-acc-tour-replace-label]');
+      if (replaceLabel && tourInput) {
+        replaceLabel.addEventListener('click', function (e) {
+          e.preventDefault();
+          tourInput.click();
+        });
+      }
+      var removeBtn = tourStatusEl.querySelector('[data-acc-tour-remove]');
+      if (removeBtn) removeBtn.addEventListener('click', handleTourRemove);
+    } else {
+      tourStatusEl.innerHTML =
+        '<div class="acc-tour-status-card">' +
+          '<div class="acc-tour-status-head">' +
+            '<span class="acc-tour-status-icon acc-tour-status-icon--empty">' + globeIconSmall() + '</span>' +
+            '<div class="acc-tour-status-text"><strong>No tour uploaded yet</strong><span>Upload a 360\u00B0 tour HTML export for this room.</span></div>' +
+          '</div>' +
+          '<div class="acc-tour-actions">' +
+            '<label class="btn btn-primary acc-upload-btn" data-acc-tour-upload-label>Upload Tour File</label>' +
+          '</div>' +
+        '</div>';
+
+      var uploadLabel = tourStatusEl.querySelector('[data-acc-tour-upload-label]');
+      if (uploadLabel && tourInput) {
+        uploadLabel.addEventListener('click', function (e) {
+          e.preventDefault();
+          tourInput.click();
+        });
+      }
+    }
+  }
+
+  function openTourModal(id, name, currentFilename) {
+    if (!tourModalOverlay) return;
+    tourLastFocused = document.activeElement;
+    currentTourAccId = id;
+
+    if (tourModalTitle) tourModalTitle.textContent = '360\u00B0 Virtual Tour \u2014 ' + name;
+    if (tourInput) tourInput.value = '';
+    hideTourAlert();
+    renderTourStatus(currentFilename || null);
+
+    tourModalOverlay.classList.add('is-open');
+    tourModalOverlay.setAttribute('aria-hidden', 'false');
+    document.body.style.overflow = 'hidden';
+  }
+
+  function closeTourModal() {
+    if (!tourModalOverlay) return;
+    tourModalOverlay.classList.remove('is-open');
+    tourModalOverlay.setAttribute('aria-hidden', 'true');
+    document.body.style.overflow = '';
+    currentTourAccId = null;
+    if (tourLastFocused && typeof tourLastFocused.focus === 'function') tourLastFocused.focus();
+  }
+
+  document.querySelectorAll('[data-acc-tour-toggle]').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var id = btn.getAttribute('data-acc-tour-toggle');
+      var name = btn.getAttribute('data-acc-tour-name') || 'this room';
+      var current = btn.getAttribute('data-acc-tour-current') || '';
+      openTourModal(id, name, current);
+    });
+  });
+
+  tourModalCloseEls.forEach(function (btn) {
+    btn.addEventListener('click', closeTourModal);
+  });
+  if (tourModalOverlay) {
+    tourModalOverlay.addEventListener('click', function (e) {
+      if (e.target === tourModalOverlay) closeTourModal();
+    });
+  }
+
+  if (tourInput) {
+    tourInput.addEventListener('change', function () {
+      var file = tourInput.files && tourInput.files[0];
+      if (!file || !currentTourAccId) return;
+      hideTourAlert();
+
+      var ext = (file.name.split('.').pop() || '').toLowerCase();
+      if (ext !== 'html' && ext !== 'htm') {
+        showTourAlert('The 360\u00B0 tour must be an HTML file (.html).');
+        tourInput.value = '';
+        return;
+      }
+      if (file.size > TOUR_MAX_BYTES) {
+        showTourAlert('360\u00B0 tour file is too large (max 30MB).');
+        tourInput.value = '';
+        return;
+      }
+
+      var formData = new FormData();
+      formData.set('action', 'upload_tour');
+      formData.set('id', currentTourAccId);
+      formData.set('csrf_token', csrfToken());
+      formData.set('tour_html', file);
+
+      tourInput.disabled = true;
+
+      fetch(API_URL, { method: 'POST', body: formData })
+        .then(function (res) { return res.json(); })
+        .then(function (json) {
+          tourInput.disabled = false;
+          tourInput.value = '';
+          if (json && json.success) {
+            renderTourStatus(json.tour_filename);
+            updateCardTour(currentTourAccId, json.tour_filename);
+          } else {
+            showTourAlert((json && json.error) || 'Could not upload tour file.');
+          }
+        })
+        .catch(function () {
+          tourInput.disabled = false;
+          tourInput.value = '';
+          showTourAlert('Network error. Please try again.');
+        });
+    });
+  }
+
+  /* ---------------------------------------------------------------------
      Escape closes whichever overlay is open
      --------------------------------------------------------------------- */
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape') return;
     if (modalOverlay && modalOverlay.classList.contains('is-open')) closeModal();
     if (confirmOverlay && confirmOverlay.classList.contains('is-open')) closeConfirm();
+    if (photosModalOverlay && photosModalOverlay.classList.contains('is-open')) closePhotosModal();
+    if (tourModalOverlay && tourModalOverlay.classList.contains('is-open')) closeTourModal();
   });
 })();
