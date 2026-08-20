@@ -18,6 +18,11 @@
  *   action=set_cover_photo - promote a gallery photo to be the card/cover photo
  *   action=upload_tour   - upload/replace the 360° tour HTML file for a room
  *   action=delete_tour   - remove the 360° tour file from a room
+ *
+ * `type` is the accommodation CATEGORY (Room, Event Hall, Cottage,
+ * Swimming Pool, or a custom "other" value). `room_number` is only
+ * accepted/required when the raw <select> value posted for `type` is
+ * exactly "Room" — see acc_validate_fields() below.
  * -----------------------------------------------------------------------
  */
 
@@ -72,15 +77,35 @@ function acc_validate_fields(array $post): array
 
     $name = trim((string) ($post['name'] ?? ''));
     if ($name === '' || mb_strlen($name) > 150) {
-        $errors[] = 'Room name is required (max 150 characters).';
+        $errors[] = 'Accommodation name is required (max 150 characters).';
     }
 
-    $type = trim((string) ($post['type'] ?? ''));
+    // Keep the raw <select> value separate from the resolved $type — the
+    // room-number gating below needs to know what the admin actually
+    // *picked* in the dropdown, not the final free-text value (which, for
+    // "other", comes from a different field entirely).
+    $typeRaw = trim((string) ($post['type'] ?? ''));
+    $type = $typeRaw;
     if ($type === 'other') {
         $type = trim((string) ($post['type_other'] ?? ''));
     }
     if ($type === '' || mb_strlen($type) > 100) {
-        $errors[] = 'Room type is required (max 100 characters).';
+        $errors[] = 'Accommodation type is required (max 100 characters).';
+    }
+
+    // Room number: only accepted (and required) when the admin selected
+    // the "Room" category. For every other category it's cleared to NULL
+    // regardless of what was posted, so stale values can't linger after
+    // switching an accommodation's type away from "Room".
+    $roomNumber = trim((string) ($post['room_number'] ?? ''));
+    if (acc_type_requires_room_number($typeRaw)) {
+        if ($roomNumber === '') {
+            $errors[] = 'Room number is required when the accommodation type is Room.';
+        } elseif (mb_strlen($roomNumber) > 20) {
+            $errors[] = 'Room number is too long (max 20 characters).';
+        }
+    } else {
+        $roomNumber = null;
     }
 
     $capacity = filter_var($post['capacity'] ?? null, FILTER_VALIDATE_INT);
@@ -116,6 +141,7 @@ function acc_validate_fields(array $post): array
         [
             'name'        => $name,
             'type'        => $type,
+            'room_number' => $roomNumber,
             'capacity'    => $capacity !== false ? (int) $capacity : 0,
             'price'       => $price !== false ? (float) $price : 0.0,
             'status'      => $status,
@@ -355,13 +381,14 @@ function acc_action_create(PDO $pdo): never
 
     $stmt = $pdo->prepare(
         'INSERT INTO `accommodations`
-            (`name`, `type`, `capacity`, `price`, `status`, `description`, `amenities`, `image_filename`, `is_featured`)
+            (`name`, `type`, `room_number`, `capacity`, `price`, `status`, `description`, `amenities`, `image_filename`, `is_featured`)
          VALUES
-            (:name, :type, :capacity, :price, :status, :description, :amenities, :image_filename, :is_featured)'
+            (:name, :type, :room_number, :capacity, :price, :status, :description, :amenities, :image_filename, :is_featured)'
     );
     $stmt->execute([
         'name'           => $data['name'],
         'type'           => $data['type'],
+        'room_number'    => $data['room_number'],
         'capacity'       => $data['capacity'],
         'price'          => $data['price'],
         'status'         => $data['status'],
@@ -409,7 +436,7 @@ function acc_action_update(PDO $pdo): never
 
     $stmt = $pdo->prepare(
         'UPDATE `accommodations` SET
-            `name` = :name, `type` = :type, `capacity` = :capacity, `price` = :price,
+            `name` = :name, `type` = :type, `room_number` = :room_number, `capacity` = :capacity, `price` = :price,
             `status` = :status, `description` = :description, `amenities` = :amenities,
             `image_filename` = :image_filename, `is_featured` = :is_featured
          WHERE `id` = :id'
@@ -417,6 +444,7 @@ function acc_action_update(PDO $pdo): never
     $stmt->execute([
         'name'           => $data['name'],
         'type'           => $data['type'],
+        'room_number'    => $data['room_number'],
         'capacity'       => $data['capacity'],
         'price'          => $data['price'],
         'status'         => $data['status'],

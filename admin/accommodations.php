@@ -16,7 +16,7 @@ try {
     acc_ensure_photos_table();
     $pdo = bienmarko_db();
     $accommodations = $pdo->query(
-        'SELECT `id`, `name`, `type`, `capacity`, `price`, `status`, `description`, `amenities`,
+        'SELECT `id`, `name`, `type`, `room_number`, `capacity`, `price`, `status`, `description`, `amenities`,
                 `image_filename`, `is_featured`, `tour_filename`,
                 (SELECT COUNT(*) FROM `accommodation_photos` WHERE `accommodation_id` = `accommodations`.`id`) AS `photo_count`
          FROM `accommodations`
@@ -29,7 +29,7 @@ try {
 
 $csrfToken = bienmarko_csrf_token();
 
-$roomTypeOptions = ['Single Room', 'Twin Room', 'Double Room', 'Deluxe Room', 'Family Room', 'Suite', 'Dormitory'];
+$accommodationTypeOptions = ACC_ACCOMMODATION_TYPES;
 
 $active_page = 'accommodations';
 $page_title = 'Accommodations';
@@ -430,7 +430,7 @@ require_once __DIR__ . '/includes/ui.php';
     <div class="acc-toolbar">
       <div class="acc-search">
         <?php echo acc_icon('search', 'icon-sm'); ?>
-        <input type="text" data-acc-search-input placeholder="Search by room name or type&hellip;">
+        <input type="text" data-acc-search-input placeholder="Search by name, type, or room number&hellip;">
       </div>
       <div class="acc-filters">
         <button type="button" class="is-active" data-acc-filter="">All</button>
@@ -452,6 +452,7 @@ require_once __DIR__ . '/includes/ui.php';
               'id'             => (int) $row['id'],
               'name'           => $row['name'],
               'type'           => $row['type'],
+              'room_number'    => $row['room_number'],
               'capacity'       => (int) $row['capacity'],
               'price'          => (float) $row['price'],
               'status'         => $row['status'],
@@ -462,7 +463,7 @@ require_once __DIR__ . '/includes/ui.php';
               'tour_filename'  => $row['tour_filename'],
               'photo_count'    => $photoCount,
           ];
-          $searchText = mb_strtolower($row['name'] . ' ' . $row['type']);
+          $searchText = mb_strtolower($row['name'] . ' ' . $row['type'] . ' ' . (string) $row['room_number']);
         ?>
         <div class="acc-card" data-acc-card
              data-acc-id="<?php echo (int) $row['id']; ?>"
@@ -494,7 +495,12 @@ require_once __DIR__ . '/includes/ui.php';
             <div class="acc-card-heading">
               <div>
                 <h3 class="acc-card-name"><?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?></h3>
-                <p class="acc-card-type"><?php echo htmlspecialchars($row['type'], ENT_QUOTES, 'UTF-8'); ?></p>
+                <p class="acc-card-type">
+                  <?php echo htmlspecialchars($row['type'], ENT_QUOTES, 'UTF-8'); ?>
+                  <?php if (acc_type_requires_room_number((string) $row['type']) && $row['room_number'] !== null && $row['room_number'] !== ''): ?>
+                    &nbsp;&middot;&nbsp;Room <?php echo htmlspecialchars($row['room_number'], ENT_QUOTES, 'UTF-8'); ?>
+                  <?php endif; ?>
+                </p>
               </div>
               <select class="status-select status-select--<?php echo htmlspecialchars($row['status'], ENT_QUOTES, 'UTF-8'); ?>"
                       data-acc-status-select="<?php echo (int) $row['id']; ?>"
@@ -594,28 +600,37 @@ require_once __DIR__ . '/includes/ui.php';
         <div class="form-alert form-alert--error" data-acc-alert style="display:none;" role="alert"></div>
 
         <div class="field">
-          <label class="field-label" for="accName">Room Name</label>
+          <label class="field-label" for="accName">Accommodation Name</label>
           <div class="field-input-wrap">
             <?php echo icon('bed'); ?>
-            <input class="has-icon" type="text" id="accName" name="name" maxlength="150" placeholder="e.g. Garden Twin Room" required>
+            <input class="has-icon" type="text" id="accName" name="name" maxlength="150" placeholder="e.g. Garden Twin Room, Poolside Cottage, Grand Event Hall" required>
           </div>
         </div>
 
         <div class="acc-field-row">
           <div class="field">
-            <label class="field-label" for="accTypeSelect">Room Type</label>
+            <label class="field-label" for="accTypeSelect">Accommodation Type</label>
             <select id="accTypeSelect" name="type">
-              <?php foreach ($roomTypeOptions as $opt): ?>
+              <?php foreach ($accommodationTypeOptions as $opt): ?>
                 <option value="<?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($opt, ENT_QUOTES, 'UTF-8'); ?></option>
               <?php endforeach; ?>
               <option value="other">Other (specify)</option>
             </select>
-            <input type="text" id="accTypeOther" name="type_other" maxlength="100" placeholder="Enter custom room type" style="display:none; margin-top:8px;">
+            <input type="text" id="accTypeOther" name="type_other" maxlength="100" placeholder="Enter custom accommodation type" style="display:none; margin-top:8px;">
           </div>
 
           <div class="field">
             <label class="field-label" for="accCapacity">Capacity (guests)</label>
             <input type="number" id="accCapacity" name="capacity" min="1" max="50" step="1" value="1" required>
+          </div>
+        </div>
+
+        <!-- Room Number — shown only when Accommodation Type is "Room" -->
+        <div class="field" data-acc-room-number-field style="display:none;">
+          <label class="field-label" for="accRoomNumber">Room Number</label>
+          <div class="field-input-wrap">
+            <?php echo icon('map-pin'); ?>
+            <input class="has-icon" type="text" id="accRoomNumber" name="room_number" maxlength="20" placeholder="e.g. 101, 204-B">
           </div>
         </div>
 
@@ -650,7 +665,7 @@ require_once __DIR__ . '/includes/ui.php';
           <input type="checkbox" name="is_featured" value="1" id="accFeatured">
           <div class="acc-featured-row-text">
             <strong>Show on Landing Page</strong>
-            <span>Featured rooms appear in the &ldquo;Featured Rooms&rdquo; section of the public landing page.</span>
+            <span>Featured items appear in the &ldquo;Featured&rdquo; section of the public landing page.</span>
           </div>
         </label>
 
@@ -709,7 +724,7 @@ require_once __DIR__ . '/includes/ui.php';
       </button>
     </div>
     <div class="acc-modal-body">
-      <p class="acc-photos-hint">Upload extra photos guests can browse for this room. The photo marked <strong>Cover</strong> is the one shown on cards, the booking page, and the public site.</p>
+      <p class="acc-photos-hint">Upload extra photos guests can browse for this accommodation. The photo marked <strong>Cover</strong> is the one shown on cards, the booking page, and the public site.</p>
 
       <div class="form-alert form-alert--error" data-acc-photos-alert style="display:none;" role="alert"></div>
 
@@ -722,7 +737,7 @@ require_once __DIR__ . '/includes/ui.php';
           <?php echo icon('upload', 'icon-sm'); ?> Add Photos
           <input type="file" data-acc-photos-input accept="image/png, image/jpeg, image/webp" multiple style="display:none;">
         </label>
-        <p class="acc-image-hint">JPG, PNG, or WEBP. Max 5MB each, up to <?php echo ACC_GALLERY_MAX_PHOTOS; ?> extra photos per room.</p>
+        <p class="acc-image-hint">JPG, PNG, or WEBP. Max 5MB each, up to <?php echo ACC_GALLERY_MAX_PHOTOS; ?> extra photos per accommodation.</p>
       </div>
     </div>
     <div class="acc-modal-footer">
@@ -744,7 +759,7 @@ require_once __DIR__ . '/includes/ui.php';
       <div class="form-alert form-alert--error" data-acc-tour-alert style="display:none;" role="alert"></div>
       <div class="acc-tour-status" data-acc-tour-status></div>
       <input type="file" data-acc-tour-input accept=".html,.htm,text/html" style="display:none;">
-      <p class="acc-image-hint">Upload a self-contained 360&deg; tour export (HTML file). Max 30MB. Guests and registered users will be able to view it when browsing this room.</p>
+      <p class="acc-image-hint">Upload a self-contained 360&deg; tour export (HTML file). Max 30MB. Guests and registered users will be able to view it when browsing this accommodation.</p>
     </div>
     <div class="acc-modal-footer">
       <button type="button" class="btn btn-secondary" data-acc-tour-modal-close>Close</button>

@@ -25,12 +25,38 @@
  * stays on `accommodations.image_filename` so every existing page that
  * already reads that column (cards, guest-book, the booking flow, the
  * landing page) keeps working unchanged; the gallery is purely additive.
+ *
+ * CHANGE: `type` is no longer just a free-text "room type" — it's now the
+ * accommodation CATEGORY (Room, Event Hall, Cottage, Swimming Pool, or a
+ * custom "other" value), so the system can manage more than just rooms.
+ * Added `room_number` VARCHAR(255) column, populated (and required) only
+ * when the category is exactly "Room". Same ALTER-if-missing pattern as
+ * is_featured / tour_filename above, so existing deployments pick it up
+ * automatically.
  * -----------------------------------------------------------------------
  */
 
 /** The only four statuses an accommodation can have. Order matters for
  *  the stat cards and the status <select> on each card. */
 const ACC_STATUSES = ['available', 'booked', 'unavailable', 'maintenance'];
+
+/**
+ * The preset accommodation type/category options offered in the
+ * Add/Edit Accommodation modal's "Accommodation Type" dropdown. Order
+ * matters — the first entry is the default selected on "Add Accommodation".
+ * Admins can also pick "Other (specify)" in the UI and type a custom value,
+ * which is stored as-is and isn't part of this list.
+ *
+ * "Room" is the one category that carries a `room_number` — see
+ * ACC_TYPE_REQUIRING_ROOM_NUMBER below, which both the page and the API
+ * gate on so the two never drift apart.
+ */
+const ACC_ACCOMMODATION_TYPES = ['Room', 'Event Hall', 'Cottage', 'Swimming Pool'];
+
+/** The single accommodation type that requires a room number. Kept as a
+ *  named constant (rather than a bare 'Room' string scattered around)
+ *  so the gating rule lives in exactly one place. */
+const ACC_TYPE_REQUIRING_ROOM_NUMBER = 'Room';
 
 const ACC_STATUS_LABELS = [
     'available'   => 'Available',
@@ -77,6 +103,7 @@ function acc_ensure_table(): void
             `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
             `name` VARCHAR(150) NOT NULL,
             `type` VARCHAR(100) NOT NULL DEFAULT '',
+            `room_number` VARCHAR(20) NULL,
             `capacity` SMALLINT UNSIGNED NOT NULL DEFAULT 1,
             `price` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
             `status` ENUM('available','booked','unavailable','maintenance') NOT NULL DEFAULT 'available',
@@ -123,7 +150,25 @@ function acc_ensure_table(): void
         );
     }
 
+    $roomNumberExists = $pdo->prepare(
+        "SELECT COUNT(*) FROM information_schema.COLUMNS
+         WHERE TABLE_SCHEMA = :db AND TABLE_NAME = 'accommodations' AND COLUMN_NAME = 'room_number'"
+    );
+    $roomNumberExists->execute(['db' => $dbName]);
+    if ((int) $roomNumberExists->fetchColumn() === 0) {
+        $pdo->exec(
+            "ALTER TABLE `accommodations`
+             ADD COLUMN `room_number` VARCHAR(20) NULL AFTER `type`"
+        );
+    }
+
     $done = true;
+}
+
+/** True only for the one accommodation type that carries a room number. */
+function acc_type_requires_room_number(string $type): bool
+{
+    return $type === ACC_TYPE_REQUIRING_ROOM_NUMBER;
 }
 
 /**

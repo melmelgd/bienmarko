@@ -10,6 +10,8 @@
  *   - Featured star button on each card calls action=set_featured
  *   - "Featured" filter tab in the toolbar works client-side
  *   - openModal() now reads/sets the is_featured checkbox
+ *   - "Room Number" field appears (and becomes required) only when
+ *     Accommodation Type is set to "Room" — toggleRoomNumberField()
  *
  * Every mutation (create/update/delete/status/featured change) reloads
  * the page on success so the stat cards and grid always reflect the DB.
@@ -39,6 +41,10 @@
 
   var typeSelect = modalForm ? modalForm.querySelector('[name="type"]') : null;
   var typeOtherInput = modalForm ? modalForm.querySelector('[name="type_other"]') : null;
+
+  var roomNumberField = document.querySelector('[data-acc-room-number-field]');
+  var roomNumberInput = modalForm ? modalForm.querySelector('[name="room_number"]') : null;
+  var ROOM_NUMBER_TYPE_VALUE = 'Room'; /* mirrors ACC_TYPE_REQUIRING_ROOM_NUMBER server-side */
 
   var featuredCheckbox = modalForm ? modalForm.querySelector('[name="is_featured"]') : null;
 
@@ -78,6 +84,26 @@
     modalAlert.textContent = '';
   }
 
+  /**
+   * Shows/hides + (un)requires the Room Number field based on the current
+   * Accommodation Type selection. Hidden fields must not stay `required`
+   * — a required-but-invisible form control blocks submission (and some
+   * browsers throw rather than showing a validation bubble), so the
+   * attribute is added/removed in lockstep with the display toggle rather
+   * than just visually hiding it.
+   */
+  function toggleRoomNumberField() {
+    if (!typeSelect || !roomNumberField || !roomNumberInput) return;
+    var isRoom = typeSelect.value === ROOM_NUMBER_TYPE_VALUE;
+    roomNumberField.style.display = isRoom ? '' : 'none';
+    if (isRoom) {
+      roomNumberInput.setAttribute('required', 'required');
+    } else {
+      roomNumberInput.removeAttribute('required');
+      roomNumberInput.value = '';
+    }
+  }
+
   /* ---------------------------------------------------------------------
      Add / edit modal
      --------------------------------------------------------------------- */
@@ -109,6 +135,7 @@
       setField('status', data.status || 'available');
       setField('description', data.description || '');
       setField('amenities', Array.isArray(data.amenities) ? data.amenities.join(', ') : '');
+      setField('room_number', data.room_number || '');
 
       // Featured checkbox
       if (featuredCheckbox) featuredCheckbox.checked = !!data.is_featured;
@@ -135,6 +162,8 @@
       setField('status', 'available');
       setField('capacity', 1);
     }
+
+    toggleRoomNumberField();
 
     modalOverlay.classList.add('is-open');
     modalOverlay.setAttribute('aria-hidden', 'false');
@@ -181,10 +210,13 @@
     });
   }
 
-  if (typeSelect && typeOtherInput) {
+  if (typeSelect) {
     typeSelect.addEventListener('change', function () {
-      typeOtherInput.style.display = typeSelect.value === 'other' ? 'block' : 'none';
-      if (typeSelect.value === 'other') typeOtherInput.focus();
+      if (typeOtherInput) {
+        typeOtherInput.style.display = typeSelect.value === 'other' ? 'block' : 'none';
+        if (typeSelect.value === 'other') typeOtherInput.focus();
+      }
+      toggleRoomNumberField();
     });
   }
 
