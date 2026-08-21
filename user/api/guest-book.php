@@ -72,6 +72,71 @@ function gb_ok(array $data): never
     exit;
 }
 
+/**
+ * True when an accommodation's category is "Swimming Pool" — the one
+ * type billed per person rather than per night, and shared by multiple
+ * concurrent bookings up to its `capacity` instead of being exclusively
+ * booked by a single party. Mirrors bk_is_pool_type() in
+ * user/api/bookings.php so both booking paths agree.
+ */
+function gb_is_pool_type(string $type): bool
+{
+    return strcasecmp(trim($type), 'Swimming Pool') === 0;
+}
+
+/**
+ * Total guests already booked (any non-cancelled status) for a
+ * Swimming Pool accommodation across dates overlapping
+ * [checkIn, checkOut). Mirrors bk_pool_booked_guests().
+ */
+function gb_pool_booked_guests(PDO $pdo, int $accommodationId, string $checkIn, string $checkOut): int
+{
+    $stmt = $pdo->prepare(
+        "SELECT COALESCE(SUM(guests_count), 0) FROM `bookings`
+         WHERE `accommodation_id` = :room_id
+           AND `status` NOT IN ('cancelled')
+           AND `check_in`  < :checkout
+           AND `check_out` > :checkin"
+    );
+    $stmt->execute([
+        'room_id'  => $accommodationId,
+        'checkin'  => $checkIn,
+        'checkout' => $checkOut,
+    ]);
+    return (int) $stmt->fetchColumn();
+}
+
+/**
+ * Sanitises the companion-names list submitted alongside a guest
+ * booking. Trims, drops blanks, caps each name's length and the list
+ * size, and returns a JSON string for the `companion_names` column —
+ * or NULL when there's nothing worth storing. Mirrors
+ * bk_sanitize_companion_names().
+ */
+function gb_sanitize_companion_names($raw): ?string
+{
+    if (!is_array($raw)) {
+        return null;
+    }
+
+    $names = [];
+    foreach ($raw as $name) {
+        if (!is_string($name)) {
+            continue;
+        }
+        $name = trim($name);
+        if ($name === '') {
+            continue;
+        }
+        $names[] = mb_substr($name, 0, 100);
+        if (count($names) >= 50) {
+            break;
+        }
+    }
+
+    return $names ? json_encode(array_values($names), JSON_UNESCAPED_UNICODE) : null;
+}
+
 /* ── method guard ─────────────────────────────────────────────────── */
 if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'POST') {
     gb_fail(405, 'Method not allowed.');
@@ -108,6 +173,15 @@ try {
              ADD COLUMN IF NOT EXISTS `address`        VARCHAR(255) NULL DEFAULT NULL,
              ADD COLUMN IF NOT EXISTS `payment_method` ENUM('cash','gcash') NULL DEFAULT 'cash',
              ADD COLUMN IF NOT EXISTS `booking_type`   ENUM('registered','guest') NOT NULL DEFAULT 'registered'"
+    );
+
+    // Companion / guest-mate names — surfaced in the UI for Swimming Pool
+    // bookings (a group can list who's coming), stored as a JSON array.
+    // Same additive, information_schema-agnostic pattern as the columns
+    // above (ADD COLUMN IF NOT EXISTS is a no-op once it exists).
+    $pdo->exec(
+        "ALTER TABLE `bookings`
+             ADD COLUMN IF NOT EXISTS `companion_names` TEXT NULL DEFAULT NULL"
     );
 
     // Ensure admin_notifications table exists.
@@ -211,7 +285,7 @@ if ($fieldErrors) {
 /* ── confirm room exists and is bookable ─────────────────────────── */
 try {
     $roomStmt = $pdo->prepare(
-        "SELECT `id`, `name`, `capacity`, `price`, `status`
+        "SELECT `id`, `name`, `type`, `capacity`, `price`, `status`
          FROM `accommodations`
          WHERE `id` = :id
          LIMIT 1"
@@ -239,32 +313,67 @@ if ($guests > (int) $room['capacity']) {
     ]);
 }
 
-/* ── date conflict detection (transaction-safe row-level lock) ────── */
-// Overlap condition: existing.check_in < new.check_out AND existing.check_out > new.check_in
+$isPool = gb_is_pool_type((string) $room['type']);
+$companionNamesJson = gb_sanitize_companion_names($_POST['companion_names'] ?? null);
+
+/* ── date conflict / capacity check (transaction-safe row-level lock) ── */
+// Non-pool rooms: overlap condition existing.check_in < new.check_out AND
+// existing.check_out > new.check_in blocks ANY overlapping booking, as
+// before. Swimming Pool: instead of exclusivity, sum guests_count across
+// overlapping bookings and only block once capacity would be exceeded —
+// so multiple registered/guest accounts can share the pool at once.
 try {
     $pdo->beginTransaction();
 
-    $conflictStmt = $pdo->prepare(
-        "SELECT COUNT(*) FROM `bookings`
-         WHERE `accommodation_id` = :room_id
-           AND `status` NOT IN ('cancelled')
-           AND `check_in`  < :checkout
-           AND `check_out` > :checkin
-         FOR UPDATE"
-    );
-    $conflictStmt->execute([
-        'room_id'  => $roomId,
-        'checkin'  => $checkin,
-        'checkout' => $checkout,
-    ]);
-    $conflicts = (int) $conflictStmt->fetchColumn();
-
-    if ($conflicts > 0) {
-        $pdo->rollBack();
-        gb_fail(409,
-            'Sorry, this room is already booked for the selected dates. Please choose different dates.',
-            ['checkin' => 'These dates conflict with an existing booking.']
+    if ($isPool) {
+        $conflictStmt = $pdo->prepare(
+            "SELECT COALESCE(SUM(`guests_count`), 0) FROM `bookings`
+             WHERE `accommodation_id` = :room_id
+               AND `status` NOT IN ('cancelled')
+               AND `check_in`  < :checkout
+               AND `check_out` > :checkin
+             FOR UPDATE"
         );
+        $conflictStmt->execute([
+            'room_id'  => $roomId,
+            'checkin'  => $checkin,
+            'checkout' => $checkout,
+        ]);
+        $bookedGuests = (int) $conflictStmt->fetchColumn();
+
+        if ($bookedGuests + $guests > (int) $room['capacity']) {
+            $pdo->rollBack();
+            $remaining = max(0, (int) $room['capacity'] - $bookedGuests);
+            gb_fail(409,
+                $remaining > 0
+                    ? "Sorry, only {$remaining} pool slot" . ($remaining === 1 ? '' : 's') . " left for those dates. Please reduce your guest count or choose different dates."
+                    : 'Sorry, the swimming pool is fully booked for those dates. Please choose different dates.',
+                ['checkin' => 'Not enough pool capacity for the selected dates.']
+            );
+        }
+    } else {
+        $conflictStmt = $pdo->prepare(
+            "SELECT COUNT(*) FROM `bookings`
+             WHERE `accommodation_id` = :room_id
+               AND `status` NOT IN ('cancelled')
+               AND `check_in`  < :checkout
+               AND `check_out` > :checkin
+             FOR UPDATE"
+        );
+        $conflictStmt->execute([
+            'room_id'  => $roomId,
+            'checkin'  => $checkin,
+            'checkout' => $checkout,
+        ]);
+        $conflicts = (int) $conflictStmt->fetchColumn();
+
+        if ($conflicts > 0) {
+            $pdo->rollBack();
+            gb_fail(409,
+                'Sorry, this room is already booked for the selected dates. Please choose different dates.',
+                ['checkin' => 'These dates conflict with an existing booking.']
+            );
+        }
     }
 
     /* ── generate reference number ───────────────────────────────── */
@@ -285,8 +394,13 @@ try {
     }
 
     /* ── compute total ───────────────────────────────────────────── */
+    // Swimming Pool is billed per person (guests count), independent of
+    // nights; every other accommodation type is billed per night, same
+    // as before.
     $nights      = (int) round((strtotime($checkout) - strtotime($checkin)) / 86400);
-    $totalAmount = round($nights * (float) $room['price'], 2);
+    $totalAmount = $isPool
+        ? round($guests * (float) $room['price'], 2)
+        : round($nights * (float) $room['price'], 2);
     $guestName   = $firstName . ' ' . $lastName;
 
     /* ── insert booking ──────────────────────────────────────────── */
@@ -299,13 +413,13 @@ try {
              `check_in`, `check_out`, `guests_count`,
              `notes`, `status`, `total_amount`,
              `guest_name`, `email`, `phone`, `address`,
-             `payment_method`, `booking_type`)
+             `payment_method`, `booking_type`, `companion_names`)
          VALUES
             (:reference, NULL, :accommodation_id,
              :check_in, :check_out, :guests_count,
              :notes, 'confirmed', :total_amount,
              :guest_name, :email, :phone, :address,
-             :payment_method, 'guest')"
+             :payment_method, 'guest', :companion_names)"
     );
     $insert->execute([
         'reference'        => $reference,
@@ -320,6 +434,7 @@ try {
         'phone'            => $phone,
         'address'          => $address !== '' ? $address : null,
         'payment_method'   => $paymentMethod,
+        'companion_names'  => $companionNamesJson,
     ]);
 
     $bookingId = (int) $pdo->lastInsertId();
@@ -356,4 +471,5 @@ gb_ok([
     'checkout'  => $checkout,
     'nights'    => $nights,
     'total'     => number_format($totalAmount, 2),
+    'is_pool'   => $isPool,
 ]);

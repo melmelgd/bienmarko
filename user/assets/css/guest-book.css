@@ -382,6 +382,14 @@ h1, h2, h3, p { margin-top: 0; }
     font-weight: 600;
 }
 
+/* Per-field helper / hint text (non-error) */
+.gb-field-hint {
+    display: block;
+    margin-top: 6px;
+    font-size: 12px;
+    color: var(--muted);
+}
+
 /* ── ROOM SUMMARY PILL ────────────────────────────────────────────── */
 .gb-room-summary {
     display: flex;

@@ -46,6 +46,9 @@
   var roomNumberInput = modalForm ? modalForm.querySelector('[name="room_number"]') : null;
   var ROOM_NUMBER_TYPE_VALUE = 'Room'; /* mirrors ACC_TYPE_REQUIRING_ROOM_NUMBER server-side */
 
+  var priceLabel = document.getElementById('accPriceLabel');
+  var POOL_TYPE_VALUE = 'Swimming Pool'; /* mirrors the pool-pricing checks in the booking APIs */
+
   var featuredCheckbox = modalForm ? modalForm.querySelector('[name="is_featured"]') : null;
 
   var imageInput = modalForm ? modalForm.querySelector('[name="image"]') : null;
@@ -102,6 +105,19 @@
       roomNumberInput.removeAttribute('required');
       roomNumberInput.value = '';
     }
+  }
+
+  /**
+   * Swaps the price field's label between "Price per Night" and "Price
+   * per Person" based on the current Accommodation Type — Swimming Pool
+   * is billed per person (see the booking APIs), every other type per
+   * night. Cosmetic only; the underlying `price` column and field are
+   * unchanged, just interpreted differently downstream.
+   */
+  function togglePriceLabel() {
+    if (!typeSelect || !priceLabel) return;
+    var isPool = typeSelect.value === POOL_TYPE_VALUE;
+    priceLabel.innerHTML = isPool ? 'Price per Person (&#8369;)' : 'Price per Night (&#8369;)';
   }
 
   /* ---------------------------------------------------------------------
@@ -164,6 +180,7 @@
     }
 
     toggleRoomNumberField();
+    togglePriceLabel();
 
     modalOverlay.classList.add('is-open');
     modalOverlay.setAttribute('aria-hidden', 'false');
@@ -217,6 +234,7 @@
         if (typeSelect.value === 'other') typeOtherInput.focus();
       }
       toggleRoomNumberField();
+      togglePriceLabel();
     });
   }
 

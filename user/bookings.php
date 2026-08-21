@@ -461,6 +461,38 @@ require __DIR__ . '/includes/head.php';
   font-size: 12px; color: var(--paper-faint);
 }
 
+/* Additional guest names (capacity-based) */
+.companion-list { display: flex; flex-direction: column; gap: 8px; }
+.companion-row { display: flex; gap: 8px; }
+.companion-row input {
+  flex: 1;
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--paper);
+  padding: 10px 12px;
+  font-size: 14px;
+  font-family: var(--font-body);
+  transition: border-color .15s;
+}
+.companion-row input:focus { border-color: var(--ember); outline: none; }
+.companion-row__remove {
+  flex-shrink: 0;
+  width: 38px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-raised);
+  color: var(--paper-dim);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.companion-row__remove:hover { border-color: var(--ember); color: var(--ember); }
+#s3AddCompanionBtn:disabled { opacity: .5; cursor: not-allowed; }
+#s3AddCompanionBtn:disabled:hover { background: transparent; }
+#s3CompanionsField[hidden] { display: none !important; }
+
 .booking-summary-box {
   background: var(--surface-raised);
   border: 1px solid var(--line);
@@ -1071,6 +1103,17 @@ require __DIR__ . '/includes/head.php';
                                autocomplete="tel">
                         <span class="field-hint">For booking confirmation contact.</span>
                     </div>
+
+                    <!-- Additional guest names — shown for any accommodation whose
+                         admin-configured capacity allows more than one guest. -->
+                    <div class="guest-info-field" id="s3CompanionsField" style="grid-column:1/-1" hidden>
+                        <label>Additional Guest Names <span style="font-weight:400;color:var(--paper-faint)">(optional)</span></label>
+                        <div class="companion-list" id="s3CompanionsList"></div>
+                        <button type="button" class="btn btn--ghost" id="s3AddCompanionBtn" style="align-self:flex-start;padding:8px 16px;font-size:12.5px;">
+                            + Add guest name
+                        </button>
+                        <span class="field-hint" id="s3CompanionsHint"></span>
+                    </div>
                 </div>
 
                 <!-- Booking summary -->
@@ -1189,6 +1232,10 @@ require __DIR__ . '/includes/head.php';
             <div class="bk-detail-row">
                 <span class="bk-detail-row__label">Guests</span>
                 <span class="bk-detail-row__value" id="bkDetailGuests">—</span>
+            </div>
+            <div class="bk-detail-row" id="bkDetailCompanionsRow" style="display:none">
+                <span class="bk-detail-row__label">Additional Guests</span>
+                <span class="bk-detail-row__value" id="bkDetailCompanions">—</span>
             </div>
             <div class="bk-detail-row">
                 <span class="bk-detail-row__label">Rate</span>
@@ -1401,6 +1448,13 @@ require __DIR__ . '/includes/head.php';
   var elStep3ErrorTxt = document.getElementById('step3ErrorText');
   var elGuestName     = document.getElementById('guestFullName');
   var elGuestPhone    = document.getElementById('guestPhone');
+
+  // Additional guest names (Step 3) — capacity-based, any accommodation type
+  var elCompanionsField = document.getElementById('s3CompanionsField');
+  var elCompanionsList  = document.getElementById('s3CompanionsList');
+  var elAddCompanionBtn = document.getElementById('s3AddCompanionBtn');
+  var elCompanionsHint  = document.getElementById('s3CompanionsHint');
+  var companionMax      = 0; // max additional guest names allowed for the currently selected room (capacity - 1)
 
   var csrf     = (document.getElementById('csrfToken') || {}).value || '';
   var imgBase  = (document.getElementById('imgBase') || {}).value || '';
@@ -1971,7 +2025,7 @@ require __DIR__ . '/includes/head.php';
         calBtnHtml +
         tourBtnHtml +
         '<span class="room-card__price-badge">' + escHtml(room.price_formatted) +
-          '<small>/night</small></span>' +
+          '<small>/' + (room.is_pool ? 'person' : 'night') + '</small></span>' +
         '<span class="room-card__avail-badge ' + availClass + '">' +
           '<span class="dot"></span>' + escHtml(room.availability_label) +
         '</span>' +
@@ -1983,13 +2037,17 @@ require __DIR__ . '/includes/head.php';
         '</div>' +
         '<div class="room-card__meta">' +
           usersIcon() +
-          '<span>Up to ' + room.capacity + ' guest' + (room.capacity === 1 ? '' : 's') + '</span>' +
+          '<span>' + (room.is_pool && room.remaining_capacity !== null
+            ? room.remaining_capacity + ' of ' + room.capacity + ' slot' + (room.capacity === 1 ? '' : 's') + ' available for these dates'
+            : 'Up to ' + room.capacity + ' guest' + (room.capacity === 1 ? '' : 's')) + '</span>' +
         '</div>' +
         amenHtml + descHtml +
       '</div>' +
       '<div class="room-card__footer">' +
         '<div class="room-card__total">' + escHtml(room.total_formatted) +
-          '<br><small>' + room.nights + ' night' + (room.nights === 1 ? '' : 's') + '</small>' +
+          '<br><small>' + (room.is_pool
+            ? currentGuests + ' guest' + (currentGuests === 1 ? '' : 's')
+            : room.nights + ' night' + (room.nights === 1 ? '' : 's')) + '</small>' +
         '</div>' +
         actionHtml +
       '</div>';
@@ -2022,10 +2080,11 @@ require __DIR__ . '/includes/head.php';
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        action:     'availability',
-        check_in:   currentCheckIn,
-        check_out:  currentCheckOut,
-        csrf_token: csrf,
+        action:       'availability',
+        check_in:     currentCheckIn,
+        check_out:    currentCheckOut,
+        guests_count: currentGuests,
+        csrf_token:   csrf,
       }),
     })
     .then(function (r) { return r.json(); })
@@ -2088,6 +2147,17 @@ require __DIR__ . '/includes/head.php';
 
   /* ---- Step 2 → Step 3 ---- */
   function goToStep3(room) {
+    // Clamp the chosen guest count to this room's admin-set capacity — the
+    // stepper in Step 1 doesn't know which room will be picked, so this is
+    // the first point a mismatch can be caught and corrected.
+    var capacity = parseInt(room.capacity, 10) || 1;
+    var capacityAdjusted = false;
+    if (currentGuests > capacity) {
+      currentGuests = capacity;
+      document.getElementById('guestsDisplay').textContent = currentGuests;
+      capacityAdjusted = true;
+    }
+
     pendingBooking = {
       room:     room,
       checkIn:  currentCheckIn,
@@ -2105,8 +2175,15 @@ require __DIR__ . '/includes/head.php';
     document.getElementById('s3Guests').textContent  = currentGuests + ' guest' + (currentGuests === 1 ? '' : 's');
     document.getElementById('s3Total').textContent   = room.total_formatted;
 
-    // Clear step 3 error
-    elStep3Error.style.display = 'none';
+    // Clear / set step 3 notice
+    if (capacityAdjusted) {
+      elStep3ErrorTxt.textContent = 'Guest count adjusted to ' + currentGuests + ' — the maximum this room allows.';
+      elStep3Error.style.display  = 'flex';
+    } else {
+      elStep3Error.style.display = 'none';
+    }
+
+    setupCompanionFields(capacity, currentGuests);
 
     setStep(3);
   }
@@ -2138,6 +2215,81 @@ require __DIR__ . '/includes/head.php';
     openBookingModal(fullName, phone);
   });
 
+  /* ---- Additional guest names — any accommodation, capped by capacity ---- */
+  function addCompanionRow(value) {
+    if (elCompanionsList.children.length >= companionMax) return;
+
+    var row = document.createElement('div');
+    row.className = 'companion-row';
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'bk-companion-input';
+    input.maxLength = 100;
+    input.placeholder = 'Guest name';
+    input.value = value || '';
+
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'companion-row__remove';
+    removeBtn.textContent = '−';
+    removeBtn.setAttribute('aria-label', 'Remove name');
+    removeBtn.addEventListener('click', function () {
+      row.remove();
+      refreshAddCompanionBtnState();
+    });
+
+    row.appendChild(input);
+    row.appendChild(removeBtn);
+    elCompanionsList.appendChild(row);
+    refreshAddCompanionBtnState();
+  }
+
+  function refreshAddCompanionBtnState() {
+    var atCap = elCompanionsList.children.length >= companionMax;
+    elAddCompanionBtn.disabled = atCap;
+    elAddCompanionBtn.textContent = atCap ? 'Maximum guests reached' : '+ Add guest name';
+  }
+
+  elAddCompanionBtn && elAddCompanionBtn.addEventListener('click', function () {
+    addCompanionRow('');
+  });
+
+  function resetCompanionRows(seedCount) {
+    elCompanionsList.innerHTML = '';
+    // Pre-seed one blank row per additional guest (the primary guest's own
+    // name is already captured above, so this covers the rest of the
+    // party), never exceeding what the room's capacity allows.
+    var seed = Math.max(0, Math.min(seedCount, companionMax));
+    for (var i = 0; i < seed; i++) addCompanionRow('');
+    refreshAddCompanionBtnState();
+  }
+
+  function collectCompanionNames() {
+    return Array.prototype.slice.call(elCompanionsList.querySelectorAll('.bk-companion-input'))
+      .map(function (el) { return el.value.trim(); })
+      .filter(function (v) { return v !== ''; });
+  }
+
+  // Shows/hides and seeds the additional-guest-names field for the room
+  // currently being booked, based on its admin-configured capacity.
+  function setupCompanionFields(capacity, guests) {
+    companionMax = Math.max(0, capacity - 1);
+
+    if (companionMax <= 0) {
+      elCompanionsField.hidden = true;
+      elCompanionsList.innerHTML = '';
+      return;
+    }
+
+    elCompanionsField.hidden = false;
+    elCompanionsHint.textContent = 'This room fits up to ' + capacity + ' guest' +
+      (capacity === 1 ? '' : 's') + ' — add up to ' + companionMax + ' more name' +
+      (companionMax === 1 ? '' : 's') + ' below.';
+
+    resetCompanionRows(Math.max(0, guests - 1));
+  }
+
   /* ---- Booking confirmation modal ---- */
   function openBookingModal(fullName, phone) {
     var room = pendingBooking.room;
@@ -2150,7 +2302,7 @@ require __DIR__ . '/includes/head.php';
     document.getElementById('bkDetailCheckOut').textContent = formatDate(currentCheckOut);
     document.getElementById('bkDetailNights').textContent   = pendingBooking.nights + ' night' + (pendingBooking.nights === 1 ? '' : 's');
     document.getElementById('bkDetailGuests').textContent   = currentGuests + ' guest' + (currentGuests === 1 ? '' : 's');
-    document.getElementById('bkDetailRate').textContent     = room.price_formatted + '/night';
+    document.getElementById('bkDetailRate').textContent     = room.price_formatted + '/' + (room.is_pool ? 'person' : 'night');
     document.getElementById('bkDetailTotal').textContent    = room.total_formatted;
 
     var imgWrap = document.getElementById('bkModalImg');
@@ -2162,6 +2314,15 @@ require __DIR__ . '/includes/head.php';
       imgWrap.appendChild(img);
     } else {
       imgWrap.innerHTML = bedIconLarge();
+    }
+
+    var companionNames = collectCompanionNames();
+    var detailCompanionsRow = document.getElementById('bkDetailCompanionsRow');
+    if (companionNames.length) {
+      document.getElementById('bkDetailCompanions').textContent = companionNames.join(', ');
+      detailCompanionsRow.style.display = '';
+    } else {
+      detailCompanionsRow.style.display = 'none';
     }
 
     document.getElementById('bkNotes').value = '';
@@ -2198,6 +2359,7 @@ require __DIR__ . '/includes/head.php';
     elConfLbl.textContent = 'Booking…';
 
     var notes = (document.getElementById('bkNotes').value || '').trim();
+    var companionNames = collectCompanionNames();
 
     fetch('api/bookings.php', {
       method: 'POST',
@@ -2209,6 +2371,7 @@ require __DIR__ . '/includes/head.php';
         accommodation_id: pendingBooking.room.id,
         guests_count:     pendingBooking.guests,
         notes:            notes,
+        companion_names:  companionNames,
         csrf_token:       csrf,
       }),
     })
@@ -2248,6 +2411,9 @@ require __DIR__ . '/includes/head.php';
     currentCheckOut     = '';
     currentGuests       = 1;
     document.getElementById('guestsDisplay').textContent = '1';
+    companionMax = 0;
+    elCompanionsField.hidden = true;
+    elCompanionsList.innerHTML = '';
     refreshDateTriggers();
     setStep(1);
     document.querySelector('.bk-list') &&

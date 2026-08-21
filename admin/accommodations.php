@@ -477,7 +477,7 @@ require_once __DIR__ . '/includes/ui.php';
             <?php else: ?>
               <?php echo icon('bed', 'icon-lg'); ?>
             <?php endif; ?>
-            <span class="acc-card-price">&#8369;<?php echo number_format((float) $row['price'], 2); ?><small>/night</small></span>
+            <span class="acc-card-price">&#8369;<?php echo number_format((float) $row['price'], 2); ?><small><?php echo (strcasecmp(trim((string) $row['type']), 'Swimming Pool') === 0) ? '/person' : '/night'; ?></small></span>
             <?php if ($isFeatured): ?>
               <span class="acc-featured-badge">
                 <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
@@ -636,7 +636,7 @@ require_once __DIR__ . '/includes/ui.php';
 
         <div class="acc-field-row">
           <div class="field">
-            <label class="field-label" for="accPrice">Price per Night (&#8369;)</label>
+            <label class="field-label" for="accPrice" id="accPriceLabel">Price per Night (&#8369;)</label>
             <input type="number" id="accPrice" name="price" min="0" max="999999" step="0.01" placeholder="0.00" required>
           </div>
 

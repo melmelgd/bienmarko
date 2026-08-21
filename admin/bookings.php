@@ -39,6 +39,14 @@ $pdo->exec("
         ADD COLUMN IF NOT EXISTS `booking_type`   ENUM('registered','guest') NOT NULL DEFAULT 'registered' AFTER `payment_method`
 ");
 
+// Companion / guest-mate names — JSON array, populated by the guest,
+// registered-user, or admin walk-in booking flows for Swimming Pool
+// bookings so front desk can see who's in the group.
+$pdo->exec("
+    ALTER TABLE `bookings`
+        ADD COLUMN IF NOT EXISTS `companion_names` TEXT NULL DEFAULT NULL AFTER `booking_type`
+");
+
 /* ------------------------------------------------------------------
    Filters from GET
 ------------------------------------------------------------------ */
@@ -103,6 +111,7 @@ $sql = "SELECT
             b.booking_type, b.payment_method, b.notes,
             b.guest_name, b.email AS guest_book_email,
             b.phone AS guest_phone, b.address AS guest_address,
+            b.companion_names,
             b.created_at,
             a.name AS room_name, a.type AS room_type, a.price AS room_price,
             g.first_name, g.last_name, g.email AS reg_email, g.phone AS reg_phone
@@ -204,7 +213,6 @@ tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; 
 tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--panel-alt); }
 tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-align: middle; }
-.td-ref    { font-family: var(--font-display); font-size: 12px; font-weight: 700; color: var(--gold-400); letter-spacing: .04em; }
 .td-guest  { font-weight: 600; }
 .td-sub    { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
 .td-amount { font-family: var(--font-display); font-weight: 700; }
@@ -337,6 +345,14 @@ $bookingsJson = json_encode(array_map(function ($bk) {
         'guest_email'  => bk_email($bk),
         'guest_phone'  => bk_phone($bk),
         'guest_address'=> $bk['guest_address'] ?? '',
+        'is_pool'      => strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0,
+        'companion_names' => (function ($raw) {
+            if (!$raw) {
+                return [];
+            }
+            $decoded = json_decode($raw, true);
+            return is_array($decoded) ? array_values($decoded) : [];
+        })($bk['companion_names'] ?? null),
         'created_at'   => date('M j, Y g:i A', strtotime($bk['created_at'])),
     ];
 }, $bookings));
@@ -411,7 +427,6 @@ $bookingsJson = json_encode(array_map(function ($bk) {
             <table id="bookingsTable">
                 <thead>
                     <tr>
-                        <th>Reference</th>
                         <th>Guest</th>
                         <th>Room</th>
                         <th>Check-in</th>
@@ -426,7 +441,7 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                 <tbody id="bookingsTbody">
                     <?php if (empty($bookings)): ?>
                         <tr>
-                            <td colspan="10">
+                            <td colspan="9">
                                 <?php render_empty_state(
                                     'calendar',
                                     'No bookings yet',
@@ -437,16 +452,6 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                     <?php else: ?>
                         <?php foreach ($bookings as $bk): ?>
                             <tr data-id="<?php echo (int) $bk['id']; ?>" onclick="openDetail(<?php echo (int) $bk['id']; ?>)">
-                                <td>
-                                    <div class="td-ref"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <div style="margin-top:3px;">
-                                        <?php if ($bk['booking_type'] === 'guest'): ?>
-                                            <span class="type-badge type-badge--guest">Walk-in</span>
-                                        <?php else: ?>
-                                            <span class="type-badge type-badge--registered">Registered</span>
-                                        <?php endif; ?>
-                                    </div>
-                                </td>
                                 <td>
                                     <div class="td-guest"><?php echo htmlspecialchars(bk_name($bk), ENT_QUOTES, 'UTF-8'); ?></div>
                                     <?php $email = bk_email($bk); if ($email): ?>
@@ -556,7 +561,7 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                         <span class="detail-value" id="dGuests">—</span>
                     </div>
                     <div class="detail-row">
-                        <span class="detail-label">Room Rate / Night</span>
+                        <span class="detail-label" id="dRoomRateLabel">Room Rate / Night</span>
                         <span class="detail-value" id="dRoomPrice">—</span>
                     </div>
                     <div class="detail-row">
@@ -564,6 +569,10 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                         <span class="detail-value" id="dPayMethod">—</span>
                     </div>
                 </div>
+            </div>
+            <div class="modal-section" id="dCompanionsSection" style="display:none;">
+                <div class="modal-section-title">Companion Names</div>
+                <p id="dCompanions" style="font-size:13.5px;color:var(--text-secondary);line-height:1.6;"></p>
             </div>
             <div class="modal-section" id="dNotesSection">
                 <div class="modal-section-title">Notes</div>
@@ -615,7 +624,7 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                         </div>
                         <div class="form-group">
                             <label class="form-label">No. of Guests <span style="color:var(--red)">*</span></label>
-                            <input class="form-input" type="number" name="guests_count" min="1" max="20" value="1" required>
+                            <input class="form-input" type="number" name="guests_count" min="1" max="20" value="1" required id="nbGuestsCount">
                         </div>
                         <div class="form-group full">
                             <label class="form-label">Address</label>
@@ -632,14 +641,21 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                                 <option value="">— Select a room —</option>
                                 <?php
                                 $rooms = $pdo->query("SELECT id, name, type, price, capacity FROM accommodations WHERE status = 'available' ORDER BY name")->fetchAll();
-                                foreach ($rooms as $r): ?>
+                                foreach ($rooms as $r):
+                                    $rIsPool = strcasecmp(trim($r['type']), 'Swimming Pool') === 0;
+                                ?>
                                     <option value="<?php echo (int) $r['id']; ?>"
                                             data-price="<?php echo (float) $r['price']; ?>"
-                                            data-cap="<?php echo (int) $r['capacity']; ?>">
-                                        <?php echo htmlspecialchars($r['name'] . ' (' . $r['type'] . ') — ₱' . number_format($r['price'], 2) . '/night', ENT_QUOTES, 'UTF-8'); ?>
+                                            data-cap="<?php echo (int) $r['capacity']; ?>"
+                                            data-type="<?php echo htmlspecialchars($r['type'], ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-pool="<?php echo $rIsPool ? '1' : '0'; ?>">
+                                        <?php echo htmlspecialchars($r['name'] . ' (' . $r['type'] . ') — ₱' . number_format($r['price'], 2) . ($rIsPool ? '/person' : '/night'), ENT_QUOTES, 'UTF-8'); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
+                            <span class="form-label" id="nbPoolHint" style="display:none;color:var(--gold-400);margin-top:4px;">
+                                This is a Swimming Pool — priced per person, and shared by other bookings up to its capacity for the same dates.
+                            </span>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Check-in <span style="color:var(--red)">*</span></label>
@@ -659,6 +675,11 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                         <div class="form-group">
                             <label class="form-label">Estimated Total</label>
                             <input class="form-input" type="text" id="nbTotal" readonly placeholder="₱0.00" style="color:var(--gold-400);font-weight:700;">
+                        </div>
+                        <div class="form-group full" id="nbCompanionsGroup" style="display:none;">
+                            <label class="form-label">Additional Guest Names <span style="font-weight:400;color:var(--text-tertiary);">(one per line, optional)</span></label>
+                            <textarea class="form-input" name="companion_names" id="nbCompanionNames" rows="3" placeholder="e.g.&#10;Juan Dela Cruz&#10;Maria Santos"></textarea>
+                            <span class="form-label" id="nbCompanionsHint" style="font-weight:400;color:var(--text-tertiary);margin-top:4px;"></span>
                         </div>
                         <div class="form-group full">
                             <label class="form-label">Notes</label>
@@ -745,7 +766,8 @@ function openDetail(id) {
     document.getElementById('dCheckOut').textContent  = fmtDate(b.check_out);
     document.getElementById('dNights').textContent    = nights + ' night' + (nights === 1 ? '' : 's');
     document.getElementById('dGuests').textContent    = b.guests_count;
-    document.getElementById('dRoomPrice').textContent = '₱' + b.room_price + ' / night';
+    document.getElementById('dRoomRateLabel').textContent = b.is_pool ? 'Rate / Person' : 'Room Rate / Night';
+    document.getElementById('dRoomPrice').textContent = '₱' + b.room_price + (b.is_pool ? ' / person' : ' / night');
     document.getElementById('dPayMethod').textContent = cap(b.payment_method);
     document.getElementById('dTotal').textContent     = '₱' + b.total_amount;
     document.getElementById('dCreatedAt').textContent = b.created_at;
@@ -756,6 +778,14 @@ function openDetail(id) {
         notesSection.style.display = '';
     } else {
         notesSection.style.display = 'none';
+    }
+
+    var companionsSection = document.getElementById('dCompanionsSection');
+    if (b.companion_names && b.companion_names.length) {
+        document.getElementById('dCompanions').textContent = b.companion_names.join(', ');
+        companionsSection.style.display = '';
+    } else {
+        companionsSection.style.display = 'none';
     }
 
     // Render action buttons
@@ -822,19 +852,53 @@ document.getElementById('newBookingModal').addEventListener('click', function (e
     if (e.target === this) closeNewBooking();
 });
 
-// Auto-calc total
+// Auto-calc total — Swimming Pool accommodations are priced per person
+// (guest count), every other type per night, same rule as the guest-
+// facing booking flows. Additional guest names can be logged for any
+// accommodation whose capacity allows more than one guest — not just
+// Swimming Pool — mirroring the guest-facing booking flows.
 function calcTotal() {
-    var sel    = document.getElementById('nbAccomSelect');
-    var opt    = sel.options[sel.selectedIndex];
-    var price  = parseFloat(opt ? (opt.dataset.price || 0) : 0);
-    var ci     = document.getElementById('nbCheckIn').value;
-    var co     = document.getElementById('nbCheckOut').value;
+    var sel      = document.getElementById('nbAccomSelect');
+    var opt      = sel.options[sel.selectedIndex];
+    var price    = parseFloat(opt ? (opt.dataset.price || 0) : 0);
+    var cap      = parseInt(opt ? (opt.dataset.cap || 0) : 0, 10);
+    var isPool   = !!(opt && opt.dataset.pool === '1');
+    var ci       = document.getElementById('nbCheckIn').value;
+    var co       = document.getElementById('nbCheckOut').value;
+    var guestsEl = document.getElementById('nbGuestsCount');
+    var poolHint = document.getElementById('nbPoolHint');
+    var companionsGroup = document.getElementById('nbCompanionsGroup');
+    var companionsHint  = document.getElementById('nbCompanionsHint');
+    var companionsInput = document.getElementById('nbCompanionNames');
+
+    poolHint.style.display = isPool ? '' : 'none';
+
+    if (opt && opt.value && cap > 1) {
+        companionsGroup.style.display = '';
+        companionsHint.textContent = 'This room fits up to ' + cap + ' guest' +
+            (cap === 1 ? '' : 's') + ' — list up to ' + (cap - 1) + ' additional name' +
+            (cap - 1 === 1 ? '' : 's') + ' above.';
+    } else {
+        companionsGroup.style.display = 'none';
+        companionsInput.value = '';
+    }
+
+    if (cap > 0) {
+        guestsEl.max = cap;
+        if (parseInt(guestsEl.value, 10) > cap) guestsEl.value = cap;
+    }
+
     if (!ci || !co || !price) { document.getElementById('nbTotal').value = ''; return; }
     var nights = Math.round((new Date(co) - new Date(ci)) / 86400000);
     if (nights < 1) { document.getElementById('nbTotal').value = ''; return; }
-    document.getElementById('nbTotal').value = '₱' + (nights * price).toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+    var guests = Math.max(1, parseInt(guestsEl.value, 10) || 1);
+    var total  = isPool ? (guests * price) : (nights * price);
+
+    document.getElementById('nbTotal').value = '₱' + total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 document.getElementById('nbAccomSelect').addEventListener('change', calcTotal);
+document.getElementById('nbGuestsCount').addEventListener('input', calcTotal);
 document.getElementById('nbCheckIn').addEventListener('change', function () {
     var co = document.getElementById('nbCheckOut');
     if (co.value && co.value <= this.value) co.value = '';

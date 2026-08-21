@@ -22,6 +22,16 @@ if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
 }
 
 $pdo  = bienmarko_db();
+
+// Defensive migration: companion_names may not exist yet if this
+// endpoint is hit before the user-facing booking APIs have run their
+// migration. Additive, information_schema-guarded, safe to repeat.
+try {
+    $pdo->exec("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS companion_names TEXT NULL DEFAULT NULL");
+} catch (\Throwable $e) {
+    error_log('[bookings api] companion_names migration warning: ' . $e->getMessage());
+}
+
 $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
 /* CSRF check */
@@ -88,6 +98,30 @@ if ($action === 'create') {
     $paymentMethod   = in_array($body['payment_method'] ?? '', ['cash', 'gcash']) ? $body['payment_method'] : 'cash';
     $notes           = trim($body['notes']            ?? '');
 
+    // Companion / guest-mate names — submitted as a single newline-
+    // separated textarea from the admin "New Booking" form (used for
+    // Swimming Pool walk-ins so front desk can log who's in the group).
+    // Stored as a JSON array, same column/format as the guest-facing
+    // booking flows.
+    $companionNamesJson = null;
+    $companionNamesRaw  = (string) ($body['companion_names'] ?? '');
+    if (trim($companionNamesRaw) !== '') {
+        $companions = [];
+        foreach (preg_split('/[\r\n,]+/', $companionNamesRaw) as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $companions[] = mb_substr($line, 0, 100);
+            if (count($companions) >= 50) {
+                break;
+            }
+        }
+        if ($companions) {
+            $companionNamesJson = json_encode(array_values($companions), JSON_UNESCAPED_UNICODE);
+        }
+    }
+
     if ($guestName === '') {
         echo json_encode(['success' => false, 'error' => 'Guest name is required.']);
         exit;
@@ -106,7 +140,7 @@ if ($action === 'create') {
     }
 
     /* --- Fetch accommodation & compute total --- */
-    $room = $pdo->prepare("SELECT id, price, status FROM accommodations WHERE id = :id");
+    $room = $pdo->prepare("SELECT id, type, price, status, capacity FROM accommodations WHERE id = :id");
     $room->execute(['id' => $accommodationId]);
     $room = $room->fetch();
 
@@ -118,32 +152,71 @@ if ($action === 'create') {
         echo json_encode(['success' => false, 'error' => 'This accommodation is currently unavailable.']);
         exit;
     }
+    if ($guestsCount > (int) $room['capacity']) {
+        echo json_encode(['success' => false, 'error' => "This accommodation holds up to {$room['capacity']} guest(s)."]);
+        exit;
+    }
+
+    // Swimming Pool: shared by multiple concurrent bookings up to its
+    // capacity and billed per person, mirroring the guest/registered
+    // booking flows so pricing and availability stay consistent
+    // regardless of which portal created the booking.
+    $isPool = strcasecmp(trim((string) $room['type']), 'Swimming Pool') === 0;
 
     $nights = max(1, (int) ceil((strtotime($checkOut) - strtotime($checkIn)) / 86400));
-    $total  = round((float) $room['price'] * $nights, 2);
+    $total  = $isPool
+        ? round((float) $room['price'] * $guestsCount, 2)
+        : round((float) $room['price'] * $nights, 2);
 
-    /* --- Conflict check (row-level lock) --- */
+    /* --- Conflict / capacity check (row-level lock) --- */
     $pdo->beginTransaction();
     try {
-        $conflict = $pdo->prepare(
-            "SELECT COUNT(*) FROM bookings
-             WHERE accommodation_id = :aid
-               AND status IN ('confirmed','pending')
-               AND check_in  < :co
-               AND check_out > :ci
-             FOR UPDATE"
-        );
-        $conflict->execute(['aid' => $accommodationId, 'ci' => $checkIn, 'co' => $checkOut]);
-        if ((int) $conflict->fetchColumn() > 0) {
-            $pdo->rollBack();
-            echo json_encode(['success' => false, 'error' => 'Room is already booked for the selected dates.']);
-            exit;
+        if ($isPool) {
+            $conflict = $pdo->prepare(
+                "SELECT COALESCE(SUM(guests_count), 0) FROM bookings
+                 WHERE accommodation_id = :aid
+                   AND status IN ('confirmed','pending')
+                   AND check_in  < :co
+                   AND check_out > :ci
+                 FOR UPDATE"
+            );
+            $conflict->execute(['aid' => $accommodationId, 'ci' => $checkIn, 'co' => $checkOut]);
+            $bookedGuests = (int) $conflict->fetchColumn();
+
+            if ($bookedGuests + $guestsCount > (int) $room['capacity']) {
+                $pdo->rollBack();
+                $remaining = max(0, (int) $room['capacity'] - $bookedGuests);
+                echo json_encode([
+                    'success' => false,
+                    'error'   => $remaining > 0
+                        ? "Only {$remaining} pool slot(s) left for the selected dates."
+                        : 'The swimming pool is fully booked for the selected dates.',
+                ]);
+                exit;
+            }
+        } else {
+            $conflict = $pdo->prepare(
+                "SELECT COUNT(*) FROM bookings
+                 WHERE accommodation_id = :aid
+                   AND status IN ('confirmed','pending')
+                   AND check_in  < :co
+                   AND check_out > :ci
+                 FOR UPDATE"
+            );
+            $conflict->execute(['aid' => $accommodationId, 'ci' => $checkIn, 'co' => $checkOut]);
+            if ((int) $conflict->fetchColumn() > 0) {
+                $pdo->rollBack();
+                echo json_encode(['success' => false, 'error' => 'Room is already booked for the selected dates.']);
+                exit;
+            }
         }
 
         /* --- Generate unique reference --- */
         do {
-            $ref = 'BM-' . strtoupper(substr(md5(uniqid('', true)), 0, 8));
-            $exists = (int) $pdo->prepare("SELECT COUNT(*) FROM bookings WHERE reference = :r")->execute(['r' => $ref]);
+            $ref    = 'BM-' . strtoupper(substr(md5(uniqid('', true)), 0, 8));
+            $chkRef = $pdo->prepare("SELECT COUNT(*) FROM bookings WHERE reference = :r");
+            $chkRef->execute(['r' => $ref]);
+            $exists = (int) $chkRef->fetchColumn();
         } while ($exists > 0);
 
         /* --- Insert booking --- */
@@ -151,25 +224,26 @@ if ($action === 'create') {
             "INSERT INTO bookings
                 (accommodation_id, guest_id, reference, check_in, check_out,
                  guests_count, status, total_amount,
-                 guest_name, email, phone, address, payment_method, booking_type, notes)
+                 guest_name, email, phone, address, payment_method, booking_type, notes, companion_names)
              VALUES
                 (:aid, NULL, :ref, :ci, :co,
                  :gc, 'confirmed', :total,
-                 :gname, :email, :phone, :addr, :pm, 'guest', :notes)"
+                 :gname, :email, :phone, :addr, :pm, 'guest', :notes, :companion_names)"
         );
         $ins->execute([
-            'aid'   => $accommodationId,
-            'ref'   => $ref,
-            'ci'    => $checkIn,
-            'co'    => $checkOut,
-            'gc'    => $guestsCount,
-            'total' => $total,
-            'gname' => $guestName,
-            'email' => $email,
-            'phone' => $phone,
-            'addr'  => $address,
-            'pm'    => $paymentMethod,
-            'notes' => $notes,
+            'aid'             => $accommodationId,
+            'ref'             => $ref,
+            'ci'              => $checkIn,
+            'co'              => $checkOut,
+            'gc'              => $guestsCount,
+            'total'           => $total,
+            'gname'           => $guestName,
+            'email'           => $email,
+            'phone'           => $phone,
+            'addr'            => $address,
+            'pm'              => $paymentMethod,
+            'notes'           => $notes,
+            'companion_names' => $companionNamesJson,
         ]);
 
         $bookingId = (int) $pdo->lastInsertId();

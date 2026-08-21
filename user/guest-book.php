@@ -211,6 +211,17 @@ function gb_e(string $s): string {
                 </button>
                 <span class="gb-room-summary-price" id="gbRoomSummaryPrice"></span>
             </div>
+
+            <!-- Additional guest names — shown for any accommodation whose
+                 admin-configured capacity allows more than one guest. -->
+            <div class="gb-field gb-field--full" id="gbCompanionsField" hidden>
+                <label class="gb-label">Additional Guest Names <span class="gb-muted-label">(optional)</span></label>
+                <div id="gbCompanionsList" style="display:flex;flex-direction:column;gap:8px;"></div>
+                <button type="button" id="gbAddCompanionBtn" class="gb-btn gb-btn--outline gb-btn--sm" style="margin-top:8px;align-self:flex-start;">
+                    + Add name
+                </button>
+                <span class="gb-field-hint" id="gbCompanionsHint"></span>
+            </div>
         </section>
 
         <!-- ── Section 2: Guest Information ───────────────────────── -->
@@ -450,6 +461,14 @@ function gb_e(string $s): string {
     var successCheckin  = document.getElementById('gbSuccessCheckin');
     var successCheckout = document.getElementById('gbSuccessCheckout');
 
+    // Additional guest names — any accommodation type, capped by the
+    // room's admin-configured capacity.
+    var companionsField = document.getElementById('gbCompanionsField');
+    var companionsList   = document.getElementById('gbCompanionsList');
+    var addCompanionBtn  = document.getElementById('gbAddCompanionBtn');
+    var companionsHint   = document.getElementById('gbCompanionsHint');
+    var companionMax     = 0; // max additional guest names allowed for the currently selected room (capacity - 1)
+
     /* ── helpers ──────────────────────────────────────────────────── */
     function formatDate(ymd) {
         if (!ymd) return '—';
@@ -481,6 +500,100 @@ function gb_e(string $s): string {
         formErr.textContent = '';
     }
 
+    function isPoolType(type) {
+        return (type || '').trim().toLowerCase() === 'swimming pool';
+    }
+
+    /* ── additional guest name rows ──────────────────────────────── */
+    function addCompanionRow(value) {
+        if (companionsList.children.length >= companionMax) return;
+
+        var row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.gap = '8px';
+
+        var input = document.createElement('input');
+        input.type = 'text';
+        input.name = 'companion_names[]';
+        input.className = 'gb-input gb-companion-input';
+        input.maxLength = 100;
+        input.placeholder = 'Guest name';
+        input.value = value || '';
+        input.style.flex = '1';
+
+        var removeBtn = document.createElement('button');
+        removeBtn.type = 'button';
+        removeBtn.className = 'gb-btn gb-btn--outline gb-btn--sm';
+        removeBtn.textContent = '−';
+        removeBtn.setAttribute('aria-label', 'Remove name');
+        removeBtn.addEventListener('click', function () {
+            row.remove();
+            refreshAddCompanionBtnState();
+        });
+
+        row.appendChild(input);
+        row.appendChild(removeBtn);
+        companionsList.appendChild(row);
+        refreshAddCompanionBtnState();
+    }
+
+    function refreshAddCompanionBtnState() {
+        var atCap = companionsList.children.length >= companionMax;
+        addCompanionBtn.disabled = atCap;
+        addCompanionBtn.textContent = atCap ? 'Maximum guests reached' : '+ Add name';
+    }
+
+    addCompanionBtn && addCompanionBtn.addEventListener('click', function () {
+        addCompanionRow('');
+    });
+
+    function resetCompanionRows(seedCount) {
+        companionsList.innerHTML = '';
+        // Pre-seed one blank row per additional guest — the primary guest's
+        // own name is already captured in Section 2, so this covers the
+        // rest of the party — never exceeding the room's capacity.
+        var seed = Math.max(0, Math.min(seedCount, companionMax));
+        for (var i = 0; i < seed; i++) addCompanionRow('');
+        refreshAddCompanionBtnState();
+    }
+
+    // Non-destructive resync used when the guest count changes after a room
+    // is already selected — adds/removes trailing rows instead of wiping
+    // names the user already typed.
+    function syncCompanionRowCount(desiredExtra) {
+        var target = Math.max(0, Math.min(desiredExtra, companionMax));
+        while (companionsList.children.length < target) addCompanionRow('');
+        while (companionsList.children.length > target) {
+            companionsList.removeChild(companionsList.lastElementChild);
+        }
+        refreshAddCompanionBtnState();
+    }
+
+    function collectCompanionNames() {
+        return Array.prototype.slice.call(companionsList.querySelectorAll('.gb-companion-input'))
+            .map(function (el) { return el.value.trim(); })
+            .filter(function (v) { return v !== ''; });
+    }
+
+    // Shows/hides and seeds the additional-guest-names field for the room
+    // currently selected, based on its admin-configured capacity.
+    function setupCompanionFields(capacity, guests) {
+        companionMax = Math.max(0, capacity - 1);
+
+        if (companionMax <= 0) {
+            companionsField.setAttribute('hidden', '');
+            companionsList.innerHTML = '';
+            return;
+        }
+
+        companionsField.removeAttribute('hidden');
+        companionsHint.textContent = 'This room fits up to ' + capacity + ' guest' +
+            (capacity === 1 ? '' : 's') + ' — add up to ' + companionMax + ' more name' +
+            (companionMax === 1 ? '' : 's') + ' below.';
+
+        resetCompanionRows(Math.max(0, guests - 1));
+    }
+
     /* ── room select → pill + capacity cap ───────────────────────── */
     function onRoomChange() {
         var opt = roomSel.options[roomSel.selectedIndex];
@@ -489,6 +602,8 @@ function gb_e(string $s): string {
             guestsIn.max = 50;
             tourBtn.setAttribute('hidden', '');
             delete tourBtn.dataset.tourFile;
+            companionsField.setAttribute('hidden', '');
+            companionsList.innerHTML = '';
             updateSummary();
             return;
         }
@@ -496,11 +611,12 @@ function gb_e(string $s): string {
         var price = opt.dataset.price || '0';
         var type  = opt.dataset.type  || '';
         var tour  = opt.dataset.tour  || '';
+        var isPool = isPoolType(type);
 
         roomSummary.removeAttribute('hidden');
         roomSummaryName.textContent  = opt.text;
         roomSummaryDetail.textContent = type + ' · Up to ' + cap + ' guest' + (cap === 1 ? '' : 's');
-        roomSummaryPrice.textContent = formatPeso(price) + '/night';
+        roomSummaryPrice.textContent = formatPeso(price) + (isPool ? '/person' : '/night');
 
         if (tour) {
             tourBtn.dataset.tourFile = tour;
@@ -511,9 +627,11 @@ function gb_e(string $s): string {
             tourBtn.setAttribute('hidden', '');
         }
 
-        // cap guests input
+        // cap guests input to this room's capacity
         guestsIn.max = cap;
         if (parseInt(guestsIn.value, 10) > cap) guestsIn.value = cap;
+
+        setupCompanionFields(cap, parseInt(guestsIn.value, 10) || 1);
 
         updateSummary();
     }
@@ -527,6 +645,7 @@ function gb_e(string $s): string {
         var guests   = parseInt(guestsIn.value, 10) || 0;
         var nights   = (cin && cout) ? nightsBetween(cin, cout) : 0;
         var price    = (opt && opt.value) ? parseFloat(opt.dataset.price) || 0 : 0;
+        var isPool   = (opt && opt.value) ? isPoolType(opt.dataset.type) : false;
 
         if (roomName && cin && cout && nights > 0) {
             sumSection.removeAttribute('hidden');
@@ -535,7 +654,7 @@ function gb_e(string $s): string {
             sumCheckout.textContent = formatDate(cout);
             sumNights.textContent   = nights + ' night' + (nights === 1 ? '' : 's');
             sumGuests.textContent   = guests + ' guest' + (guests === 1 ? '' : 's');
-            sumTotal.textContent    = formatPeso(price * nights);
+            sumTotal.textContent    = formatPeso(isPool ? (price * guests) : (price * nights));
         } else {
             sumSection.setAttribute('hidden', '');
         }
@@ -557,6 +676,18 @@ function gb_e(string $s): string {
 
     checkoutIn.addEventListener('change', updateSummary);
     guestsIn.addEventListener('input', updateSummary);
+    guestsIn.addEventListener('change', function () {
+        // Re-sync the additional-guest-name rows to the (possibly clamped)
+        // guest count once the user commits a value — not on every
+        // keystroke, so names already typed aren't wiped mid-edit.
+        var opt = roomSel.options[roomSel.selectedIndex];
+        if (!opt || !opt.value) return;
+        var cap = parseInt(opt.dataset.capacity, 10) || 50;
+        if (parseInt(guestsIn.value, 10) > cap) guestsIn.value = cap;
+        if (companionMax > 0) {
+            syncCompanionRowCount((parseInt(guestsIn.value, 10) || 1) - 1);
+        }
+    });
     roomSel.addEventListener('change', onRoomChange);
 
     // init on load if URL params pre-filled values
