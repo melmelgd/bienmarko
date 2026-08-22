@@ -47,6 +47,7 @@ function icon_paths(): array
         'upload'        => '<path d="M12 21V9"></path><polyline points="7 13 12 8 17 13"></polyline><path d="M4.5 17v2.5A1.5 1.5 0 0 0 6 21h12a1.5 1.5 0 0 0 1.5-1.5V17"></path>',
         'refresh'       => '<path d="M20 11A8 8 0 0 0 5.5 6.5L4 8"></path><polyline points="4 4 4 8 8 8"></polyline><path d="M4 13a8 8 0 0 0 14.5 4.5L20 16"></path><polyline points="20 20 20 16 16 16"></polyline>',
         'clock'         => '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline>',
+        'edit'          => '<path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path>',
         'chevron-right' => '<polyline points="9 5 16 12 9 19"></polyline>',
         'palm'          => '<img src="../logo/palm-tree.png" alt="Palm icon" width="24" height="24"/>',
     ];

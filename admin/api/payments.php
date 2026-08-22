@@ -11,14 +11,8 @@ declare(strict_types=1);
 require_once __DIR__ . '/../../includes/auth-common.php';
 
 bienmarko_start_session();
+bienmarko_require_role('admin');
 header('Content-Type: application/json; charset=utf-8');
-
-/* Only admins */
-if (!isset($_SESSION['role']) || $_SESSION['role'] !== 'admin') {
-    http_response_code(403);
-    echo json_encode(['success' => false, 'error' => 'Unauthorized.']);
-    exit;
-}
 
 $pdo  = bienmarko_db();
 $body = json_decode(file_get_contents('php://input'), true) ?? [];

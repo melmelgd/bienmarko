@@ -67,6 +67,21 @@ $pdo->exec(
 );
 
 /* ------------------------------------------------------------------
+   Ensure bookings table has guest-details columns (migration guard)
+   Same additive guard used by admin/bookings.php and
+   admin/payments.php: guest (no-account) walk-in bookings store
+   guest_id = NULL plus a name/email directly on the booking row, so
+   the Recent Bookings query below needs these columns to fall back
+   to for that case.
+------------------------------------------------------------------ */
+$pdo->exec("ALTER TABLE `bookings` MODIFY COLUMN `guest_id` INT UNSIGNED NULL DEFAULT NULL");
+$pdo->exec("
+    ALTER TABLE `bookings`
+        ADD COLUMN IF NOT EXISTS `guest_name` VARCHAR(200) NULL DEFAULT NULL AFTER `total_amount`,
+        ADD COLUMN IF NOT EXISTS `email`      VARCHAR(200) NULL DEFAULT NULL AFTER `guest_name`
+");
+
+/* ------------------------------------------------------------------
    STAT 1 — Upcoming stays (check_in >= today, confirmed/pending)
 ------------------------------------------------------------------ */
 $stmtUpcoming = $pdo->prepare(
@@ -159,10 +174,11 @@ $stmtRecent = $pdo->query(
             b.guests_count, b.status, b.total_amount, b.created_at,
             a.name   AS room_name,
             a.type   AS room_type,
-            g.first_name, g.last_name, g.email AS guest_email
+            g.first_name, g.last_name, g.email AS reg_email,
+            b.guest_name, b.email AS guest_book_email
      FROM bookings b
      JOIN accommodations a ON a.id = b.accommodation_id
-     JOIN guests         g ON g.id = b.guest_id
+     LEFT JOIN guests    g ON g.id = b.guest_id
      ORDER BY b.created_at DESC
      LIMIT 10"
 );
@@ -205,6 +221,26 @@ function admin_badge(string $status): string
     ];
     $b = $map[$status] ?? ['class' => 'ab--grey', 'label' => ucfirst($status)];
     return '<span class="ab ' . $b['class'] . '">' . htmlspecialchars($b['label'], ENT_QUOTES, 'UTF-8') . '</span>';
+}
+
+/**
+ * Guest display name/email for the Recent Bookings table. Registered
+ * bookings pull from the joined guests row; guest (no-account) walk-
+ * ins fall back to the name/email stored directly on the booking
+ * itself. Mirrors bk_name()/bk_email() in admin/bookings.php and
+ * pm_name()/pm_email() in admin/payments.php.
+ */
+function dash_guest_name(array $bk): string
+{
+    if (!empty($bk['first_name'])) {
+        return trim($bk['first_name'] . ' ' . $bk['last_name']);
+    }
+    return $bk['guest_name'] ?? '—';
+}
+
+function dash_guest_email(array $bk): string
+{
+    return $bk['reg_email'] ?? $bk['guest_book_email'] ?? '';
 }
 
 require __DIR__ . '/includes/head.php';
@@ -286,6 +322,20 @@ require __DIR__ . '/includes/topbar.php';
 .legend-label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
 .legend-dot   { width: 8px; height: 8px; border-radius: 50%; background: var(--gold-500); flex-shrink: 0; }
 .legend-value { font-weight: 600; color: var(--text); }
+
+/* ---------- Revenue pie chart ---------- */
+.pie-chart-row  { display: flex; align-items: center; gap: 24px; }
+.pie-chart-wrap { position: relative; width: 150px; height: 150px; flex-shrink: 0; }
+.pie-chart-svg  { width: 100%; height: 100%; filter: drop-shadow(0 4px 10px rgba(0,0,0,.35)); }
+.pie-slice      { stroke: var(--panel); stroke-width: 1.5; transition: opacity .15s; cursor: pointer; }
+.pie-slice:hover{ opacity: .82; }
+.pie-legend     { flex: 1; min-width: 0; }
+.pie-legend .legend-list { gap: 12px; }
+.pie-legend .legend-row  { font-size: 12.5px; }
+.pie-legend .legend-value{ display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
+@media (max-width: 560px) {
+    .pie-chart-row { flex-direction: column; align-items: flex-start; }
+}
 
 /* ---------- Recent bookings table ---------- */
 .table-wrap  { overflow: hidden; }
@@ -552,6 +602,35 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
             $stmtRev->execute(['month_start' => $monthStart, 'month_end' => $monthEnd]);
             $revenueRows = $stmtRev->fetchAll();
             $totalRevenue = array_sum(array_column($revenueRows, 'revenue'));
+
+            /* Build pie-slice geometry (SVG path per accommodation type) */
+            $pieColors  = ['var(--gold-400)', 'var(--blue)', 'var(--emerald)', 'var(--fuchsia)', 'var(--red)'];
+            $pieCx      = 90;
+            $pieCy      = 90;
+            $pieR       = 80;
+            $pieSlices  = [];
+            $cumulative = 0;
+            foreach ($revenueRows as $i => $row) {
+                $fraction    = $totalRevenue > 0 ? ($row['revenue'] / $totalRevenue) : 0;
+                $pct         = $totalRevenue > 0 ? round($fraction * 100) : 0;
+                $startAngle  = $cumulative;
+                $endAngle    = $cumulative + ($fraction * 360);
+                $cumulative  = $endAngle;
+
+                $x1 = $pieCx + $pieR * cos(deg2rad($startAngle - 90));
+                $y1 = $pieCy + $pieR * sin(deg2rad($startAngle - 90));
+                $x2 = $pieCx + $pieR * cos(deg2rad($endAngle - 90));
+                $y2 = $pieCy + $pieR * sin(deg2rad($endAngle - 90));
+                $largeArc = (($endAngle - $startAngle) > 180) ? 1 : 0;
+
+                $pieSlices[] = [
+                    'path'   => sprintf('M%.3F,%.3F L%.3F,%.3F A%d,%d 0 %d,1 %.3F,%.3F Z', $pieCx, $pieCy, $x1, $y1, $pieR, $pieR, $largeArc, $x2, $y2),
+                    'color'  => $pieColors[$i % count($pieColors)],
+                    'type'   => $row['type'],
+                    'amount' => $row['revenue'],
+                    'pct'    => $pct,
+                ];
+            }
             ?>
             <p class="revenue-figure">₱<?php echo number_format($totalRevenue, 2); ?></p>
 
@@ -560,21 +639,40 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
                     <span class="donut-placeholder-text">No revenue data yet</span>
                 </div>
             <?php else: ?>
-                <div style="display:flex;flex-direction:column;gap:10px;">
-                    <?php foreach ($revenueRows as $row): ?>
-                        <?php
-                        $pct = $totalRevenue > 0 ? round(($row['revenue'] / $totalRevenue) * 100) : 0;
-                        ?>
-                        <div>
-                            <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:5px;">
-                                <span style="color:var(--text-secondary);"><?php echo htmlspecialchars($row['type']); ?></span>
-                                <span style="font-weight:600;">₱<?php echo number_format($row['revenue'], 2); ?> (<?php echo $pct; ?>%)</span>
-                            </div>
-                            <div style="background:var(--border);border-radius:var(--r-full);height:6px;overflow:hidden;">
-                                <div style="width:<?php echo $pct; ?>%;height:100%;background:linear-gradient(90deg,var(--gold-400),var(--gold-600));border-radius:var(--r-full);"></div>
-                            </div>
+                <div class="pie-chart-row">
+                    <div class="pie-chart-wrap">
+                        <svg class="pie-chart-svg" viewBox="0 0 180 180" role="img" aria-label="Revenue breakdown by accommodation type">
+                            <?php if (count($pieSlices) === 1): ?>
+                                <circle class="pie-slice" cx="<?php echo $pieCx; ?>" cy="<?php echo $pieCy; ?>" r="<?php echo $pieR; ?>"
+                                        fill="<?php echo $pieSlices[0]['color']; ?>">
+                                    <title><?php echo htmlspecialchars($pieSlices[0]['type']); ?>: ₱<?php echo number_format($pieSlices[0]['amount'], 2); ?> (<?php echo $pieSlices[0]['pct']; ?>%)</title>
+                                </circle>
+                            <?php else: ?>
+                                <?php foreach ($pieSlices as $slice): ?>
+                                    <path class="pie-slice" d="<?php echo $slice['path']; ?>" fill="<?php echo $slice['color']; ?>">
+                                        <title><?php echo htmlspecialchars($slice['type']); ?>: ₱<?php echo number_format($slice['amount'], 2); ?> (<?php echo $slice['pct']; ?>%)</title>
+                                    </path>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </svg>
+                    </div>
+                    <div class="pie-legend">
+                        <span class="legend-title">By Accommodation Type</span>
+                        <div class="legend-list">
+                            <?php foreach ($pieSlices as $slice): ?>
+                                <div class="legend-row">
+                                    <span class="legend-label">
+                                        <span class="legend-dot" style="background:<?php echo $slice['color']; ?>;"></span>
+                                        <?php echo htmlspecialchars($slice['type']); ?>
+                                    </span>
+                                    <span class="legend-value">
+                                        ₱<?php echo number_format($slice['amount'], 2); ?>
+                                        <span style="color:var(--text-tertiary);font-weight:500;">(<?php echo $slice['pct']; ?>%)</span>
+                                    </span>
+                                </div>
+                            <?php endforeach; ?>
                         </div>
-                    <?php endforeach; ?>
+                    </div>
                 </div>
             <?php endif; ?>
         </div>
@@ -591,7 +689,6 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
             <table>
                 <thead>
                     <tr>
-                        <th>Reference</th>
                         <th>Guest</th>
                         <th>Room</th>
                         <th>Check-in</th>
@@ -604,7 +701,7 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
                 <tbody>
                     <?php if (empty($recentBookings)): ?>
                         <tr>
-                            <td colspan="8">
+                            <td colspan="7">
                                 <?php render_empty_state(
                                     'calendar',
                                     'No bookings yet',
@@ -615,12 +712,11 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
                     <?php else: ?>
                         <?php foreach ($recentBookings as $bk): ?>
                             <tr>
-                                <td class="td-ref"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></td>
                                 <td>
                                     <div class="td-guest">
-                                        <?php echo htmlspecialchars(trim($bk['first_name'] . ' ' . $bk['last_name']), ENT_QUOTES, 'UTF-8'); ?>
+                                        <?php echo htmlspecialchars(dash_guest_name($bk), ENT_QUOTES, 'UTF-8'); ?>
                                     </div>
-                                    <div class="td-sub"><?php echo htmlspecialchars($bk['guest_email'], ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <div class="td-sub"><?php echo htmlspecialchars(dash_guest_email($bk), ENT_QUOTES, 'UTF-8'); ?></div>
                                 </td>
                                 <td>
                                     <div><?php echo htmlspecialchars($bk['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>

@@ -520,7 +520,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
             <table>
                 <thead>
                     <tr>
-                        <th>Reference</th>
                         <th>Guest</th>
                         <th>Room</th>
                         <th>Check-in</th>
@@ -535,7 +534,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                 <tbody>
                     <?php if (empty($rows)): ?>
                         <tr>
-                            <td colspan="10">
+                            <td colspan="9">
                                 <?php render_empty_state(
                                     'wallet',
                                     'No payment records found',
@@ -548,7 +547,10 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                             <?php $payStatus = $row['payment_status'] ?? 'unpaid'; ?>
                             <tr onclick="openBilling(<?php echo (int) $row['booking_id']; ?>)">
                                 <td>
-                                    <div class="td-ref"><?php echo htmlspecialchars($row['reference'], ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <div class="td-guest"><?php echo htmlspecialchars(pm_name($row), ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php $em = pm_email($row); if ($em): ?>
+                                        <div class="td-sub"><?php echo htmlspecialchars($em, ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php endif; ?>
                                     <div style="margin-top:3px;">
                                         <?php if ($row['booking_type'] === 'guest'): ?>
                                             <span class="type-badge type-badge--guest">Walk-in</span>
@@ -556,12 +558,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                             <span class="type-badge type-badge--registered">Registered</span>
                                         <?php endif; ?>
                                     </div>
-                                </td>
-                                <td>
-                                    <div class="td-guest"><?php echo htmlspecialchars(pm_name($row), ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <?php $em = pm_email($row); if ($em): ?>
-                                        <div class="td-sub"><?php echo htmlspecialchars($em, ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <?php endif; ?>
                                 </td>
                                 <td>
                                     <div><?php echo htmlspecialchars($row['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
@@ -978,6 +974,24 @@ function openReceiptFromModal() {
     closeBilling();
     openReceipt(activeBid);
 }
+
+/* ---------- Deep link: open a specific booking's billing straight away ----------
+   Reached from the Bookings page's "Process Payment" action
+   (payments.php?booking_id=123), so the admin lands here with that
+   accommodation's billing modal already open instead of hunting for
+   the row. The param is stripped from the URL afterward so a page
+   refresh doesn't keep reopening the same modal. */
+(function () {
+    var params = new URLSearchParams(window.location.search);
+    var bid    = parseInt(params.get('booking_id'), 10);
+    if (bid && rowMap[bid]) {
+        openBilling(bid);
+        params.delete('booking_id');
+        var qs     = params.toString();
+        var newUrl = window.location.pathname + (qs ? '?' + qs : '');
+        window.history.replaceState({}, '', newUrl);
+    }
+})();
 
 function closeReceipt() {
     document.getElementById('receiptOverlay').classList.remove('is-open');

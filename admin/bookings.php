@@ -109,6 +109,7 @@ $sql = "SELECT
             b.id, b.reference, b.check_in, b.check_out,
             b.guests_count, b.status, b.total_amount,
             b.booking_type, b.payment_method, b.notes,
+            b.accommodation_id,
             b.guest_name, b.email AS guest_book_email,
             b.phone AS guest_phone, b.address AS guest_address,
             b.companion_names,
@@ -156,6 +157,33 @@ function bk_badge(string $status): string
     ];
     [$cls, $lbl] = $map[$status] ?? ['ab--grey', ucfirst($status)];
     return '<span class="ab ' . $cls . '">' . htmlspecialchars($lbl, ENT_QUOTES, 'UTF-8') . '</span>';
+}
+
+/**
+ * Combined Payment + Status badge for the bookings table.
+ * A booking that hasn't been confirmed yet has no payment to speak of,
+ * so it simply reads "Pending". Cancelled/completed bookings show their
+ * own state. Only confirmed bookings — the ones actually paid — show
+ * the payment method (Cash / GCash) as the badge label.
+ */
+function bk_status_payment_badge(array $bk): string
+{
+    $status = $bk['status'];
+
+    if ($status === 'cancelled') {
+        return '<span class="ab ab--red">Cancelled</span>';
+    }
+    if ($status === 'completed') {
+        return '<span class="ab ab--blue">Completed</span>';
+    }
+    if ($status !== 'confirmed') {
+        // pending, or any unexpected value — not paid yet
+        return '<span class="ab ab--amber">Pending</span>';
+    }
+
+    $method = $bk['payment_method'] ?? 'cash';
+    $label  = $method === 'gcash' ? 'GCash' : 'Cash';
+    return '<span class="ab ab--green">' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '</span>';
 }
 
 require __DIR__ . '/includes/head.php';
@@ -332,6 +360,7 @@ $bookingsJson = json_encode(array_map(function ($bk) {
         'reference'    => $bk['reference'],
         'booking_type' => $bk['booking_type'],
         'status'       => $bk['status'],
+        'accommodation_id' => (int) $bk['accommodation_id'],
         'check_in'     => $bk['check_in'],
         'check_out'    => $bk['check_out'],
         'guests_count' => (int) $bk['guests_count'],
@@ -431,17 +460,14 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                         <th>Room</th>
                         <th>Check-in</th>
                         <th>Check-out</th>
-                        <th>Guests</th>
-                        <th>Payment</th>
                         <th>Status</th>
-                        <th>Amount</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="bookingsTbody">
                     <?php if (empty($bookings)): ?>
                         <tr>
-                            <td colspan="9">
+                            <td colspan="6">
                                 <?php render_empty_state(
                                     'calendar',
                                     'No bookings yet',
@@ -464,22 +490,15 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                                 </td>
                                 <td><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></td>
                                 <td><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></td>
-                                <td><?php echo (int) $bk['guests_count']; ?></td>
-                                <td>
-                                    <span style="text-transform:capitalize;">
-                                        <?php echo htmlspecialchars($bk['payment_method'] ?? 'cash', ENT_QUOTES, 'UTF-8'); ?>
-                                    </span>
-                                </td>
-                                <td><?php echo bk_badge($bk['status']); ?></td>
-                                <td class="td-amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></td>
+                                <td><?php echo bk_status_payment_badge($bk); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
                                         <button class="btn-sm btn-sm--gold" onclick="openDetail(<?php echo (int) $bk['id']; ?>)" title="View Details">
                                             <?php echo icon('calendar', 'icon-sm'); ?>
                                         </button>
                                         <?php if (in_array($bk['status'], ['confirmed','pending'])): ?>
-                                            <button class="btn-sm btn-sm--success" onclick="quickStatus(<?php echo (int) $bk['id']; ?>, 'completed')" title="Mark Completed">
-                                                <?php echo icon('calendar-check', 'icon-sm'); ?>
+                                            <button class="btn-sm btn-sm--success" onclick="goToPayment(<?php echo (int) $bk['id']; ?>)" title="Process Payment">
+                                                <?php echo icon('wallet', 'icon-sm'); ?>
                                             </button>
                                             <button class="btn-sm btn-sm--danger" onclick="quickStatus(<?php echo (int) $bk['id']; ?>, 'cancelled')" title="Cancel">
                                                 <?php echo icon('close', 'icon-sm'); ?>
@@ -701,6 +720,113 @@ $bookingsJson = json_encode(array_map(function ($bk) {
     </div>
 </div>
 
+<!-- ===== Edit Booking Modal ===== -->
+<div class="modal-overlay" id="editBookingModal" aria-modal="true" role="dialog">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title">Edit Booking</div>
+            <button class="modal-close" onclick="closeEditBooking()" aria-label="Close"><?php echo icon('close'); ?></button>
+        </div>
+        <div class="modal-body">
+            <form id="editBookingForm" onsubmit="submitEditBooking(event)">
+                <div class="modal-section">
+                    <div class="modal-section-title">Guest Information</div>
+                    <span class="form-label" id="edAccountHint" style="display:none;color:var(--text-tertiary);margin-bottom:8px;">
+                        This booking belongs to a registered account, so guest details are linked to their profile and shown here for reference only.
+                    </span>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Guest Name <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="text" name="guest_name" placeholder="Full name" required id="edGuestName">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Phone</label>
+                            <input class="form-input" type="tel" name="phone" placeholder="+63 9XX XXX XXXX" id="edPhone">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Email</label>
+                            <input class="form-input" type="email" name="email" placeholder="guest@email.com" id="edEmail">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">No. of Guests <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="number" name="guests_count" min="1" max="20" value="1" required id="edGuestsCount">
+                        </div>
+                        <div class="form-group full">
+                            <label class="form-label">Address</label>
+                            <input class="form-input" type="text" name="address" placeholder="Home address (optional)" id="edAddress">
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-section">
+                    <div class="modal-section-title">Reservation</div>
+                    <div class="form-row">
+                        <div class="form-group full">
+                            <label class="form-label">Accommodation <span style="color:var(--red)">*</span></label>
+                            <select class="form-input" name="accommodation_id" required id="edAccomSelect">
+                                <option value="">— Select a room —</option>
+                                <?php
+                                $allRooms = $pdo->query("SELECT id, name, type, price, capacity FROM accommodations ORDER BY name")->fetchAll();
+                                foreach ($allRooms as $r):
+                                    $rIsPool = strcasecmp(trim($r['type']), 'Swimming Pool') === 0;
+                                ?>
+                                    <option value="<?php echo (int) $r['id']; ?>"
+                                            data-price="<?php echo (float) $r['price']; ?>"
+                                            data-cap="<?php echo (int) $r['capacity']; ?>"
+                                            data-type="<?php echo htmlspecialchars($r['type'], ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-pool="<?php echo $rIsPool ? '1' : '0'; ?>">
+                                        <?php echo htmlspecialchars($r['name'] . ' (' . $r['type'] . ') — ₱' . number_format($r['price'], 2) . ($rIsPool ? '/person' : '/night'), ENT_QUOTES, 'UTF-8'); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <span class="form-label" id="edPoolHint" style="display:none;color:var(--gold-400);margin-top:4px;">
+                                This is a Swimming Pool — priced per person, and shared by other bookings up to its capacity for the same dates.
+                            </span>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Check-in <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="date" name="check_in" required id="edCheckIn">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Check-out <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="date" name="check_out" required id="edCheckOut">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Payment Method</label>
+                            <select class="form-input" name="payment_method" id="edPaymentMethod">
+                                <option value="cash">Cash</option>
+                                <option value="gcash">GCash</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label">Estimated Total</label>
+                            <input class="form-input" type="text" id="edTotal" readonly placeholder="₱0.00" style="color:var(--gold-400);font-weight:700;">
+                        </div>
+                        <div class="form-group full" id="edCompanionsGroup" style="display:none;">
+                            <label class="form-label">Additional Guest Names <span style="font-weight:400;color:var(--text-tertiary);">(one per line, optional)</span></label>
+                            <textarea class="form-input" name="companion_names" id="edCompanionNames" rows="3" placeholder="e.g.&#10;Juan Dela Cruz&#10;Maria Santos"></textarea>
+                            <span class="form-label" id="edCompanionsHint" style="font-weight:400;color:var(--text-tertiary);margin-top:4px;"></span>
+                        </div>
+                        <div class="form-group full">
+                            <label class="form-label">Notes</label>
+                            <input class="form-input" type="text" name="notes" placeholder="Special requests, notes…" id="edNotes">
+                        </div>
+                    </div>
+                </div>
+                <input type="hidden" name="id" id="edBookingId" value="">
+                <input type="hidden" name="csrf_token" value="<?php echo htmlspecialchars($csrf, ENT_QUOTES, 'UTF-8'); ?>">
+                <input type="hidden" name="action" value="update">
+            </form>
+        </div>
+        <div class="modal-actions">
+            <button class="btn btn-primary" onclick="submitEditBooking(event)" id="edSubmitBtn">
+                <?php echo icon('save', 'icon-sm'); ?>
+                Save Changes
+            </button>
+            <button class="btn btn-secondary" onclick="closeEditBooking()">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <!-- ===== Toast container ===== -->
 <div class="toast-wrap" id="toastWrap"></div>
 
@@ -792,8 +918,8 @@ function openDetail(id) {
     var actions = document.getElementById('modalActions');
     var btns = '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
     if (b.status === 'confirmed' || b.status === 'pending') {
-        btns  = '<button class="btn btn-blue" onclick="changeStatus(' + b.id + ',\'confirmed\')">Confirm</button>';
-        btns += '<button class="btn btn-success" onclick="changeStatus(' + b.id + ',\'completed\')">Mark Completed</button>';
+        btns  = '<button class="btn btn-blue" onclick="openEdit(' + b.id + ')">Edit Booking</button>';
+        btns += '<button class="btn btn-success" onclick="goToPayment(' + b.id + ')">Process Payment</button>';
         btns += '<button class="btn btn-danger" onclick="changeStatus(' + b.id + ',\'cancelled\')">Cancel Booking</button>';
         btns += '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
     } else if (b.status === 'cancelled') {
@@ -838,6 +964,16 @@ function changeStatus(id, newStatus) {
 function quickStatus(id, status) {
     if (!confirm('Mark this booking as ' + status + '?')) return;
     changeStatus(id, status);
+}
+
+/* ---------- Process Payment ---------- */
+// Sends the admin straight to the Payments & Billing page with this
+// booking's billing modal pre-opened, so the accommodation being paid
+// for is already selected. The booking itself is only marked
+// "completed" once the payment recorded there is fully paid — see
+// admin/api/payments.php (save_payment action).
+function goToPayment(id) {
+    window.location.href = 'payments.php?booking_id=' + id;
 }
 
 /* ---------- New booking modal ---------- */
@@ -937,6 +1073,126 @@ function submitNewBooking(e) {
         toast('Network error. Please try again.', 'error');
         btn.disabled = false;
         btn.textContent = 'Confirm Booking';
+    });
+}
+
+/* ---------- Edit booking modal ---------- */
+function openEdit(id) {
+    var b = bookingMap[id];
+    if (!b) return;
+
+    // Registered accounts own their profile details — the admin can
+    // still see them here for reference, but only guest (no-account)
+    // bookings allow editing the name/contact fields directly.
+    var isGuestBooking = b.booking_type === 'guest';
+    ['edGuestName', 'edPhone', 'edEmail', 'edAddress'].forEach(function (id) {
+        document.getElementById(id).readOnly = !isGuestBooking;
+    });
+    document.getElementById('edAccountHint').style.display = isGuestBooking ? 'none' : '';
+
+    document.getElementById('edBookingId').value    = b.id;
+    document.getElementById('edGuestName').value     = b.guest_name || '';
+    document.getElementById('edPhone').value         = b.guest_phone || '';
+    document.getElementById('edEmail').value         = b.guest_email || '';
+    document.getElementById('edAddress').value       = b.guest_address || '';
+    document.getElementById('edGuestsCount').value   = b.guests_count;
+    document.getElementById('edCheckIn').value       = b.check_in;
+    document.getElementById('edCheckOut').value      = b.check_out;
+    document.getElementById('edPaymentMethod').value = b.payment_method || 'cash';
+    document.getElementById('edNotes').value         = b.notes || '';
+    document.getElementById('edCompanionNames').value = (b.companion_names || []).join('\n');
+    document.getElementById('edAccomSelect').value   = b.accommodation_id;
+
+    edCalcTotal();
+    closeDetail();
+    document.getElementById('editBookingModal').classList.add('is-open');
+}
+
+function closeEditBooking() {
+    document.getElementById('editBookingModal').classList.remove('is-open');
+}
+document.getElementById('editBookingModal').addEventListener('click', function (e) {
+    if (e.target === this) closeEditBooking();
+});
+
+function edCalcTotal() {
+    var sel      = document.getElementById('edAccomSelect');
+    var opt      = sel.options[sel.selectedIndex];
+    var price    = parseFloat(opt ? (opt.dataset.price || 0) : 0);
+    var cap      = parseInt(opt ? (opt.dataset.cap || 0) : 0, 10);
+    var isPool   = !!(opt && opt.dataset.pool === '1');
+    var ci       = document.getElementById('edCheckIn').value;
+    var co       = document.getElementById('edCheckOut').value;
+    var guestsEl = document.getElementById('edGuestsCount');
+    var poolHint = document.getElementById('edPoolHint');
+    var companionsGroup = document.getElementById('edCompanionsGroup');
+    var companionsHint  = document.getElementById('edCompanionsHint');
+    var companionsInput = document.getElementById('edCompanionNames');
+
+    poolHint.style.display = isPool ? '' : 'none';
+
+    if (opt && opt.value && cap > 1) {
+        companionsGroup.style.display = '';
+        companionsHint.textContent = 'This room fits up to ' + cap + ' guest' +
+            (cap === 1 ? '' : 's') + ' — list up to ' + (cap - 1) + ' additional name' +
+            (cap - 1 === 1 ? '' : 's') + ' above.';
+    } else {
+        companionsGroup.style.display = 'none';
+    }
+
+    if (cap > 0) {
+        guestsEl.max = cap;
+        if (parseInt(guestsEl.value, 10) > cap) guestsEl.value = cap;
+    }
+
+    if (!ci || !co || !price) { document.getElementById('edTotal').value = ''; return; }
+    var nights = Math.round((new Date(co) - new Date(ci)) / 86400000);
+    if (nights < 1) { document.getElementById('edTotal').value = ''; return; }
+
+    var guests = Math.max(1, parseInt(guestsEl.value, 10) || 1);
+    var total  = isPool ? (guests * price) : (nights * price);
+
+    document.getElementById('edTotal').value = '₱' + total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+document.getElementById('edAccomSelect').addEventListener('change', edCalcTotal);
+document.getElementById('edGuestsCount').addEventListener('input', edCalcTotal);
+document.getElementById('edCheckIn').addEventListener('change', function () {
+    var co = document.getElementById('edCheckOut');
+    if (co.value && co.value <= this.value) co.value = '';
+    co.min = this.value ? new Date(new Date(this.value).getTime() + 86400000).toISOString().slice(0,10) : '';
+    edCalcTotal();
+});
+document.getElementById('edCheckOut').addEventListener('change', edCalcTotal);
+
+function submitEditBooking(e) {
+    e.preventDefault();
+    var form = document.getElementById('editBookingForm');
+    var data = Object.fromEntries(new FormData(form).entries());
+    var btn  = document.getElementById('edSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+
+    fetch('api/bookings.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (res) {
+        if (res.success) {
+            toast('Booking updated successfully!', 'success');
+            closeEditBooking();
+            setTimeout(function () { window.location.reload(); }, 900);
+        } else {
+            toast(res.error || 'Failed to update booking.', 'error');
+            btn.disabled = false;
+            btn.textContent = 'Save Changes';
+        }
+    })
+    .catch(function () {
+        toast('Network error. Please try again.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Save Changes';
     });
 }
 
