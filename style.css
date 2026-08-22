@@ -753,7 +753,9 @@ body.reveal-ready [data-reveal].is-visible {
 
 @media (prefers-reduced-motion: reduce) {
     .featured-skeleton-media,
-    .featured-skeleton-line { animation: none; }
+    .featured-skeleton-line,
+    .room-skeleton-media,
+    .room-skeleton-line { animation: none; }
 }
 
 /* ---------- split feature (Pool Area) ---------- */
@@ -884,6 +886,71 @@ body.reveal-ready [data-reveal].is-visible {
 }
 
 .room-card p { margin-bottom: 0; color: var(--muted); font-size: 14.5px; }
+
+/* Placeholder shown in place of the <img> when an accommodation has no cover photo yet */
+.room-card-placeholder {
+    width: 100%;
+    aspect-ratio: 1.1;
+    display: grid;
+    place-items: center;
+    background: var(--panel-soft);
+    color: rgba(198, 154, 84, 0.3);
+}
+
+.room-card-placeholder svg { width: 40px; height: 40px; }
+
+/* Small badge for accommodations the admin has marked "booked" */
+.room-status-tag {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    z-index: 1;
+    background: rgba(5, 5, 5, 0.78);
+    color: var(--text);
+    border: 1px solid var(--line);
+    padding: 5px 11px;
+    font-size: 10.5px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+/* Skeleton loaders while the accommodations grid is fetching */
+.room-skeleton {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    overflow: hidden;
+    padding-bottom: 16px;
+}
+
+.room-skeleton-media {
+    aspect-ratio: 1.1;
+    background: linear-gradient(90deg, var(--panel) 25%, rgba(198,154,84,0.06) 50%, var(--panel) 75%);
+    background-size: 200% 100%;
+    animation: featSkeleton 1.4s ease infinite;
+}
+
+.room-skeleton-line {
+    height: 14px;
+    margin: 18px auto 0;
+    width: 60%;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--panel) 25%, rgba(198,154,84,0.06) 50%, var(--panel) 75%);
+    background-size: 200% 100%;
+    animation: featSkeleton 1.4s ease infinite;
+}
+
+.room-skeleton-line--title { height: 20px; width: 55%; }
+.room-skeleton-line--sub   { margin-top: 10px; width: 42%; }
+
+/* Shown when the API returns no accommodations, or the fetch fails */
+.room-grid-empty {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: var(--muted);
+    padding: 40px 20px;
+    font-size: 15px;
+}
 
 .center-action { display: flex; justify-content: center; margin-top: 44px; }
 
@@ -1430,7 +1497,8 @@ body.reveal-ready [data-reveal].is-visible {
         scrollbar-width: none;
     }
     .room-grid::-webkit-scrollbar { display: none; height: 0; }
-    .room-grid .room-card {
+    .room-grid .room-card,
+    .room-grid .room-skeleton {
         flex: 0 0 auto;
         width: min(78%, 300px);
         scroll-snap-align: start;

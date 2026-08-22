@@ -16,19 +16,29 @@
 document.addEventListener("DOMContentLoaded", () => {
 
     /* ---------- accommodation filter tabs ---------- */
+    // Cards are now rendered asynchronously (see the "ALL ACCOMMODATIONS
+    // GRID" block below), so this re-queries [data-category] fresh on
+    // every click instead of caching a NodeList at load time — otherwise
+    // cards added after the initial fetch would never be found.
     const filterButtons = document.querySelectorAll("[data-filter]");
-    const cards = document.querySelectorAll("[data-category]");
+    const roomGridForFilters = document.getElementById("roomGrid");
+    let activeAccommodationFilter = "all";
+
+    function applyAccommodationFilter(filter) {
+        if (!roomGridForFilters) return;
+        roomGridForFilters.querySelectorAll("[data-category]").forEach((card) => {
+            card.hidden = filter !== "all" && card.dataset.category !== filter;
+        });
+    }
 
     filterButtons.forEach((button) => {
         button.addEventListener("click", () => {
-            const filter = button.dataset.filter;
+            activeAccommodationFilter = button.dataset.filter;
 
             filterButtons.forEach((item) => item.classList.remove("active"));
             button.classList.add("active");
 
-            cards.forEach((card) => {
-                card.hidden = filter !== "all" && card.dataset.category !== filter;
-            });
+            applyAccommodationFilter(activeAccommodationFilter);
         });
     });
 
@@ -447,6 +457,212 @@ document.addEventListener("DOMContentLoaded", () => {
                 // API unreachable or returned bad data — hide section silently
                 featuredGrid.innerHTML = "";
                 featuredSection.setAttribute("hidden", "");
+            });
+    }
+
+    /* =========================================================
+       ACCOMMODATIONS DATA
+       One shared fetch of api/accommodations.php feeds two things,
+       so both always reflect exactly what the admin has added and
+       never drift apart from a duplicate/stale second fetch:
+       1. The "Our Accommodations" grid (#roomGrid) — full cards.
+       2. The booking-strip "Accommodation" <select> — name options.
+       ========================================================= */
+    const roomGrid = document.getElementById("roomGrid");
+    const bookingAccommodationSelect = document.getElementById("bookingAccommodationSelect");
+
+    if (roomGrid || bookingAccommodationSelect) {
+
+        // Helper: PHP price string -> "₱2,000" (no suffix)
+        function roomFormatPeso(price) {
+            const n = parseFloat(price);
+            if (isNaN(n)) return "₱—";
+            return "₱" + n.toLocaleString("en-PH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        }
+
+        // Helper: PHP price string -> "PHP 2,000" (matches the room-hover style)
+        function roomFormatPhp(price) {
+            const n = parseFloat(price);
+            if (isNaN(n)) return "PHP —";
+            return "PHP " + n.toLocaleString("en-PH", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+        }
+
+        // Rooms bill per night, pool access bills per person, everything
+        // else (venues, cottages, custom types) bills per day.
+        function roomPriceSuffix(category) {
+            if (category === "rooms") return "/night";
+            if (category === "pool") return "/person";
+            return "/day";
+        }
+
+        // Builds the short line under the room name, e.g.
+        // "4 Guests · Room 101" or "6 Guests · Wi-Fi, Air Conditioning"
+        function roomSubtitle(room) {
+            const capacity = Number(room.capacity) || 0;
+            const parts = [capacity + " Guest" + (capacity === 1 ? "" : "s")];
+
+            if (room.category === "rooms" && room.room_number) {
+                parts.push("Room " + room.room_number);
+            } else if (room.amenities && room.amenities.length) {
+                parts.push(room.amenities.slice(0, 2).join(", "));
+            } else if (room.type) {
+                parts.push(room.type);
+            }
+
+            return parts.join(" · ");
+        }
+
+        // Minimal HTML escaper — avoids innerHTML XSS from API data
+        function roomEscHtml(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function makeRoomSkeleton() {
+            const el = document.createElement("div");
+            el.className = "room-skeleton";
+            el.innerHTML =
+                '<div class="room-skeleton-media"></div>' +
+                '<div class="room-skeleton-line room-skeleton-line--title"></div>' +
+                '<div class="room-skeleton-line room-skeleton-line--sub"></div>';
+            return el;
+        }
+
+        function showRoomSkeletons() {
+            roomGrid.innerHTML = "";
+            for (let i = 0; i < 6; i++) {
+                roomGrid.appendChild(makeRoomSkeleton());
+            }
+        }
+
+        function showRoomGridMessage(message) {
+            roomGrid.innerHTML = "";
+            const p = document.createElement("p");
+            p.className = "room-grid-empty";
+            p.textContent = message;
+            roomGrid.appendChild(p);
+        }
+
+        // Build one real accommodation card from API data. Same markup
+        // and classes as the original hand-authored cards (room-card,
+        // room-media, price-tag, room-hover, data-category,
+        // data-book-room) so the existing filter tabs, hover reveal,
+        // and Book Now wiring all keep working unchanged.
+        function makeRoomCard(room, index) {
+            const article = document.createElement("article");
+            article.className = "room-card";
+            article.dataset.category = room.category || "other";
+            article.dataset.reveal = "";
+            article.style.setProperty("--i", index % 4);
+
+            let mediaInner = "";
+            if (room.image_url) {
+                mediaInner += `<img src="${roomEscHtml(room.image_url)}" alt="${roomEscHtml(room.name)}" loading="lazy">`;
+            } else {
+                mediaInner +=
+                    '<div class="room-card-placeholder">' +
+                    '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"></path><polyline points="9 22 9 12 15 12 15 22"></polyline></svg>' +
+                    '</div>';
+            }
+
+            mediaInner += `<span class="price-tag">${roomFormatPeso(room.price)}${roomPriceSuffix(room.category)}</span>`;
+
+            if (room.status === "booked") {
+                mediaInner += '<span class="room-status-tag">Currently Booked</span>';
+            }
+
+            mediaInner +=
+                '<div class="room-hover">' +
+                '<span>From</span>' +
+                `<strong>${roomFormatPhp(room.price)}</strong>` +
+                `<a href="#" data-book-room="${roomEscHtml(room.name)}">Book Now</a>` +
+                '</div>';
+
+            article.innerHTML =
+                `<div class="room-media">${mediaInner}</div>` +
+                `<h3>${roomEscHtml(room.name)}</h3>` +
+                `<p>${roomEscHtml(roomSubtitle(room))}</p>`;
+
+            return article;
+        }
+
+        // Fills the booking-strip select with one <option> per admin
+        // accommodation, keeping the existing "Room Type" placeholder as
+        // the first entry. Value is the accommodation's name (matching
+        // the same `room=<name>` convention the "Book Now" links already
+        // use via data-book-room), so it stays consistent if the strip's
+        // submit handler is ever wired to forward the selected room.
+        function populateBookingSelect(rooms) {
+            if (!bookingAccommodationSelect) return;
+
+            while (bookingAccommodationSelect.options.length > 1) {
+                bookingAccommodationSelect.remove(1);
+            }
+
+            rooms.forEach((room) => {
+                const opt = document.createElement("option");
+                opt.value = room.name;
+                opt.textContent = room.name;
+                bookingAccommodationSelect.appendChild(opt);
+            });
+        }
+
+        if (roomGrid) showRoomSkeletons();
+
+        fetch("api/accommodations.php")
+            .then((res) => {
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return res.json();
+            })
+            .then((data) => {
+                const rooms = (data && data.success && Array.isArray(data.rooms)) ? data.rooms : [];
+
+                populateBookingSelect(rooms);
+
+                if (!roomGrid) return;
+
+                if (rooms.length === 0) {
+                    showRoomGridMessage("No accommodations are available to view right now. Please check back soon.");
+                    return;
+                }
+
+                roomGrid.innerHTML = "";
+                rooms.forEach((room, i) => {
+                    roomGrid.appendChild(makeRoomCard(room, i));
+                });
+
+                // Wire "Book Now" links inside the freshly rendered cards
+                wireBookNowLinks(roomGrid);
+
+                // Respect whichever filter tab is already active (in case
+                // the visitor clicked one before the fetch resolved)
+                applyAccommodationFilter(activeAccommodationFilter);
+
+                // Plug newly added [data-reveal] elements into the existing
+                // scroll-reveal observer, same approach as the featured cards.
+                if (document.body.classList.contains("reveal-ready")) {
+                    roomGrid.querySelectorAll("[data-reveal]").forEach((el) => {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.top < window.innerHeight - 60) {
+                            el.classList.add("is-visible");
+                        } else if (window.__featuredRevealObserver) {
+                            window.__featuredRevealObserver.observe(el);
+                        } else {
+                            el.classList.add("is-visible");
+                        }
+                    });
+                }
+            })
+            .catch(() => {
+                // Select just keeps its "Room Type" placeholder — graceful
+                // degradation, same principle as the featured section.
+                if (roomGrid) {
+                    showRoomGridMessage("We couldn't load accommodations right now. Please refresh the page or check back shortly.");
+                }
             });
     }
 

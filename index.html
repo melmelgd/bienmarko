@@ -67,16 +67,12 @@
     <form class="booking-strip" id="booking-strip" aria-label="Check availability">
         <label>
             <span>Accommodation</span>
-            <select aria-label="Accommodation type">
+            <!-- Options populated live from admin data by script.js
+                 (same api/accommodations.php fetch used by #roomGrid).
+                 Only the placeholder ships here — everything else is
+                 whatever the admin has actually added. -->
+            <select id="bookingAccommodationSelect" aria-label="Accommodation type">
                 <option value="">Room Type</option>
-                <option value="barkada">Barkada Room</option>
-                <option value="standard">Standard Room</option>
-                <option value="couple">Couple Room</option>
-                <option value="pavilion">Pavilion</option>
-                <option value="coffee">Coffee Venue</option>
-                <option value="veranda">Veranda</option>
-                <option value="cottage">Nepa Hut</option>
-                <option value="pool">Pool Access</option>
             </select>
         </label>
         <label>
@@ -172,119 +168,15 @@
             <button type="button" data-filter="pool">Pool</button>
         </div>
 
-        <div class="room-grid">
-            <article class="room-card" data-category="rooms" data-reveal style="--i:0">
-                <div class="room-media">
-                    <img src="images/room-barkada.jpg" alt="Barkada Room with two beds under a nipa-thatched ceiling">
-                    <span class="price-tag">₱2,000/night</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 2,000</strong>
-                        <a href="#" data-book-room="Barkada Room">Book Now</a>
-                    </div>
-                </div>
-                <h3>Barkada Room</h3>
-                <p>4 Guests · Air-conditioned</p>
-            </article>
-
-            <article class="room-card" data-category="rooms" data-reveal style="--i:1">
-                <div class="room-media">
-                    <img src="images/room-standard.jpg" alt="Standard Room with two single beds">
-                    <span class="price-tag">₱1,500/night</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 1,500</strong>
-                        <a href="#" data-book-room="Standard Room">Book Now</a>
-                    </div>
-                </div>
-                <h3>Standard Room</h3>
-                <p>2-3 Guests · Air-conditioned</p>
-            </article>
-
-            <article class="room-card" data-category="rooms" data-reveal style="--i:2">
-                <div class="room-media">
-                    <img src="images/room-couple.jpg" alt="Couple Room with a single bed and air conditioning unit">
-                    <span class="price-tag">₱1,000/night</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 1,000</strong>
-                        <a href="#" data-book-room="Couple Room">Book Now</a>
-                    </div>
-                </div>
-                <h3>Couple Room</h3>
-                <p>2 Guests · Air-conditioned</p>
-            </article>
-
-            <article class="room-card" data-category="venues" data-reveal style="--i:3">
-                <div class="room-media">
-                    <img src="images/venue-pavilion.jpg" alt="Open-air Pavilion event hall with concrete floor and brick pillars">
-                    <span class="price-tag">₱10,000/day</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 10,000</strong>
-                        <a href="#" data-book-room="Pavilion">Book Now</a>
-                    </div>
-                </div>
-                <h3>Pavilion</h3>
-                <p>Weddings · Corporate events</p>
-            </article>
-
-            <article class="room-card" data-category="venues" data-reveal style="--i:0">
-                <div class="room-media">
-                    <img src="images/venue-coffee.jpg" alt="Coffee Venue with wooden tables and chairs">
-                    <span class="price-tag">₱5,000/day</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 5,000</strong>
-                        <a href="#" data-book-room="Coffee Venue">Book Now</a>
-                    </div>
-                </div>
-                <h3>Coffee Venue</h3>
-                <p>Intimate events · Meetings</p>
-            </article>
-
-            <article class="room-card" data-category="venues" data-reveal style="--i:1">
-                <div class="room-media">
-                    <img src="images/venue-veranda.jpg" alt="Veranda with star light fixture and outdoor dining set">
-                    <span class="price-tag">₱1,000/day</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 1,000</strong>
-                        <a href="#" data-book-room="Veranda">Book Now</a>
-                    </div>
-                </div>
-                <h3>Veranda</h3>
-                <p>Birthdays · Small gatherings</p>
-            </article>
-
-            <article class="room-card" data-category="cottage" data-reveal style="--i:2">
-                <div class="room-media">
-                    <img src="images/cottage-nepa.jpg" alt="Nepa Hut, a thatched-roof bamboo cottage near the swimming pool">
-                    <span class="price-tag">₱300/day</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 300</strong>
-                        <a href="#" data-book-room="Nepa Hut 1">Book Now</a>
-                    </div>
-                </div>
-                <h3>Nepa Hut 1</h3>
-                <p>Poolside · Shaded seating</p>
-            </article>
-
-            <article class="room-card" data-category="pool" data-reveal style="--i:3">
-                <div class="room-media">
-                    <img src="images/pool-area.jpg" alt="Swimming pool area with guests enjoying a pool party">
-                    <span class="price-tag">₱250/day</span>
-                    <div class="room-hover">
-                        <span>From</span>
-                        <strong>PHP 250</strong>
-                        <a href="#" data-book-room="Pool Access">Book Now</a>
-                    </div>
-                </div>
-                <h3>Pool Access</h3>
-                <p>Day swim · Tropical setting</p>
-            </article>
-        </div>
+        <!-- ═══════════════════════════════════════════════════════════
+             Populated live from the admin's Accommodations data via
+             script.js (fetch: api/accommodations.php). Whatever the
+             admin adds, edits, or removes in the admin panel is what
+             shows here — nothing below is hand-authored anymore.
+             Skeleton cards render immediately while the fetch is in
+             flight; see script.js "ALL ACCOMMODATIONS GRID" block.
+             ═══════════════════════════════════════════════════════════ -->
+        <div class="room-grid" id="roomGrid"></div>
 
         <div class="center-action">
             <a class="outline-dark" href="#contact">Inquire About Availability</a>
