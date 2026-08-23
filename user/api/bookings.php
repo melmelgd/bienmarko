@@ -183,6 +183,28 @@ function bk_notify_admin(PDO $pdo, int $bookingId, string $reference, string $gu
     }
 }
 
+/**
+ * Generic admin_notifications insert used by actions other than "book"
+ * (cancellation, modification) so the admin dashboard bell reflects
+ * guest-initiated changes too, not just new bookings.
+ */
+function bk_notify_admin_event(PDO $pdo, int $bookingId, string $type, string $message): void
+{
+    try {
+        $stmt = $pdo->prepare(
+            "INSERT INTO admin_notifications (booking_id, type, message, is_read)
+             VALUES (:booking_id, :type, :message, 0)"
+        );
+        $stmt->execute([
+            'booking_id' => $bookingId,
+            'type'       => $type,
+            'message'    => $message,
+        ]);
+    } catch (Throwable $e) {
+        error_log('[bienmarko] admin notification insert failed: ' . $e->getMessage());
+    }
+}
+
 // ---- Date helpers -----------------------------------------------------------
 
 function bk_parse_date(mixed $raw): ?string
@@ -213,6 +235,17 @@ function bk_validate_dates(string $checkIn, string $checkOut): ?string
     }
 
     return null;
+}
+
+/**
+ * Registered users may modify or cancel their own pending/confirmed
+ * bookings at any time up until the scheduled check-in date. Once
+ * check-in has passed, self-service changes are blocked and the guest
+ * is directed to contact resort management instead.
+ */
+function bk_can_self_manage(string $checkIn): bool
+{
+    return strtotime($checkIn) >= strtotime(date('Y-m-d'));
 }
 
 /**
@@ -812,6 +845,219 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
     ]);
 }
 
+// ---- Action: update (self-service edit) --------------------------------------
+
+/**
+ * Lets a registered user modify the dates, guest count, notes, and
+ * companion names of their own pending/confirmed booking, any time up
+ * until check-in (see bk_can_self_manage()). Once check-in has passed,
+ * changes must go through management. The accommodation itself is not
+ * changed; only its dates/guests/notes.
+ */
+function bk_action_update(PDO $pdo, array $input, int $guestId): never
+{
+    $bookingId = filter_var($input['booking_id'] ?? null, FILTER_VALIDATE_INT);
+    if (!$bookingId || $bookingId < 1) {
+        bk_fail(400, 'Invalid booking.');
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT b.id, b.reference, b.status, b.check_in AS old_check_in,
+                b.accommodation_id, a.name AS room_name, a.type AS room_type,
+                a.price, a.capacity, a.status AS room_status
+         FROM bookings b
+         JOIN accommodations a ON a.id = b.accommodation_id
+         WHERE b.id = :id AND b.guest_id = :guest_id
+         LIMIT 1"
+    );
+    $stmt->execute(['id' => $bookingId, 'guest_id' => $guestId]);
+    $booking = $stmt->fetch();
+
+    if (!$booking) {
+        bk_fail(404, 'Booking not found.');
+    }
+
+    if (!in_array($booking['status'], ['pending', 'confirmed'], true)) {
+        bk_fail(409, 'Only pending or confirmed bookings can be modified.');
+    }
+
+    if (!bk_can_self_manage($booking['old_check_in'])) {
+        bk_fail(403, 'This booking\'s check-in date has already passed. Please contact the resort directly for changes.');
+    }
+
+    $checkIn        = bk_parse_date($input['check_in']  ?? null);
+    $checkOut       = bk_parse_date($input['check_out'] ?? null);
+    $guestsCount    = filter_var($input['guests_count'] ?? 1, FILTER_VALIDATE_INT);
+    $notes          = trim((string) ($input['notes'] ?? ''));
+    $companionNames = bk_sanitize_companion_names($input['companion_names'] ?? null);
+
+    if (!$checkIn || !$checkOut) {
+        bk_fail(400, 'Please provide both check-in and check-out dates.');
+    }
+
+    $dateError = bk_validate_dates($checkIn, $checkOut);
+    if ($dateError) {
+        bk_fail(400, $dateError);
+    }
+
+    if ($guestsCount === false || $guestsCount < 1 || $guestsCount > 50) {
+        bk_fail(400, 'Guest count must be between 1 and 50.');
+    }
+
+    if (mb_strlen($notes) > 1000) {
+        bk_fail(400, 'Notes are too long (max 1000 characters).');
+    }
+
+    if (in_array($booking['room_status'], ['unavailable', 'maintenance'], true)) {
+        $label = $booking['room_status'] === 'maintenance' ? 'under maintenance' : 'unavailable';
+        bk_fail(409, "This room is currently {$label} and can no longer be modified online. Please contact the resort directly.");
+    }
+
+    if ((int) $guestsCount > (int) $booking['capacity']) {
+        bk_fail(400, "This room holds up to {$booking['capacity']} guest(s). Please reduce your guest count.");
+    }
+
+    $accommodationId = (int) $booking['accommodation_id'];
+    $isPool          = bk_is_pool_type((string) $booking['room_type']);
+
+    $pdo->beginTransaction();
+
+    try {
+        if ($isPool) {
+            // Exclude this booking's own current guests from the tally so
+            // editing (e.g. just changing notes) doesn't double-count them.
+            $bookedGuests = bk_pool_booked_guests($pdo, $accommodationId, $checkIn, $checkOut, $bookingId);
+            if ($bookedGuests + (int) $guestsCount > (int) $booking['capacity']) {
+                $pdo->rollBack();
+                $remaining = max(0, (int) $booking['capacity'] - $bookedGuests);
+                bk_fail(409, $remaining > 0
+                    ? "Sorry — only {$remaining} pool slot" . ($remaining === 1 ? '' : 's') . " left for those dates. Please reduce your guest count or choose different dates."
+                    : 'Sorry — the swimming pool is fully booked for those dates. Please choose different dates.');
+            }
+        } elseif (bk_has_conflict($pdo, $accommodationId, $checkIn, $checkOut, $bookingId)) {
+            $pdo->rollBack();
+            bk_fail(409, 'Sorry — this room is not available for those dates. Please pick different dates.');
+        }
+
+        $nights = (int) round((strtotime($checkOut) - strtotime($checkIn)) / 86400);
+        $totalAmount = $isPool
+            ? (float) $booking['price'] * (int) $guestsCount
+            : (float) $booking['price'] * $nights;
+
+        $upd = $pdo->prepare(
+            "UPDATE bookings SET
+                check_in         = :check_in,
+                check_out        = :check_out,
+                guests_count     = :guests_count,
+                notes            = :notes,
+                total_amount     = :total_amount,
+                companion_names  = :companion_names
+             WHERE id = :id AND guest_id = :guest_id"
+        );
+        $upd->execute([
+            'check_in'        => $checkIn,
+            'check_out'       => $checkOut,
+            'guests_count'    => $guestsCount,
+            'notes'           => $notes !== '' ? $notes : null,
+            'total_amount'    => $totalAmount,
+            'companion_names' => $companionNames,
+            'id'              => $bookingId,
+            'guest_id'        => $guestId,
+        ]);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[bienmarko] Booking update failed: ' . $e->getMessage());
+        bk_fail(500, 'Something went wrong while saving your changes. Please try again.');
+    }
+
+    bk_notify_admin_event(
+        $pdo,
+        $bookingId,
+        'modification',
+        "Booking {$booking['reference']} for {$booking['room_name']} was modified by the guest."
+    );
+
+    bk_ok([
+        'booking_id'      => $bookingId,
+        'reference'       => $booking['reference'],
+        'room_name'       => $booking['room_name'],
+        'check_in'        => $checkIn,
+        'check_out'       => $checkOut,
+        'nights'          => $nights,
+        'guests_count'    => (int) $guestsCount,
+        'notes'           => $notes,
+        'companion_names' => $companionNames ? json_decode($companionNames, true) : [],
+        'total_amount'    => $totalAmount,
+        'total_formatted' => '₱' . number_format($totalAmount, 2),
+        'is_pool'         => $isPool,
+        'can_modify'      => bk_can_self_manage($checkIn),
+    ]);
+}
+
+// ---- Action: cancel -----------------------------------------------------------
+
+/**
+ * Lets a registered user cancel their own pending/confirmed booking, any
+ * time up until check-in (see bk_can_self_manage()). Cancellation just
+ * flips status — the row (and its reference number) is kept for the
+ * guest's history and admin records.
+ */
+function bk_action_cancel(PDO $pdo, array $input, int $guestId): never
+{
+    $bookingId = filter_var($input['booking_id'] ?? null, FILTER_VALIDATE_INT);
+    if (!$bookingId || $bookingId < 1) {
+        bk_fail(400, 'Invalid booking.');
+    }
+
+    $stmt = $pdo->prepare(
+        "SELECT b.id, b.reference, b.status, b.check_in, a.name AS room_name
+         FROM bookings b
+         JOIN accommodations a ON a.id = b.accommodation_id
+         WHERE b.id = :id AND b.guest_id = :guest_id
+         LIMIT 1"
+    );
+    $stmt->execute(['id' => $bookingId, 'guest_id' => $guestId]);
+    $booking = $stmt->fetch();
+
+    if (!$booking) {
+        bk_fail(404, 'Booking not found.');
+    }
+
+    if ($booking['status'] === 'cancelled') {
+        bk_fail(409, 'This booking is already cancelled.');
+    }
+
+    if ($booking['status'] === 'completed') {
+        bk_fail(409, 'Completed bookings cannot be cancelled.');
+    }
+
+    if (!bk_can_self_manage($booking['check_in'])) {
+        bk_fail(403, 'This booking\'s check-in date has already passed. Please contact the resort directly for changes.');
+    }
+
+    $upd = $pdo->prepare(
+        "UPDATE bookings SET status = 'cancelled' WHERE id = :id AND guest_id = :guest_id"
+    );
+    $upd->execute(['id' => $bookingId, 'guest_id' => $guestId]);
+
+    bk_notify_admin_event(
+        $pdo,
+        $bookingId,
+        'cancellation',
+        "Booking {$booking['reference']} for {$booking['room_name']} was cancelled by the guest."
+    );
+
+    bk_ok([
+        'booking_id' => $bookingId,
+        'reference'  => $booking['reference'],
+        'status'     => 'cancelled',
+    ]);
+}
+
 // ---- Dispatch ---------------------------------------------------------------
 
 $pdo = bienmarko_db();
@@ -829,6 +1075,12 @@ switch ($action) {
 
     case 'book':
         bk_action_book($pdo, $input, $guestId);
+
+    case 'update':
+        bk_action_update($pdo, $input, $guestId);
+
+    case 'cancel':
+        bk_action_cancel($pdo, $input, $guestId);
 
     default:
         bk_fail(400, 'Unknown action.');

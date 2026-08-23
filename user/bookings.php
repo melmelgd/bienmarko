@@ -60,7 +60,10 @@ try {
     $stmt = $pdo->prepare(
         "SELECT b.id, b.reference, b.check_in, b.check_out,
                 b.guests_count, b.status, b.total_amount, b.notes,
-                b.created_at, a.name AS room_name, a.type AS room_type
+                b.created_at, b.accommodation_id, b.companion_names,
+                a.name AS room_name, a.type AS room_type,
+                a.capacity AS room_capacity, a.price AS room_price,
+                a.image_filename
          FROM bookings b
          JOIN accommodations a ON a.id = b.accommodation_id
          WHERE b.guest_id = :guest_id
@@ -75,6 +78,7 @@ try {
 
 $csrfToken = bienmarko_csrf_token();
 $today     = date('Y-m-d');
+$imgBase   = '../admin/assets/uploads/accommodations/';
 
 // Status badge colors
 function booking_status_class(string $status): string
@@ -642,6 +646,15 @@ require __DIR__ . '/includes/head.php';
   background: var(--surface-raised); border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
+.bk-item__img {
+  width: 84px; height: 84px;
+  border-radius: var(--radius-sm);
+  background: var(--surface); border: 1px solid var(--line);
+  flex-shrink: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+}
+.bk-item__img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.bk-item__img .icon { width: 26px; height: 26px; color: var(--paper-faint); }
 .bk-item__ref {
   font-family: var(--font-display); font-size: 13px; font-weight: 700;
   color: var(--ember); letter-spacing: .04em; flex-shrink: 0;
@@ -653,6 +666,25 @@ require __DIR__ . '/includes/head.php';
 .bk-item__meta { font-size: 12px; color: var(--paper-faint); margin-top: 2px; }
 .bk-item__right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
 .bk-item__amount { font-family: var(--font-display); font-size: 15px; font-weight: 700; }
+.bk-item__actions { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; justify-content: flex-end; }
+.bk-action-btn {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 5px 10px;
+  background: transparent; border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  color: var(--paper-dim); font-size: 11.5px; font-weight: 600;
+  font-family: var(--font-body); cursor: pointer; white-space: nowrap;
+  transition: border-color .15s, color .15s;
+}
+.bk-action-btn .icon { width: 12px; height: 12px; }
+.bk-action-btn--edit:hover { border-color: var(--ember); color: var(--paper); }
+.bk-action-btn--cancel:hover { border-color: var(--danger); color: var(--danger); }
+.bk-item__note { font-size: 11px; color: var(--paper-faint); text-align: right; max-width: 150px; margin-top: 2px; }
+.bk-item--flash { animation: bkItemFlash 1.6s ease; }
+@keyframes bkItemFlash {
+  0%   { background: rgba(232,163,61,.18); }
+  100% { background: var(--surface-raised); }
+}
 .badge {
   display: inline-flex; align-items: center;
   padding: 3px 9px; border-radius: var(--radius-full);
@@ -954,7 +986,9 @@ require __DIR__ . '/includes/head.php';
   .date-row { grid-template-columns: 1fr; }
   .booking-step__label { display: none; }
   .bk-item { flex-direction: column; gap: 8px; }
-  .bk-item__right { flex-direction: row; align-items: center; }
+  .bk-item__img { width: 100%; height: 140px; }
+  .bk-item__right { flex-direction: row; align-items: center; flex-wrap: wrap; }
+  .bk-item__actions { justify-content: flex-start; }
   .cal-modal { width: 96vw; }
   .photo-modal { width: 96vw; }
   .photo-modal__nav { width: 32px; height: 32px; }
@@ -1171,11 +1205,46 @@ require __DIR__ . '/includes/head.php';
                 <div class="bk-list">
                     <?php foreach ($myBookings as $bk): ?>
                         <?php
-                        $checkIn   = date('M j, Y', strtotime($bk['check_in']));
-                        $checkOut  = date('M j, Y', strtotime($bk['check_out']));
-                        $nights    = (int) round((strtotime($bk['check_out']) - strtotime($bk['check_in'])) / 86400);
+                        $checkIn    = date('M j, Y', strtotime($bk['check_in']));
+                        $checkOut   = date('M j, Y', strtotime($bk['check_out']));
+                        $nights     = (int) round((strtotime($bk['check_out']) - strtotime($bk['check_in'])) / 86400);
+                        $isPool     = strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0;
+                        $isActive   = in_array($bk['status'], ['pending', 'confirmed'], true);
+                        $canModify  = $isActive && strtotime($bk['check_in']) >= strtotime($today);
+
+                        $companionNamesArr = [];
+                        if (!empty($bk['companion_names'])) {
+                            $decodedNames = json_decode((string) $bk['companion_names'], true);
+                            if (is_array($decodedNames)) {
+                                $companionNamesArr = $decodedNames;
+                            }
+                        }
                         ?>
-                        <article class="bk-item">
+                        <article class="bk-item"
+                                 data-booking-id="<?php echo (int) $bk['id']; ?>"
+                                 data-reference="<?php echo htmlspecialchars($bk['reference']); ?>"
+                                 data-accommodation-id="<?php echo (int) $bk['accommodation_id']; ?>"
+                                 data-room-name="<?php echo htmlspecialchars($bk['room_name']); ?>"
+                                 data-room-type="<?php echo htmlspecialchars($bk['room_type']); ?>"
+                                 data-is-pool="<?php echo $isPool ? '1' : '0'; ?>"
+                                 data-capacity="<?php echo (int) $bk['room_capacity']; ?>"
+                                 data-price="<?php echo (float) $bk['room_price']; ?>"
+                                 data-check-in="<?php echo htmlspecialchars($bk['check_in']); ?>"
+                                 data-check-out="<?php echo htmlspecialchars($bk['check_out']); ?>"
+                                 data-guests="<?php echo (int) $bk['guests_count']; ?>"
+                                 data-notes="<?php echo htmlspecialchars((string) $bk['notes']); ?>"
+                                 data-companion-names="<?php echo htmlspecialchars(json_encode($companionNamesArr, JSON_UNESCAPED_UNICODE)); ?>"
+                                 data-status="<?php echo htmlspecialchars($bk['status']); ?>"
+                                 data-image="<?php echo htmlspecialchars((string) $bk['image_filename']); ?>">
+                            <div class="bk-item__img">
+                                <?php if (!empty($bk['image_filename'])): ?>
+                                    <img src="<?php echo htmlspecialchars($imgBase . $bk['image_filename']); ?>"
+                                         alt="<?php echo htmlspecialchars($bk['room_name']); ?>"
+                                         loading="lazy">
+                                <?php else: ?>
+                                    <?php render_icon('bed-double'); ?>
+                                <?php endif; ?>
+                            </div>
                             <div class="bk-item__ref"><?php echo htmlspecialchars($bk['reference']); ?></div>
                             <div class="bk-item__body">
                                 <div class="bk-item__room"><?php echo htmlspecialchars($bk['room_name']); ?></div>
@@ -1192,6 +1261,20 @@ require __DIR__ . '/includes/head.php';
                                 <span class="badge <?php echo booking_status_class($bk['status']); ?>">
                                     <?php echo ucfirst(htmlspecialchars($bk['status'])); ?>
                                 </span>
+                                <?php if ($isActive): ?>
+                                    <?php if ($canModify): ?>
+                                        <div class="bk-item__actions">
+                                            <button type="button" class="bk-action-btn bk-action-btn--edit" data-bk-edit>
+                                                <?php render_icon('pencil'); ?> Edit
+                                            </button>
+                                            <button type="button" class="bk-action-btn bk-action-btn--cancel" data-bk-cancel>
+                                                <?php render_icon('x'); ?> Cancel
+                                            </button>
+                                        </div>
+                                    <?php else: ?>
+                                        <span class="bk-item__note">Contact us to modify</span>
+                                    <?php endif; ?>
+                                <?php endif; ?>
                             </div>
                         </article>
                     <?php endforeach; ?>
@@ -1296,6 +1379,81 @@ require __DIR__ . '/includes/head.php';
             <button type="button" class="btn btn--primary" id="bkSuccessDone">
                 <?php render_icon('circle-check'); ?> Done
             </button>
+        </div>
+    </div>
+
+</dialog>
+
+<!-- ===== Edit booking modal ===== -->
+<dialog class="bk-modal" id="editBkModal" aria-labelledby="editBkModalTitle" aria-modal="true">
+
+    <div id="editBkModalContent">
+        <div class="bk-modal__head">
+            <h2 id="editBkModalTitle">Edit Booking</h2>
+            <button type="button" class="bk-modal__close" id="editBkModalClose" aria-label="Close">
+                <?php render_icon('x'); ?>
+            </button>
+        </div>
+
+        <div class="bk-modal__room">
+            <div class="bk-modal__room-img"><?php render_icon('bed-double'); ?></div>
+            <div>
+                <div class="bk-modal__room-name" id="editRoomName">Room</div>
+                <div class="bk-modal__room-type" id="editRoomType"></div>
+            </div>
+        </div>
+
+        <div class="guest-info-panel" style="padding:0 20px">
+            <div class="guest-info-grid">
+                <div class="guest-info-field">
+                    <label for="editCheckIn">Check-in date</label>
+                    <input type="date" id="editCheckIn">
+                </div>
+                <div class="guest-info-field">
+                    <label for="editCheckOut">Check-out date</label>
+                    <input type="date" id="editCheckOut">
+                </div>
+            </div>
+
+            <div class="guests-row">
+                <label>Number of guests</label>
+                <div class="guests-stepper">
+                    <button type="button" id="editGuestsMinus" aria-label="Decrease guests">−</button>
+                    <span class="guests-count" id="editGuestsDisplay" aria-live="polite">1</span>
+                    <button type="button" id="editGuestsPlus" aria-label="Increase guests">+</button>
+                </div>
+            </div>
+
+            <!-- Shown only for accommodations whose capacity allows more than one guest -->
+            <div class="guest-info-field" id="editCompanionsField" hidden>
+                <label>Additional Guest Names <span style="font-weight:400;color:var(--paper-faint)">(optional)</span></label>
+                <div class="companion-list" id="editCompanionsList"></div>
+                <button type="button" class="btn btn--ghost" id="editAddCompanionBtn" style="align-self:flex-start;padding:8px 16px;font-size:12.5px;">
+                    + Add guest name
+                </button>
+                <span class="field-hint" id="editCompanionsHint"></span>
+            </div>
+
+            <div class="bk-modal__notes-field" style="padding:0">
+                <label for="editNotes">Notes <span style="font-weight:400;color:var(--paper-faint)">(optional)</span></label>
+                <textarea id="editNotes" maxlength="1000"
+                          placeholder="Special requests, arrival time, accessibility needs…"></textarea>
+            </div>
+
+            <div class="bk-detail-row bk-detail-row--total" style="padding-top:10px;border-top:1px solid var(--line)">
+                <span class="bk-detail-row__label">New total (estimated)</span>
+                <span class="bk-detail-row__value" id="editTotalPreview">—</span>
+            </div>
+        </div>
+
+        <div class="bk-modal__foot">
+            <span class="bk-modal__error" id="editModalError" role="alert"></span>
+            <div class="bk-modal__foot-actions">
+                <button type="button" class="btn--cancel" id="editModalCancelBtn">Close</button>
+                <button type="button" class="btn-book" id="editModalSaveBtn">
+                    <?php render_icon('send'); ?> <span id="editSaveLabel">Save Changes</span>
+                </button>
+            </div>
         </div>
     </div>
 
@@ -2468,7 +2626,7 @@ require __DIR__ . '/includes/head.php';
                 ' · ' + data.room_name + ' · ' + data.total_formatted;
       elSuccDet.textContent = det;
 
-      injectNewBooking(data);
+      injectNewBooking(data, notes, companionNames);
     })
     .catch(function () {
       isSubmitting = false;
@@ -2496,7 +2654,7 @@ require __DIR__ . '/includes/head.php';
   });
 
   /* ---- Inject new booking row into My Bookings ---- */
-  function injectNewBooking(data) {
+  function injectNewBooking(data, notes, companionNames) {
     var container = document.querySelector('.bk-list');
     if (!container) {
       var panels = document.querySelectorAll('.panel');
@@ -2511,10 +2669,39 @@ require __DIR__ . '/includes/head.php';
 
     var nights = data.nights || 1;
     var guests = data.guests_count || 1;
+    var room   = pendingBooking ? pendingBooking.room : null;
 
     var art = document.createElement('article');
     art.className = 'bk-item';
+    art.setAttribute('data-booking-id', data.booking_id);
+    art.setAttribute('data-reference', data.reference);
+    art.setAttribute('data-accommodation-id', room ? room.id : '');
+    art.setAttribute('data-room-name', data.room_name);
+    art.setAttribute('data-room-type', room ? room.type : '');
+    art.setAttribute('data-is-pool', data.is_pool ? '1' : '0');
+    art.setAttribute('data-capacity', room ? room.capacity : guests);
+    art.setAttribute('data-price', room ? room.price : 0);
+    art.setAttribute('data-check-in', data.check_in);
+    art.setAttribute('data-check-out', data.check_out);
+    art.setAttribute('data-guests', guests);
+    art.setAttribute('data-notes', notes || '');
+    art.setAttribute('data-companion-names', JSON.stringify(companionNames || []));
+    art.setAttribute('data-status', 'confirmed');
+    art.setAttribute('data-image', (room && room.image_filename) ? room.image_filename : '');
+
+    var actionsHtml = bkCanModifyClient(data.check_in)
+      ? '<div class="bk-item__actions">' +
+          '<button type="button" class="bk-action-btn bk-action-btn--edit" data-bk-edit>' + pencilIconSmall() + ' Edit</button>' +
+          '<button type="button" class="bk-action-btn bk-action-btn--cancel" data-bk-cancel>' + xIconSmall() + ' Cancel</button>' +
+        '</div>'
+      : '<span class="bk-item__note">Contact us to modify</span>';
+
+    var imgHtml = (room && room.image_filename)
+      ? '<img src="' + imgBase + encodeURIComponent(room.image_filename) + '" alt="' + escHtml(data.room_name) + '" loading="lazy">'
+      : bedIconLarge();
+
     art.innerHTML =
+      '<div class="bk-item__img">' + imgHtml + '</div>' +
       '<div class="bk-item__ref">' + escHtml(data.reference) + '</div>' +
       '<div class="bk-item__body">' +
         '<div class="bk-item__room">' + escHtml(data.room_name) + '</div>' +
@@ -2525,6 +2712,7 @@ require __DIR__ . '/includes/head.php';
       '<div class="bk-item__right">' +
         '<span class="bk-item__amount">₱' + formatNumber(data.total_amount) + '</span>' +
         '<span class="badge badge--green">Confirmed</span>' +
+        actionsHtml +
       '</div>';
 
     container.insertBefore(art, container.firstChild);
@@ -2564,6 +2752,379 @@ require __DIR__ . '/includes/head.php';
   function globeIcon() {
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:11px;height:11px;flex-shrink:0"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"/></svg>';
   }
+
+  function pencilIconSmall() {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:12px;height:12px;display:inline-block;vertical-align:middle"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/></svg>';
+  }
+  function xIconSmall() {
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" style="width:12px;height:12px;display:inline-block;vertical-align:middle"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+  }
+
+  /* =============================================================
+     Edit / Cancel existing bookings (My Bookings list)
+     ============================================================= */
+
+  var editModal            = document.getElementById('editBkModal');
+  var editModalClose       = document.getElementById('editBkModalClose');
+  var editModalCancelBtn   = document.getElementById('editModalCancelBtn');
+  var editModalSaveBtn     = document.getElementById('editModalSaveBtn');
+  var editSaveLabel        = document.getElementById('editSaveLabel');
+  var editModalErrorEl     = document.getElementById('editModalError');
+  var editRoomNameEl       = document.getElementById('editRoomName');
+  var editRoomTypeEl       = document.getElementById('editRoomType');
+  var editCheckInEl        = document.getElementById('editCheckIn');
+  var editCheckOutEl       = document.getElementById('editCheckOut');
+  var editGuestsDisplayEl  = document.getElementById('editGuestsDisplay');
+  var editGuestsMinusBtn   = document.getElementById('editGuestsMinus');
+  var editGuestsPlusBtn    = document.getElementById('editGuestsPlus');
+  var editCompanionsField  = document.getElementById('editCompanionsField');
+  var editCompanionsList   = document.getElementById('editCompanionsList');
+  var editAddCompanionBtn  = document.getElementById('editAddCompanionBtn');
+  var editCompanionsHint   = document.getElementById('editCompanionsHint');
+  var editNotesEl          = document.getElementById('editNotes');
+  var editTotalPreviewEl   = document.getElementById('editTotalPreview');
+
+  var editState = {
+    bookingId:     null,
+    isPool:        false,
+    capacity:      1,
+    price:         0,
+    guests:        1,
+    companionMax:  0,
+    isSubmitting:  false,
+  };
+
+  /**
+   * Client-side mirror of the server's bk_can_self_manage() — used only
+   * to decide whether to show Edit/Cancel controls right after a booking
+   * is created (no page reload yet); the server re-checks this on every
+   * update/cancel request regardless.
+   */
+  function bkCanModifyClient(checkInStr) {
+    var ci = new Date(checkInStr + 'T00:00:00');
+    var t0 = new Date(todayStr() + 'T00:00:00');
+    return ci >= t0;
+  }
+
+  function editOpenModal() {
+    editModal.showModal ? editModal.showModal() : editModal.setAttribute('open', '');
+  }
+  function editCloseModal() {
+    if (editModal.close) editModal.close();
+    else editModal.removeAttribute('open');
+  }
+
+  editModalClose.addEventListener('click', editCloseModal);
+  editModalCancelBtn.addEventListener('click', editCloseModal);
+  editModal.addEventListener('click', function (e) {
+    var rect = editModal.getBoundingClientRect();
+    if (e.clientY < rect.top || e.clientY > rect.bottom ||
+        e.clientX < rect.left || e.clientX > rect.right) { editCloseModal(); }
+  });
+  editModal.addEventListener('keydown', function (e) { if (e.key === 'Escape') editCloseModal(); });
+
+  /* ---- Companion name rows (mirrors the Step 3 booking-flow pattern) ---- */
+  function editAddCompanionRow(value) {
+    if (editCompanionsList.children.length >= editState.companionMax) return;
+
+    var row = document.createElement('div');
+    row.className = 'companion-row';
+
+    var input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'bk-companion-input';
+    input.maxLength = 100;
+    input.placeholder = 'Guest full name';
+    input.value = value || '';
+    input.addEventListener('input', editRefreshTotalPreview);
+
+    var removeBtn = document.createElement('button');
+    removeBtn.type = 'button';
+    removeBtn.className = 'companion-row__remove';
+    removeBtn.setAttribute('aria-label', 'Remove guest name');
+    removeBtn.textContent = '×';
+    removeBtn.addEventListener('click', function () {
+      row.remove();
+      editRefreshAddCompanionBtnState();
+    });
+
+    row.appendChild(input);
+    row.appendChild(removeBtn);
+    editCompanionsList.appendChild(row);
+    editRefreshAddCompanionBtnState();
+  }
+
+  function editRefreshAddCompanionBtnState() {
+    var atCap = editCompanionsList.children.length >= editState.companionMax;
+    editAddCompanionBtn.disabled = atCap;
+    editAddCompanionBtn.textContent = atCap ? 'Maximum guests reached' : '+ Add guest name';
+  }
+
+  editAddCompanionBtn.addEventListener('click', function () { editAddCompanionRow(''); });
+
+  function editCollectCompanionNames() {
+    return Array.prototype.slice.call(editCompanionsList.querySelectorAll('.bk-companion-input'))
+      .map(function (el) { return el.value.trim(); })
+      .filter(function (v) { return v !== ''; });
+  }
+
+  function editSetupCompanionFields(seedNames) {
+    editState.companionMax = Math.max(0, editState.capacity - 1);
+    editCompanionsList.innerHTML = '';
+
+    if (editState.companionMax <= 0) {
+      editCompanionsField.hidden = true;
+      return;
+    }
+
+    editCompanionsField.hidden = false;
+    editCompanionsHint.textContent = 'This room fits up to ' + editState.capacity + ' guest' +
+      (editState.capacity === 1 ? '' : 's') + ' — add up to ' + editState.companionMax + ' more name' +
+      (editState.companionMax === 1 ? '' : 's') + ' below.';
+
+    var names = Array.isArray(seedNames) ? seedNames.slice(0, editState.companionMax) : [];
+    var seedCount = Math.min(Math.max(names.length, Math.max(0, editState.guests - 1)), editState.companionMax);
+    for (var i = 0; i < seedCount; i++) {
+      editAddCompanionRow(names[i] || '');
+    }
+    editRefreshAddCompanionBtnState();
+  }
+
+  /* ---- Guest stepper ---- */
+  function editSetGuests(n) {
+    n = Math.max(1, Math.min(editState.capacity, n));
+    editState.guests = n;
+    editGuestsDisplayEl.textContent = n;
+
+    // Trim excess companion rows if guest count drops.
+    while (editCompanionsList.children.length > Math.max(0, n - 1)) {
+      editCompanionsList.removeChild(editCompanionsList.lastElementChild);
+    }
+    editRefreshAddCompanionBtnState();
+    editRefreshTotalPreview();
+  }
+
+  editGuestsMinusBtn.addEventListener('click', function () { editSetGuests(editState.guests - 1); });
+  editGuestsPlusBtn.addEventListener('click', function () { editSetGuests(editState.guests + 1); });
+
+  /* ---- Live total preview (server recomputes authoritatively on save) ---- */
+  function editRefreshTotalPreview() {
+    var ci = editCheckInEl.value;
+    var co = editCheckOutEl.value;
+
+    if (!ci || !co || co <= ci) {
+      editTotalPreviewEl.textContent = '—';
+      return;
+    }
+
+    var nights = calcNights(ci, co);
+    var total  = editState.isPool ? editState.price * editState.guests : editState.price * nights;
+
+    editTotalPreviewEl.textContent = '₱' + formatNumber(total) +
+      (editState.isPool ? '' : ' · ' + nights + ' night' + (nights === 1 ? '' : 's'));
+  }
+
+  editCheckInEl.addEventListener('change', function () {
+    if (editCheckOutEl.value && editCheckOutEl.value <= editCheckInEl.value) {
+      var next = new Date(editCheckInEl.value + 'T00:00:00');
+      next.setDate(next.getDate() + 1);
+      editCheckOutEl.value = next.toISOString().slice(0, 10);
+    }
+    editCheckOutEl.min = editCheckInEl.value;
+    editRefreshTotalPreview();
+  });
+  editCheckOutEl.addEventListener('change', editRefreshTotalPreview);
+
+  /* ---- Open the modal, pre-filled from a booking row's data-* ---- */
+  function editOpenForBooking(item) {
+    var d = item.dataset;
+
+    editState.bookingId    = parseInt(d.bookingId, 10);
+    editState.isPool       = d.isPool === '1';
+    editState.capacity     = parseInt(d.capacity, 10) || 1;
+    editState.price        = parseFloat(d.price) || 0;
+    editState.guests       = parseInt(d.guests, 10) || 1;
+    editState.isSubmitting = false;
+
+    editRoomNameEl.textContent = d.roomName || '';
+    editRoomTypeEl.textContent = d.roomType || '';
+
+    editModalErrorEl.textContent = '';
+    editModalSaveBtn.disabled = false;
+    editSaveLabel.textContent = 'Save Changes';
+
+    editCheckInEl.min   = todayStr();
+    editCheckInEl.value = d.checkIn;
+    editCheckOutEl.min  = d.checkIn;
+    editCheckOutEl.value = d.checkOut;
+
+    editGuestsDisplayEl.textContent = editState.guests;
+
+    var seedNames = [];
+    try { seedNames = JSON.parse(d.companionNames || '[]'); } catch (e) { seedNames = []; }
+    editSetupCompanionFields(seedNames);
+
+    editNotesEl.value = d.notes || '';
+
+    editRefreshTotalPreview();
+    editOpenModal();
+  }
+
+  /* ---- Save changes ---- */
+  editModalSaveBtn.addEventListener('click', function () {
+    if (editState.isSubmitting) return;
+
+    var checkIn  = editCheckInEl.value;
+    var checkOut = editCheckOutEl.value;
+
+    editModalErrorEl.textContent = '';
+
+    if (!checkIn || !checkOut) {
+      editModalErrorEl.textContent = 'Please select both check-in and check-out dates.';
+      return;
+    }
+    if (checkOut <= checkIn) {
+      editModalErrorEl.textContent = 'Check-out must be after check-in.';
+      return;
+    }
+
+    editState.isSubmitting = true;
+    editModalSaveBtn.disabled = true;
+    editSaveLabel.textContent = 'Saving…';
+
+    fetch('api/bookings.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:           'update',
+        booking_id:       editState.bookingId,
+        check_in:         checkIn,
+        check_out:        checkOut,
+        guests_count:     editState.guests,
+        notes:            editNotesEl.value.trim(),
+        companion_names:  editCollectCompanionNames(),
+        csrf_token:       csrf,
+      }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      editState.isSubmitting = false;
+      editModalSaveBtn.disabled = false;
+      editSaveLabel.textContent = 'Save Changes';
+
+      if (!data.success) {
+        editModalErrorEl.textContent = data.error || 'Could not save changes. Please try again.';
+        return;
+      }
+
+      applyBookingUpdate(data);
+      editCloseModal();
+    })
+    .catch(function () {
+      editState.isSubmitting = false;
+      editModalSaveBtn.disabled = false;
+      editSaveLabel.textContent = 'Save Changes';
+      editModalErrorEl.textContent = 'Network error. Please try again.';
+    });
+  });
+
+  /* ---- Reflect a successful edit back into the My Bookings row ---- */
+  function applyBookingUpdate(data) {
+    var item = document.querySelector('.bk-item[data-booking-id="' + data.booking_id + '"]');
+    if (!item) return;
+
+    var nights = data.nights || 1;
+
+    item.setAttribute('data-check-in', data.check_in);
+    item.setAttribute('data-check-out', data.check_out);
+    item.setAttribute('data-guests', data.guests_count);
+    item.setAttribute('data-notes', data.notes || '');
+    item.setAttribute('data-companion-names', JSON.stringify(data.companion_names || []));
+
+    var datesEl = item.querySelector('.bk-item__dates');
+    if (datesEl) datesEl.textContent = formatDate(data.check_in) + ' → ' + formatDate(data.check_out);
+
+    var metaEl = item.querySelector('.bk-item__meta');
+    if (metaEl) {
+      metaEl.textContent = nights + ' night' + (nights === 1 ? '' : 's') + ' · ' +
+        data.guests_count + ' guest' + (data.guests_count === 1 ? '' : 's');
+    }
+
+    var amountEl = item.querySelector('.bk-item__amount');
+    if (amountEl) amountEl.textContent = '₱' + formatNumber(data.total_amount);
+
+    // If the newly chosen check-in date now falls inside the no-modify
+    // window, drop the actions so the guest isn't offered a re-edit that
+    // the server would just reject.
+    if (!data.can_modify) {
+      var actions = item.querySelector('.bk-item__actions');
+      if (actions) {
+        var note = document.createElement('span');
+        note.className = 'bk-item__note';
+        note.textContent = 'Contact us to modify';
+        actions.replaceWith(note);
+      }
+    }
+
+    item.classList.add('bk-item--flash');
+    setTimeout(function () { item.classList.remove('bk-item--flash'); }, 1600);
+  }
+
+  /* ---- Cancel a booking ---- */
+  function cancelBooking(item) {
+    var reference = item.dataset.reference || '';
+    var confirmed = window.confirm('Cancel booking ' + reference + '? This cannot be undone.');
+    if (!confirmed) return;
+
+    var bookingId = parseInt(item.dataset.bookingId, 10);
+
+    fetch('api/bookings.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:     'cancel',
+        booking_id: bookingId,
+        csrf_token: csrf,
+      }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.success) {
+        window.alert(data.error || 'Could not cancel this booking. Please try again.');
+        return;
+      }
+
+      var badge = item.querySelector('.badge');
+      if (badge) {
+        badge.className = 'badge badge--red';
+        badge.textContent = 'Cancelled';
+      }
+      var actions = item.querySelector('.bk-item__actions');
+      if (actions) actions.remove();
+
+      item.setAttribute('data-status', 'cancelled');
+      item.classList.add('bk-item--flash');
+      setTimeout(function () { item.classList.remove('bk-item--flash'); }, 1600);
+    })
+    .catch(function () {
+      window.alert('Network error. Please try again.');
+    });
+  }
+
+  /* ---- Delegate clicks from the My Bookings list (covers rows injected later too) ---- */
+  document.addEventListener('click', function (e) {
+    var editBtn = e.target.closest && e.target.closest('[data-bk-edit]');
+    if (editBtn) {
+      var editItem = editBtn.closest('.bk-item');
+      if (editItem) editOpenForBooking(editItem);
+      return;
+    }
+    var cancelBtn = e.target.closest && e.target.closest('[data-bk-cancel]');
+    if (cancelBtn) {
+      var cancelItem = cancelBtn.closest('.bk-item');
+      if (cancelItem) cancelBooking(cancelItem);
+    }
+  });
 
 })();
 </script>
