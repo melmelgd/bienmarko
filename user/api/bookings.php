@@ -360,6 +360,98 @@ function bk_ensure_tour_column(PDO $pdo): void
     $done = true;
 }
 
+/**
+ * Defensively creates the `accommodation_photos` gallery table if this
+ * deployment's DB hasn't been migrated yet (e.g. no admin has opened
+ * admin/accommodations.php since the gallery feature was added). Mirrors
+ * acc_ensure_photos_table() in admin/includes/accommodations-data.php —
+ * duplicated here rather than shared, same reasoning as bk_is_pool_type()
+ * vs gb_is_pool_type() elsewhere in this project.
+ */
+function bk_ensure_photos_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    try {
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS `accommodation_photos` (
+                `id`               INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `accommodation_id` INT UNSIGNED NOT NULL,
+                `filename`         VARCHAR(255) NOT NULL,
+                `sort_order`       SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                `created_at`       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_accommodation` (`accommodation_id`),
+                CONSTRAINT `fk_acc_photos_accommodation_bk` FOREIGN KEY (`accommodation_id`)
+                    REFERENCES `accommodations` (`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+        );
+    } catch (Throwable $e) {
+        // Best-effort — if this fails (e.g. FK name collision on a table
+        // that already exists under a different constraint name), the
+        // photos query below simply returns nothing per room.
+        error_log('[bienmarko] accommodation_photos ensure warning: ' . $e->getMessage());
+    }
+    $done = true;
+}
+
+/**
+ * Bulk-fetches gallery photo filenames for a set of accommodation IDs,
+ * grouped by accommodation_id and ordered the same way the admin gallery
+ * displays them (sort_order, then id). Returns [] on any failure so a
+ * missing/un-migrated table never breaks the availability response —
+ * callers just fall back to the single cover photo.
+ */
+function bk_fetch_photos_by_accommodation(PDO $pdo, array $accommodationIds): array
+{
+    $photosByAcc = [];
+    if (!$accommodationIds) {
+        return $photosByAcc;
+    }
+
+    try {
+        $placeholders = implode(',', array_fill(0, count($accommodationIds), '?'));
+        $stmt = $pdo->prepare(
+            "SELECT `accommodation_id`, `filename`
+             FROM `accommodation_photos`
+             WHERE `accommodation_id` IN ($placeholders)
+             ORDER BY `sort_order` ASC, `id` ASC"
+        );
+        $stmt->execute($accommodationIds);
+        foreach ($stmt->fetchAll() as $photoRow) {
+            $photosByAcc[(int) $photoRow['accommodation_id']][] = $photoRow['filename'];
+        }
+    } catch (Throwable $e) {
+        // Table missing or query failed — treat as "no gallery photos".
+    }
+
+    return $photosByAcc;
+}
+
+/**
+ * Combines a room's single cover photo (`image_filename`) with its extra
+ * gallery photos into one ordered, de-duplicated filename list — cover
+ * first (matches what admins see as the "main" photo), then any gallery
+ * photos not already equal to the cover (sharing a photo as both cover
+ * and gallery entry, e.g. via admin's "set as cover", shouldn't show
+ * twice in the booking-flow lightbox).
+ */
+function bk_combine_photos(?string $coverFilename, array $galleryFilenames): array
+{
+    $photos = [];
+    if ($coverFilename) {
+        $photos[] = $coverFilename;
+    }
+    foreach ($galleryFilenames as $filename) {
+        if (!in_array($filename, $photos, true)) {
+            $photos[] = $filename;
+        }
+    }
+    return $photos;
+}
+
 function bk_action_availability(PDO $pdo, array $input): never
 {
     $checkIn  = bk_parse_date($input['check_in']  ?? null);
@@ -387,6 +479,7 @@ function bk_action_availability(PDO $pdo, array $input): never
     }
 
     bk_ensure_tour_column($pdo);
+    bk_ensure_photos_table($pdo);
 
     $accStmt = $pdo->query(
         "SELECT id, name, type, capacity, price, status,
@@ -395,6 +488,9 @@ function bk_action_availability(PDO $pdo, array $input): never
          ORDER BY name ASC"
     );
     $accommodations = $accStmt->fetchAll();
+
+    $accIds      = array_map(static function ($r) { return (int) $r['id']; }, $accommodations);
+    $photosByAcc = bk_fetch_photos_by_accommodation($pdo, $accIds);
 
     $nights  = (int) round((strtotime($checkOut) - strtotime($checkIn)) / 86400);
     $results = [];
@@ -470,6 +566,10 @@ function bk_action_availability(PDO $pdo, array $input): never
             'amenities'           => $amenities,
             'image_filename'      => $row['image_filename'],
             'tour_filename'       => $row['tour_filename'] ?? null,
+            // Cover photo + gallery photos, ordered and de-duplicated —
+            // lets the booking flow show a "View N photos" lightbox
+            // instead of just the single cover image.
+            'photos'              => bk_combine_photos($row['image_filename'], $photosByAcc[$accId] ?? []),
             'availability'        => $availability,
             'availability_label'  => $availabilityLabel,
             'is_pool'             => $isPool,

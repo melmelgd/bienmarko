@@ -890,10 +890,26 @@ require __DIR__ . '/includes/head.php';
 .photo-modal__img-wrap img {
   width: 100%; max-height: 78vh; object-fit: contain; display: block;
 }
+.photo-modal__nav {
+  position: absolute; top: 50%; transform: translateY(-50%); z-index: 2;
+  width: 38px; height: 38px; border-radius: var(--radius-full);
+  background: rgba(11,13,15,.72); border: 1px solid rgba(255,255,255,.18);
+  color: var(--paper); display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background .15s, border-color .15s;
+}
+.photo-modal__nav:hover { background: var(--ember); border-color: var(--ember); color: #1a1200; }
+.photo-modal__nav[hidden] { display: none; }
+.photo-modal__nav--prev { left: 12px; }
+.photo-modal__nav--next { right: 12px; }
 .photo-modal__caption {
   padding: 14px 20px;
   border-top: 1px solid var(--line);
   font-size: 14.5px; font-weight: 700; color: var(--paper);
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.photo-modal__counter {
+  font-size: 12px; font-weight: 600; color: var(--paper-dim); white-space: nowrap;
 }
 
 /* ============================================================
@@ -941,6 +957,7 @@ require __DIR__ . '/includes/head.php';
   .bk-item__right { flex-direction: row; align-items: center; }
   .cal-modal { width: 96vw; }
   .photo-modal { width: 96vw; }
+  .photo-modal__nav { width: 32px; height: 32px; }
   .tour-modal { width: 96vw; }
   .tour-modal__frame-wrap { height: 60vh; }
   .guest-info-grid { grid-template-columns: 1fr; }
@@ -1333,15 +1350,24 @@ require __DIR__ . '/includes/head.php';
     </div>
 </dialog>
 
-<!-- ===== Photo modal — enlarged view of the selected room's photo ===== -->
+<!-- ===== Photo modal — enlarged view of the selected room's photo(s) ===== -->
 <dialog class="photo-modal" id="photoModal" aria-labelledby="photoModalCaption" aria-modal="true">
     <button type="button" class="photo-modal__close" id="photoModalClose" aria-label="Close photo">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
     </button>
     <div class="photo-modal__img-wrap">
         <img id="photoModalImg" src="" alt="">
+        <button type="button" class="photo-modal__nav photo-modal__nav--prev" id="photoModalPrev" aria-label="Previous photo" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <button type="button" class="photo-modal__nav photo-modal__nav--next" id="photoModalNext" aria-label="Next photo" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+        </button>
     </div>
-    <div class="photo-modal__caption" id="photoModalCaption"></div>
+    <div class="photo-modal__caption">
+        <span id="photoModalCaption"></span>
+        <span class="photo-modal__counter" id="photoModalCounter"></span>
+    </div>
 </dialog>
 
 <dialog class="tour-modal" id="tourModal" aria-labelledby="tourModalCaption" aria-modal="true">
@@ -1436,6 +1462,12 @@ require __DIR__ . '/includes/head.php';
   var photoModalClose   = document.getElementById('photoModalClose');
   var photoModalImg     = document.getElementById('photoModalImg');
   var photoModalCaption = document.getElementById('photoModalCaption');
+  var photoModalCounter = document.getElementById('photoModalCounter');
+  var photoModalPrev    = document.getElementById('photoModalPrev');
+  var photoModalNext    = document.getElementById('photoModalNext');
+  var galleryPhotos      = []; // full image URLs for the room currently open in the lightbox
+  var galleryIndex       = 0;
+  var galleryRoomName    = '';
 
   // 360° Tour modal
   var tourModal        = document.getElementById('tourModal');
@@ -1859,13 +1891,38 @@ require __DIR__ . '/includes/head.php';
   }
 
   /* ============================================================
-     PHOTO MODAL — enlarged view of a room photo (Step 2 cards)
+     PHOTO MODAL — enlarged view of a room's photo(s) (Step 2 cards)
      ============================================================ */
-  function openPhotoModal(src, name) {
-    if (!src) return;
-    photoModalImg.src         = src;
-    photoModalImg.alt         = name || 'Room photo';
-    photoModalCaption.textContent = name || '';
+  function renderGalleryPhoto() {
+    if (!galleryPhotos.length) return;
+    photoModalImg.src = galleryPhotos[galleryIndex];
+    photoModalImg.alt = galleryRoomName || 'Room photo';
+
+    var multi = galleryPhotos.length > 1;
+    photoModalCaption.textContent = galleryRoomName || '';
+    photoModalCounter.textContent = multi ? ((galleryIndex + 1) + ' of ' + galleryPhotos.length) : '';
+    photoModalPrev.hidden = !multi;
+    photoModalNext.hidden = !multi;
+  }
+
+  function showPrevPhoto() {
+    if (galleryPhotos.length < 2) return;
+    galleryIndex = (galleryIndex - 1 + galleryPhotos.length) % galleryPhotos.length;
+    renderGalleryPhoto();
+  }
+
+  function showNextPhoto() {
+    if (galleryPhotos.length < 2) return;
+    galleryIndex = (galleryIndex + 1) % galleryPhotos.length;
+    renderGalleryPhoto();
+  }
+
+  function openPhotoModal(urls, startIndex, name) {
+    if (!urls || !urls.length) return;
+    galleryPhotos   = urls;
+    galleryIndex    = Math.max(0, Math.min(startIndex || 0, urls.length - 1));
+    galleryRoomName = name || '';
+    renderGalleryPhoto();
     photoModal.showModal ? photoModal.showModal() : photoModal.setAttribute('open', '');
   }
 
@@ -1873,9 +1930,12 @@ require __DIR__ . '/includes/head.php';
     if (photoModal.close) photoModal.close();
     else photoModal.removeAttribute('open');
     photoModalImg.src = '';
+    galleryPhotos = [];
   }
 
   photoModalClose.addEventListener('click', closePhotoModal);
+  photoModalPrev.addEventListener('click', function (e) { e.stopPropagation(); showPrevPhoto(); });
+  photoModalNext.addEventListener('click', function (e) { e.stopPropagation(); showNextPhoto(); });
   photoModal.addEventListener('click', function (e) {
     var rect = photoModal.getBoundingClientRect();
     if (e.clientY < rect.top || e.clientY > rect.bottom ||
@@ -1883,17 +1943,27 @@ require __DIR__ . '/includes/head.php';
   });
   photoModal.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closePhotoModal();
+    if (e.key === 'ArrowLeft')  showPrevPhoto();
+    if (e.key === 'ArrowRight') showNextPhoto();
   });
 
-  /* Click on a room-card's photo (Step 2) opens the lightbox.
-     The "View Calendar" and "360° Tour" buttons live inside the same
-     media block, so both are excluded here to avoid double-triggering. */
+  /* Click on a room-card's photo (Step 2) opens the lightbox, starting
+     at the cover photo and letting the visitor page through the rest
+     of that room's gallery. The "View Calendar" and "360° Tour" buttons
+     live inside the same media block, so both are excluded here to
+     avoid double-triggering. */
   document.addEventListener('click', function (e) {
     if (e.target.closest('[data-cal-room-id]')) return;
     if (e.target.closest('[data-tour-file]')) return;
-    var media = e.target.closest('[data-photo-src]');
+    var media = e.target.closest('[data-photo-urls]');
     if (!media) return;
-    openPhotoModal(media.getAttribute('data-photo-src'), media.getAttribute('data-photo-name'));
+    var urls = [];
+    try {
+      urls = JSON.parse(media.getAttribute('data-photo-urls') || '[]');
+    } catch (err) {
+      urls = [];
+    }
+    openPhotoModal(urls, 0, media.getAttribute('data-photo-name'));
   });
 
   /* ============================================================
@@ -1969,13 +2039,18 @@ require __DIR__ . '/includes/head.php';
       (room.availability === 'occupied'    ? ' is-occupied'    : '') +
       (room.availability === 'unavailable' ? ' is-unavailable' : '');
 
-    var availClass = 'avail--' + room.availability;
-    var hasPhoto    = !!room.image_filename;
-    var photoSrc    = hasPhoto ? (imgBase + encodeURIComponent(room.image_filename)) : '';
+    var availClass  = 'avail--' + room.availability;
+    var photoFiles  = (room.photos && room.photos.length)
+      ? room.photos
+      : (room.image_filename ? [room.image_filename] : []);
+    var photoUrls   = photoFiles.map(function (f) { return imgBase + encodeURIComponent(f); });
+    var hasPhoto    = photoUrls.length > 0;
+    var photoSrc    = hasPhoto ? photoUrls[0] : '';
+    var zoomLabel   = photoUrls.length > 1 ? ('View ' + photoUrls.length + ' photos') : 'View photo';
 
     var mediaHtml = hasPhoto
       ? '<img src="' + photoSrc + '" alt="' + escHtml(room.name) + '" loading="lazy">' +
-        '<span class="room-card__zoom-hint" aria-hidden="true">' + zoomIcon() + 'View photo</span>'
+        '<span class="room-card__zoom-hint" aria-hidden="true">' + zoomIcon() + escHtml(zoomLabel) + '</span>'
       : '<span class="room-card__media-icon">' + bedIcon() + '</span>';
 
     var calBtnHtml =
@@ -2019,7 +2094,7 @@ require __DIR__ . '/includes/head.php';
 
     card.innerHTML =
       '<div class="room-card__media' + (hasPhoto ? ' room-card__media--zoomable' : '') + '"' +
-        (hasPhoto ? ' data-photo-src="' + photoSrc + '" data-photo-name="' + escHtml(room.name) + '"' : '') +
+        (hasPhoto ? ' data-photo-urls="' + escHtml(JSON.stringify(photoUrls)) + '" data-photo-name="' + escHtml(room.name) + '"' : '') +
         '>' +
         mediaHtml +
         calBtnHtml +

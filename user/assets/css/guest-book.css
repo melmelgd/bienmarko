@@ -779,6 +779,159 @@ textarea:focus-visible {
 .gb-tour-btn[hidden] { display: none; }
 .gb-tour-btn svg { flex-shrink: 0; }
 
+/* ── PHOTOS BUTTON (in room summary pill) ─────────────────────────── */
+.gb-photo-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    background: transparent;
+    border: 1px solid var(--gold);
+    color: var(--gold);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    padding: 7px 14px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: background .15s, color .15s;
+}
+
+.gb-photo-btn:hover { background: var(--gold); color: var(--black); }
+.gb-photo-btn[hidden] { display: none; }
+.gb-photo-btn svg { flex-shrink: 0; }
+
+/* ── PHOTO GALLERY OVERLAY ────────────────────────────────────────── */
+.gb-photo-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(5,5,5,0.86);
+    backdrop-filter: blur(6px);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .25s ease;
+}
+
+.gb-photo-backdrop.open { opacity: 1; visibility: visible; }
+
+.gb-photo-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 201;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .25s ease;
+}
+
+.gb-photo-overlay.open { opacity: 1; visibility: visible; }
+
+.gb-photo-dialog {
+    width: min(94vw, 820px);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    box-shadow: 0 30px 80px -20px rgba(0,0,0,0.8);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.gb-photo-dialog__head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 14px 18px;
+    border-bottom: 1px solid var(--line);
+}
+
+.gb-photo-dialog__head h2 {
+    font-family: var(--serif);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.gb-photo-close {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--muted);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: color .15s, border-color .15s;
+}
+
+.gb-photo-close:hover { color: var(--gold); border-color: var(--gold); }
+
+.gb-photo-frame-wrap {
+    position: relative;
+    width: 100%;
+    height: min(70vh, 560px);
+    background: #000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+}
+
+.gb-photo-frame-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    display: block;
+}
+
+.gb-photo-nav {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 40px;
+    height: 40px;
+    border-radius: 999px;
+    background: rgba(11,13,15,.72);
+    border: 1px solid rgba(255,255,255,.18);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background .15s, border-color .15s;
+    z-index: 2;
+}
+
+.gb-photo-nav:hover { background: rgba(198,154,84,0.9); border-color: var(--gold); color: var(--black); }
+.gb-photo-nav[hidden] { display: none; }
+.gb-photo-nav--prev { left: 14px; }
+.gb-photo-nav--next { right: 14px; }
+
+.gb-photo-dialog__caption {
+    padding: 12px 18px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    text-align: center;
+    min-height: 1px;
+}
+
+@media (max-width: 640px) {
+    .gb-photo-dialog { width: 96vw; }
+    .gb-photo-frame-wrap { height: 50vh; }
+    .gb-photo-nav { width: 34px; height: 34px; }
+}
+
 /* ── 360° TOUR OVERLAY ────────────────────────────────────────────── */
 .gb-tour-backdrop {
     position: fixed;

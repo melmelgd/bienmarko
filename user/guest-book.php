@@ -57,13 +57,67 @@ try {
     }
 
     $stmt = $pdo->query(
-        "SELECT `id`, `name`, `type`, `capacity`, `price`, `status`, `tour_filename`
+        "SELECT `id`, `name`, `type`, `capacity`, `price`, `status`, `tour_filename`, `image_filename`
          FROM `accommodations`
          ORDER BY `name` ASC"
     );
     $rooms = $stmt->fetchAll(PDO::FETCH_ASSOC);
 } catch (Throwable $e) {
     // DB unavailable — rooms array stays empty; form validation will catch it
+}
+
+/**
+ * Gallery photos per room, keyed by accommodation id — cover photo first
+ * (if set), then extra gallery photos, de-duplicated. Same combine logic
+ * as bk_combine_photos() in user/api/bookings.php, duplicated here per
+ * this project's per-portal convention (bk_* vs gb_* helpers) rather
+ * than shared across portals.
+ */
+$photosByRoom = [];
+if ($rooms) {
+    try {
+        // Defensive: make sure the gallery table exists even if no admin
+        // has used "Manage Photos" yet since this feature was added.
+        $pdo->exec(
+            "CREATE TABLE IF NOT EXISTS `accommodation_photos` (
+                `id`               INT UNSIGNED NOT NULL AUTO_INCREMENT,
+                `accommodation_id` INT UNSIGNED NOT NULL,
+                `filename`         VARCHAR(255) NOT NULL,
+                `sort_order`       SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+                `created_at`       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (`id`),
+                KEY `idx_accommodation` (`accommodation_id`),
+                CONSTRAINT `fk_acc_photos_accommodation_gb` FOREIGN KEY (`accommodation_id`)
+                    REFERENCES `accommodations` (`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+        );
+
+        foreach ($rooms as $r) {
+            $photosByRoom[(int) $r['id']] = $r['image_filename'] ? [$r['image_filename']] : [];
+        }
+
+        $roomIds      = array_map(static function ($r) { return (int) $r['id']; }, $rooms);
+        $placeholders = implode(',', array_fill(0, count($roomIds), '?'));
+        $photoStmt    = $pdo->prepare(
+            "SELECT `accommodation_id`, `filename`
+             FROM `accommodation_photos`
+             WHERE `accommodation_id` IN ($placeholders)
+             ORDER BY `sort_order` ASC, `id` ASC"
+        );
+        $photoStmt->execute($roomIds);
+        foreach ($photoStmt->fetchAll(PDO::FETCH_ASSOC) as $p) {
+            $accId = (int) $p['accommodation_id'];
+            if (!isset($photosByRoom[$accId])) {
+                $photosByRoom[$accId] = [];
+            }
+            if (!in_array($p['filename'], $photosByRoom[$accId], true)) {
+                $photosByRoom[$accId][] = $p['filename'];
+            }
+        }
+    } catch (Throwable $e) {
+        // best-effort; the "View Photos" button simply won't show for any room
+        // whose photos couldn't be loaded
+    }
 }
 
 // CSRF token for the form
@@ -155,7 +209,8 @@ function gb_e(string $s): string {
                                     data-capacity="<?= (int) $room['capacity'] ?>"
                                     data-price="<?= gb_e($room['price']) ?>"
                                     data-type="<?= gb_e($room['type']) ?>"
-                                    data-tour="<?= gb_e((string) ($room['tour_filename'] ?? '')) ?>">
+                                    data-tour="<?= gb_e((string) ($room['tour_filename'] ?? '')) ?>"
+                                    data-photos="<?= gb_e(json_encode($photosByRoom[(int) $room['id']] ?? [], JSON_UNESCAPED_UNICODE)) ?>">
                                     <?= $label ?>
                                 </option>
                             <?php endforeach; ?>
@@ -205,6 +260,10 @@ function gb_e(string $s): string {
                     <span class="gb-room-summary-name" id="gbRoomSummaryName"></span>
                     <span class="gb-room-summary-detail" id="gbRoomSummaryDetail"></span>
                 </div>
+                <button type="button" class="gb-photo-btn" id="gbPhotoBtn" hidden>
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
+                    <span id="gbPhotoBtnLabel">Photos</span>
+                </button>
                 <button type="button" class="gb-tour-btn" id="gbTourBtn" hidden>
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10Z"></path></svg>
                     <span>360&deg; View</span>
@@ -414,6 +473,29 @@ function gb_e(string $s): string {
 </div>
 <div class="gb-tour-backdrop" id="gbTourBackdrop" aria-hidden="true"></div>
 
+<!-- ═══ PHOTO GALLERY OVERLAY ═══════════════════════════════════════════ -->
+<div class="gb-photo-overlay" id="gbPhotoOverlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="gbPhotoTitle">
+    <div class="gb-photo-dialog">
+        <div class="gb-photo-dialog__head">
+            <h2 id="gbPhotoTitle">Room Photos</h2>
+            <button type="button" class="gb-photo-close" id="gbPhotoClose" aria-label="Close photos">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+        </div>
+        <div class="gb-photo-frame-wrap">
+            <img id="gbPhotoImg" src="" alt="">
+            <button type="button" class="gb-photo-nav gb-photo-nav--prev" id="gbPhotoPrev" aria-label="Previous photo" hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 18 9 12 15 6"></polyline></svg>
+            </button>
+            <button type="button" class="gb-photo-nav gb-photo-nav--next" id="gbPhotoNext" aria-label="Next photo" hidden>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 18 15 12 9 6"></polyline></svg>
+            </button>
+        </div>
+        <div class="gb-photo-dialog__caption" id="gbPhotoCaption"></div>
+    </div>
+</div>
+<div class="gb-photo-backdrop" id="gbPhotoBackdrop" aria-hidden="true"></div>
+
 <script>
 (function () {
     'use strict';
@@ -444,6 +526,8 @@ function gb_e(string $s): string {
     var roomSummaryDetail = document.getElementById('gbRoomSummaryDetail');
     var roomSummaryPrice = document.getElementById('gbRoomSummaryPrice');
     var tourBtn          = document.getElementById('gbTourBtn');
+    var photoBtn         = document.getElementById('gbPhotoBtn');
+    var photoBtnLabel    = document.getElementById('gbPhotoBtnLabel');
 
     // 360° Tour overlay
     var tourOverlay  = document.getElementById('gbTourOverlay');
@@ -452,6 +536,20 @@ function gb_e(string $s): string {
     var tourFrame    = document.getElementById('gbTourFrame');
     var tourTitle    = document.getElementById('gbTourTitle');
     var TOUR_BASE    = '../admin/assets/uploads/tours/';
+
+    // Photo gallery overlay
+    var photoOverlay  = document.getElementById('gbPhotoOverlay');
+    var photoBackdrop = document.getElementById('gbPhotoBackdrop');
+    var photoClose    = document.getElementById('gbPhotoClose');
+    var photoImg      = document.getElementById('gbPhotoImg');
+    var photoTitle    = document.getElementById('gbPhotoTitle');
+    var photoCaption  = document.getElementById('gbPhotoCaption');
+    var photoPrevBtn  = document.getElementById('gbPhotoPrev');
+    var photoNextBtn  = document.getElementById('gbPhotoNext');
+    var PHOTO_BASE    = '../admin/assets/uploads/accommodations/';
+    var galleryPhotos = [];   // filenames for the currently selected room
+    var galleryIndex  = 0;
+    var galleryName   = '';
 
     // Success overlay
     var successOverlay  = document.getElementById('gbSuccessOverlay');
@@ -602,6 +700,8 @@ function gb_e(string $s): string {
             guestsIn.max = 50;
             tourBtn.setAttribute('hidden', '');
             delete tourBtn.dataset.tourFile;
+            photoBtn.setAttribute('hidden', '');
+            photoBtn.dataset.photos = '[]';
             companionsField.setAttribute('hidden', '');
             companionsList.innerHTML = '';
             updateSummary();
@@ -625,6 +725,26 @@ function gb_e(string $s): string {
         } else {
             delete tourBtn.dataset.tourFile;
             tourBtn.setAttribute('hidden', '');
+        }
+
+        // "View Photos" button — parses the room's photo list (cover +
+        // gallery) embedded server-side on the <option>. Hidden entirely
+        // when the room has no photos uploaded yet.
+        var photos = [];
+        try {
+            photos = JSON.parse(opt.dataset.photos || '[]');
+        } catch (e) {
+            photos = [];
+        }
+        if (photos.length) {
+            photoBtn.dataset.photos = JSON.stringify(photos);
+            photoBtn.dataset.photoName = opt.text;
+            photoBtnLabel.textContent = photos.length > 1 ? ('Photos (' + photos.length + ')') : 'Photo';
+            photoBtn.removeAttribute('hidden');
+        } else {
+            photoBtn.dataset.photos = '[]';
+            delete photoBtn.dataset.photoName;
+            photoBtn.setAttribute('hidden', '');
         }
 
         // cap guests input to this room's capacity
@@ -866,8 +986,79 @@ function gb_e(string $s): string {
     tourBtn.addEventListener('click', openTour);
     tourClose.addEventListener('click', closeTour);
     tourBackdrop.addEventListener('click', closeTour);
+
+    /* ── photo gallery overlay ────────────────────────────────────── */
+    function renderGalleryPhoto() {
+        if (!galleryPhotos.length) return;
+        photoImg.src = PHOTO_BASE + encodeURIComponent(galleryPhotos[galleryIndex]);
+        photoImg.alt = galleryName || 'Room photo';
+
+        var multi = galleryPhotos.length > 1;
+        photoTitle.textContent   = galleryName ? (galleryName + ' — Photos') : 'Room Photos';
+        photoCaption.textContent = multi ? ((galleryIndex + 1) + ' of ' + galleryPhotos.length) : '';
+        photoPrevBtn.hidden = !multi;
+        photoNextBtn.hidden = !multi;
+    }
+
+    function showPrevPhoto() {
+        if (galleryPhotos.length < 2) return;
+        galleryIndex = (galleryIndex - 1 + galleryPhotos.length) % galleryPhotos.length;
+        renderGalleryPhoto();
+    }
+
+    function showNextPhoto() {
+        if (galleryPhotos.length < 2) return;
+        galleryIndex = (galleryIndex + 1) % galleryPhotos.length;
+        renderGalleryPhoto();
+    }
+
+    function openPhotos() {
+        var photos = [];
+        try {
+            photos = JSON.parse(photoBtn.dataset.photos || '[]');
+        } catch (e) {
+            photos = [];
+        }
+        if (!photos.length) return;
+
+        galleryPhotos = photos;
+        galleryIndex  = 0;
+        galleryName   = photoBtn.dataset.photoName || '';
+        renderGalleryPhoto();
+
+        photoOverlay.removeAttribute('aria-hidden');
+        photoOverlay.classList.add('open');
+        photoBackdrop.classList.add('open');
+        document.body.classList.add('gb-modal-open');
+        photoOverlay.focus();
+    }
+
+    function closePhotos() {
+        photoOverlay.setAttribute('aria-hidden', 'true');
+        photoOverlay.classList.remove('open');
+        photoBackdrop.classList.remove('open');
+        if (!successOverlay.classList.contains('open') && !tourOverlay.classList.contains('open')) {
+            document.body.classList.remove('gb-modal-open');
+        }
+        photoImg.src = '';
+    }
+
+    photoBtn.addEventListener('click', openPhotos);
+    photoClose.addEventListener('click', closePhotos);
+    photoBackdrop.addEventListener('click', closePhotos);
+    photoPrevBtn.addEventListener('click', showPrevPhoto);
+    photoNextBtn.addEventListener('click', showNextPhoto);
+
     document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && tourOverlay.classList.contains('open')) closeTour();
+        if (e.key === 'Escape') {
+            if (photoOverlay.classList.contains('open')) closePhotos();
+            else if (tourOverlay.classList.contains('open')) closeTour();
+            return;
+        }
+        if (photoOverlay.classList.contains('open')) {
+            if (e.key === 'ArrowLeft')  showPrevPhoto();
+            if (e.key === 'ArrowRight') showNextPhoto();
+        }
     });
 
 }());
