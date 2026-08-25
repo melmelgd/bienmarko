@@ -12,6 +12,13 @@
  *   $breadcrumb           - defaults to $page_title
  *   $page_action_label    - omit/leave null to hide the gold action button
  *   $show_period_toggle    - bool, Week/Month/Year pills (Dashboard only)
+ *   $topbar_extra_right    - optional raw HTML string rendered at the end
+ *                            of .topbar-right, after the bell/action button.
+ *                            Left unset by every page except the Reports
+ *                            & Analytics pages, which use it for their
+ *                            functional Week/Month/Year/Custom/Export
+ *                            controls — every other page's output is
+ *                            unaffected.
  *
  * NOTE: this file intentionally leaves <main class="content"> open.
  * The including page's own markup follows directly after, and
@@ -22,6 +29,7 @@ $page_title = $page_title ?? 'Dashboard';
 $breadcrumb = $breadcrumb ?? $page_title;
 $page_action_label = $page_action_label ?? null;
 $show_period_toggle = $show_period_toggle ?? false;
+$topbar_extra_right = $topbar_extra_right ?? null;
 require_once __DIR__ . '/icons.php';
 ?>
 <div class="app-main">
@@ -60,6 +68,10 @@ require_once __DIR__ . '/icons.php';
             <?php echo icon('plus', 'icon-sm'); ?>
             <span class="btn-label"><?php echo htmlspecialchars($page_action_label, ENT_QUOTES, 'UTF-8'); ?></span>
           </button>
+        <?php endif; ?>
+
+        <?php if ($topbar_extra_right): ?>
+          <?php echo $topbar_extra_right; ?>
         <?php endif; ?>
       </div>
     </div>
