@@ -167,9 +167,22 @@ $allNotifications = $stmtNotifs->fetchAll();
 $unreadCount      = count(array_filter($allNotifications, fn($n) => !(bool)$n['is_read']));
 
 /* ------------------------------------------------------------------
-   Recent bookings table (last 10)
+   Pagination — 10 recent bookings per page. The dashboard has no
+   filters, so this always walks every booking in the system, most
+   recent first (same 10-per-page pattern as admin/bookings.php).
 ------------------------------------------------------------------ */
-$stmtRecent = $pdo->query(
+$perPage     = 10;
+$currentPage = max(1, (int) ($_GET['page'] ?? 1));
+
+$totalRecentBookings = (int) $pdo->query("SELECT COUNT(*) FROM bookings")->fetchColumn();
+$totalPages          = max(1, (int) ceil($totalRecentBookings / $perPage));
+$currentPage         = min($currentPage, $totalPages);
+$offset              = ($currentPage - 1) * $perPage;
+
+/* ------------------------------------------------------------------
+   Recent bookings table (current page's 10 rows)
+------------------------------------------------------------------ */
+$stmtRecent = $pdo->prepare(
     "SELECT b.id, b.reference, b.check_in, b.check_out,
             b.guests_count, b.status, b.total_amount, b.created_at,
             a.name   AS room_name,
@@ -180,8 +193,11 @@ $stmtRecent = $pdo->query(
      JOIN accommodations a ON a.id = b.accommodation_id
      LEFT JOIN guests    g ON g.id = b.guest_id
      ORDER BY b.created_at DESC
-     LIMIT 10"
+     LIMIT :limit OFFSET :offset"
 );
+$stmtRecent->bindValue(':limit', $perPage, \PDO::PARAM_INT);
+$stmtRecent->bindValue(':offset', $offset, \PDO::PARAM_INT);
+$stmtRecent->execute();
 $recentBookings = $stmtRecent->fetchAll();
 
 /* ------------------------------------------------------------------
@@ -733,6 +749,7 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
                 </tbody>
             </table>
         </div>
+        <?php render_pagination('dashboard.php', $currentPage, $perPage, $totalRecentBookings, [], 'booking'); ?>
     </div>
 
 </div><!-- /.stack -->

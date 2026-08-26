@@ -73,6 +73,10 @@ $filterSearch = trim($_GET['search'] ?? '');
 $allowedPay   = ['', 'unpaid', 'partial', 'paid'];
 if (!in_array($filterPay, $allowedPay, true)) $filterPay = '';
 
+/* Pagination — 10 payment records per page, like the Bookings and Dashboard tables */
+$perPage     = 10;
+$currentPage = max(1, (int) ($_GET['page'] ?? 1));
+
 /* ------------------------------------------------------------------
    Stat cards
 ------------------------------------------------------------------ */
@@ -145,6 +149,22 @@ if ($filterSearch !== '') {
 
 $where = 'WHERE ' . implode(' AND ', $whereClauses);
 
+/* Total matching rows (all filters applied, no LIMIT) — drives the
+   pagination bar and the "N records" count in the table header. */
+$countSql = "SELECT COUNT(*)
+             FROM bookings b
+             JOIN accommodations a ON a.id = b.accommodation_id
+             LEFT JOIN guests     g ON g.id = b.guest_id
+             LEFT JOIN payments   p ON p.booking_id = b.id
+             {$where}";
+$countStmt = $pdo->prepare($countSql);
+$countStmt->execute($params);
+$totalRows = (int) $countStmt->fetchColumn();
+
+$totalPages  = max(1, (int) ceil($totalRows / $perPage));
+$currentPage = min($currentPage, $totalPages);
+$offset      = ($currentPage - 1) * $perPage;
+
 $sql = "SELECT
             b.id            AS booking_id,
             b.reference,
@@ -174,7 +194,8 @@ $sql = "SELECT
         LEFT JOIN guests     g ON g.id = b.guest_id
         LEFT JOIN payments   p ON p.booking_id = b.id
         {$where}
-        ORDER BY b.check_in ASC, b.created_at DESC";
+        ORDER BY b.check_in ASC, b.created_at DESC
+        LIMIT {$perPage} OFFSET {$offset}";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -514,7 +535,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
     <div class="panel table-wrap">
         <div class="table-head">
             <h2 class="panel-title">Payments &amp; Billing</h2>
-            <span class="results-count"><?php echo count($rows); ?> record<?php echo count($rows) === 1 ? '' : 's'; ?></span>
+            <span class="results-count"><?php echo $totalRows; ?> record<?php echo $totalRows === 1 ? '' : 's'; ?></span>
         </div>
         <div class="table-scroll">
             <table>
@@ -593,6 +614,10 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                 </tbody>
             </table>
         </div>
+        <?php render_pagination('payments.php', $currentPage, $perPage, $totalRows, [
+            'pay_status' => $filterPay,
+            'search'     => $filterSearch,
+        ], 'record'); ?>
     </div>
 
 </div><!-- /.stack -->
@@ -775,6 +800,7 @@ function applyPayFilter(val) {
     var url = new URL(window.location.href);
     if (val) url.searchParams.set('pay_status', val);
     else url.searchParams.delete('pay_status');
+    url.searchParams.delete('page');
     window.location.href = url.toString();
 }
 
@@ -790,6 +816,7 @@ document.getElementById('searchInput').addEventListener('input', function () {
         var url = new URL(window.location.href);
         if (v.trim()) url.searchParams.set('search', v.trim());
         else url.searchParams.delete('search');
+        url.searchParams.delete('page');
         window.location.href = url.toString();
     }, 500);
 });

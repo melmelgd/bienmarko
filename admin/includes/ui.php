@@ -67,3 +67,106 @@ function render_table_empty(array $columns, string $iconName, string $title, str
     echo '</table>';
     echo '</div></div>';
 }
+
+/**
+ * Renders a "Showing X–Y of Z" pagination bar with Prev/Next and a
+ * compact page-number window (with ellipses once there are many pages).
+ * Used below any table capped to a fixed page size — currently the
+ * Dashboard's Recent Bookings table, and the Bookings and Payments
+ * tables.
+ *
+ * Pure GET-link pagination (no JS/AJAX) so it fits the existing filter
+ * pattern on those pages, which already reload via `window.location`
+ * for search/status filters. $extraParams should carry any active
+ * filters (e.g. ['status' => $filterStatus, 'search' => $filterSearch])
+ * so paging keeps them; empty/null values are dropped automatically.
+ *
+ * @param string $baseUrl     Page filename to link to, e.g. 'bookings.php'.
+ * @param int    $page        Current page (1-indexed).
+ * @param int    $perPage     Rows shown per page.
+ * @param int    $totalItems  Total matching rows across all pages.
+ * @param array  $extraParams Other GET params to preserve on every link.
+ * @param string $itemLabel   Singular noun for the "of Z <label>s" text.
+ */
+function render_pagination(string $baseUrl, int $page, int $perPage, int $totalItems, array $extraParams = [], string $itemLabel = 'item'): void
+{
+    if ($totalItems <= 0 || $perPage <= 0) {
+        return;
+    }
+
+    $totalPages = max(1, (int) ceil($totalItems / $perPage));
+    $page       = max(1, min($page, $totalPages));
+
+    $rangeStart = (($page - 1) * $perPage) + 1;
+    $rangeEnd   = min($page * $perPage, $totalItems);
+
+    $buildUrl = function (int $targetPage) use ($baseUrl, $extraParams): string {
+        $query = [];
+        foreach ($extraParams as $key => $val) {
+            if ($val !== null && $val !== '') {
+                $query[$key] = $val;
+            }
+        }
+        $query['page'] = $targetPage;
+        return htmlspecialchars($baseUrl . '?' . http_build_query($query), ENT_QUOTES, 'UTF-8');
+    };
+
+    // Compact page-number window: 1 … p-1 p p+1 … last (all pages shown
+    // as-is when there are 7 or fewer, so short lists never show a "…").
+    $numbers = [];
+    if ($totalPages <= 7) {
+        $numbers = range(1, $totalPages);
+    } else {
+        $keep = array_unique(array_filter(
+            [1, 2, $page - 1, $page, $page + 1, $totalPages - 1, $totalPages],
+            fn($n) => $n >= 1 && $n <= $totalPages
+        ));
+        sort($keep);
+        $prev = 0;
+        foreach ($keep as $n) {
+            if ($prev && $n - $prev > 1) {
+                $numbers[] = 0; // 0 marks a "…" gap
+            }
+            $numbers[] = $n;
+            $prev = $n;
+        }
+    }
+
+    $safeLabel = htmlspecialchars($itemLabel, ENT_QUOTES, 'UTF-8');
+    $plural    = $totalItems === 1 ? '' : 's';
+
+    echo '<div class="table-pagination">';
+    echo '<span class="pg-info">Showing ' . $rangeStart . '&ndash;' . $rangeEnd . ' of ' . $totalItems . ' ' . $safeLabel . $plural . '</span>';
+    echo '<nav class="pg-controls" aria-label="Pagination">';
+
+    if ($page > 1) {
+        echo '<a class="pg-btn" href="' . $buildUrl($page - 1) . '" aria-label="Previous page">'
+           . icon('chevron-right', 'icon-sm pg-chevron-prev') . '<span>Prev</span></a>';
+    } else {
+        echo '<span class="pg-btn is-disabled" aria-disabled="true">'
+           . icon('chevron-right', 'icon-sm pg-chevron-prev') . '<span>Prev</span></span>';
+    }
+
+    echo '<div class="pg-pages">';
+    foreach ($numbers as $n) {
+        if ($n === 0) {
+            echo '<span class="pg-ellipsis">&hellip;</span>';
+        } elseif ($n === $page) {
+            echo '<span class="pg-page is-active" aria-current="page">' . $n . '</span>';
+        } else {
+            echo '<a class="pg-page" href="' . $buildUrl($n) . '">' . $n . '</a>';
+        }
+    }
+    echo '</div>';
+
+    if ($page < $totalPages) {
+        echo '<a class="pg-btn" href="' . $buildUrl($page + 1) . '" aria-label="Next page">'
+           . '<span>Next</span>' . icon('chevron-right', 'icon-sm') . '</a>';
+    } else {
+        echo '<span class="pg-btn is-disabled" aria-disabled="true">'
+           . '<span>Next</span>' . icon('chevron-right', 'icon-sm') . '</span>';
+    }
+
+    echo '</nav>';
+    echo '</div>';
+}

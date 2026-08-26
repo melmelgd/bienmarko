@@ -55,6 +55,10 @@ $filterSearch = trim($_GET['search'] ?? '');
 $allowedStatuses = ['', 'confirmed', 'pending', 'cancelled', 'completed'];
 if (!in_array($filterStatus, $allowedStatuses, true)) $filterStatus = '';
 
+/* Pagination — 10 bookings per page, like the Payments and Dashboard tables */
+$perPage     = 10;
+$currentPage = max(1, (int) ($_GET['page'] ?? 1));
+
 /* ------------------------------------------------------------------
    Stat cards
 ------------------------------------------------------------------ */
@@ -105,6 +109,21 @@ if ($filterSearch !== '') {
 
 $where = $whereClauses ? 'WHERE ' . implode(' AND ', $whereClauses) : '';
 
+/* Total matching rows (all filters applied, no LIMIT) — drives the
+   pagination bar and the "N bookings" count in the table header. */
+$countSql = "SELECT COUNT(*)
+             FROM bookings b
+             JOIN accommodations a ON a.id = b.accommodation_id
+             LEFT JOIN guests     g ON g.id = b.guest_id
+             {$where}";
+$countStmt = $pdo->prepare($countSql);
+$countStmt->execute($params);
+$totalBookings = (int) $countStmt->fetchColumn();
+
+$totalPages  = max(1, (int) ceil($totalBookings / $perPage));
+$currentPage = min($currentPage, $totalPages);
+$offset      = ($currentPage - 1) * $perPage;
+
 $sql = "SELECT
             b.id, b.reference, b.check_in, b.check_out,
             b.guests_count, b.status, b.total_amount,
@@ -120,7 +139,8 @@ $sql = "SELECT
         JOIN accommodations a ON a.id = b.accommodation_id
         LEFT JOIN guests     g ON g.id = b.guest_id
         {$where}
-        ORDER BY b.created_at DESC";
+        ORDER BY b.created_at DESC
+        LIMIT {$perPage} OFFSET {$offset}";
 
 $stmt = $pdo->prepare($sql);
 $stmt->execute($params);
@@ -449,7 +469,7 @@ $bookingsJson = json_encode(array_map(function ($bk) {
         <div class="table-head">
             <h2 class="panel-title">All Bookings</h2>
             <span class="results-count" id="resultsCount">
-                <?php echo count($bookings); ?> booking<?php echo count($bookings) === 1 ? '' : 's'; ?>
+                <?php echo $totalBookings; ?> booking<?php echo $totalBookings === 1 ? '' : 's'; ?>
             </span>
         </div>
         <div class="table-scroll">
@@ -512,6 +532,10 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                 </tbody>
             </table>
         </div>
+        <?php render_pagination('bookings.php', $currentPage, $perPage, $totalBookings, [
+            'status' => $filterStatus,
+            'search' => $filterSearch,
+        ], 'booking'); ?>
     </div>
 
 </div><!-- /.stack -->
@@ -847,6 +871,7 @@ function applyStatusFilter(status) {
     var search = document.getElementById('searchInput').value.trim();
     if (search) url.searchParams.set('search', search);
     else url.searchParams.delete('search');
+    url.searchParams.delete('page');
     window.location.href = url.toString();
 }
 
@@ -862,6 +887,7 @@ document.getElementById('searchInput').addEventListener('input', function () {
         var url = new URL(window.location.href);
         if (val.trim()) url.searchParams.set('search', val.trim());
         else url.searchParams.delete('search');
+        url.searchParams.delete('page');
         window.location.href = url.toString();
     }, 500);
 });
