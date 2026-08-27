@@ -189,6 +189,326 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
+    /* =========================================================
+       BOOKING STRIP DATE PICKERS
+       Turns #checkin / #checkout into a small calendar popover that
+       greys out dates already reserved for whichever accommodation is
+       selected — the same idea as the admin dashboard's "New Booking"
+       date pickers, fed here by the public, no-login-required
+       api/availability.php endpoint. #checkin / #checkout stay as
+       hidden inputs holding the real ISO value, so the check-in/
+       check-out linking above and the URL-forwarding logic further
+       down keep working unchanged.
+       ========================================================= */
+    (() => {
+        const accomSelect = document.getElementById("bookingAccommodationSelect");
+        const guestSelect = document.getElementById("bookingGuestSelect");
+        const ciHidden = document.getElementById("checkin");
+        const coHidden = document.getElementById("checkout");
+        if (!accomSelect || !ciHidden || !coHidden) return;
+
+        let bsAvailability = null;   // { capacity, isPool, bookings: [...] } for the selected room, or null
+        let bsOpenPicker = null;     // "checkin" | "checkout" | null
+        let bsViewMonth = { checkin: null, checkout: null };
+
+        function bsPad(n) { return n < 10 ? "0" + n : "" + n; }
+        function bsISO(y, m, d) { return y + "-" + bsPad(m + 1) + "-" + bsPad(d); }
+        function bsParseISO(s) {
+            if (!s) return null;
+            const p = s.split("-");
+            return new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+        }
+        function bsFormatDisplay(iso) {
+            const d = bsParseISO(iso);
+            return d ? d.toLocaleDateString("en-PH", { month: "short", day: "numeric", year: "numeric" }) : "";
+        }
+
+        // Lower bound of the selected guest range ("3-4" -> 3), defaulting
+        // to 1 — the strip only offers ranges, not an exact headcount, so
+        // this is a conservative stand-in for pool capacity blocking.
+        function bsGuestsWanted() {
+            if (!guestSelect || !guestSelect.value) return 1;
+            const n = parseInt(guestSelect.value, 10);
+            return isNaN(n) || n < 1 ? 1 : n;
+        }
+
+        // Map of ISO date -> guests already booked that day, built from
+        // bsAvailability.bookings. A date is "covered" by a booking when
+        // check_in <= date < check_out (checkout day itself is free —
+        // same half-open range the booking APIs use for conflict checks).
+        function bsBuildBookedMap() {
+            const map = {};
+            if (!bsAvailability) return map;
+            bsAvailability.bookings.forEach((b) => {
+                const cur = bsParseISO(b.check_in);
+                const end = bsParseISO(b.check_out);
+                while (cur < end) {
+                    const iso = bsISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
+                    map[iso] = (map[iso] || 0) + (bsAvailability.isPool ? b.guests_count : 1);
+                    cur.setDate(cur.getDate() + 1);
+                }
+            });
+            return map;
+        }
+
+        // Whether `iso` is unavailable as a stay-night for `guestsWanted`.
+        // Every accommodation type but the Swimming Pool is exclusive (any
+        // existing booking blocks it); the pool is shared up to capacity.
+        function bsIsBlocked(iso, bookedMap, guestsWanted) {
+            if (!bsAvailability) return false;
+            const used = bookedMap[iso] || 0;
+            if (bsAvailability.isPool) return (used + Math.max(1, guestsWanted)) > bsAvailability.capacity;
+            return used > 0;
+        }
+
+        // Earliest blocked date strictly after `fromIso` — check-out can
+        // never be pushed past this, or the stay would span an occupied night.
+        function bsFirstBlockedAfter(fromIso, bookedMap, guestsWanted) {
+            if (!bsAvailability || !fromIso) return null;
+            const d = bsParseISO(fromIso);
+            d.setDate(d.getDate() + 1);
+            for (let i = 0; i < 730; i++) {
+                const iso = bsISO(d.getFullYear(), d.getMonth(), d.getDate());
+                if (bsIsBlocked(iso, bookedMap, guestsWanted)) return iso;
+                d.setDate(d.getDate() + 1);
+            }
+            return null;
+        }
+
+        function bsRenderCalendar(which) {
+            const pop = document.getElementById(which === "checkin" ? "checkinPop" : "checkoutPop");
+            const otherIso = document.getElementById(which === "checkin" ? "checkout" : "checkin").value;
+
+            if (which === "checkout" && !otherIso) {
+                pop.innerHTML = '<div class="date-picker-note">Please select a check-in date first.</div>';
+                return;
+            }
+            if (!accomSelect.value) {
+                pop.innerHTML = '<div class="date-picker-note">Please select an accommodation first.</div>';
+                return;
+            }
+
+            const selectedIso = document.getElementById(which === "checkin" ? "checkin" : "checkout").value;
+            const guestsWanted = bsGuestsWanted();
+            const bookedMap = bsBuildBookedMap();
+
+            if (!bsViewMonth[which]) {
+                const base = bsParseISO(selectedIso) || bsParseISO(otherIso) || new Date();
+                bsViewMonth[which] = { y: base.getFullYear(), m: base.getMonth() };
+            }
+            const view = bsViewMonth[which];
+
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+
+            let minDate, maxIso = null;
+            if (which === "checkout") {
+                minDate = bsParseISO(otherIso);
+                minDate.setDate(minDate.getDate() + 1);
+                maxIso = bsFirstBlockedAfter(otherIso, bookedMap, guestsWanted);
+            } else {
+                minDate = today;
+            }
+
+            const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+            const startWeekday = new Date(view.y, view.m, 1).getDay();
+            const daysInMonth  = new Date(view.y, view.m + 1, 0).getDate();
+
+            let html = "";
+            html += '<div class="date-picker-head">';
+            html += '<button type="button" class="date-picker-nav" data-bs-nav="prev" data-bs-which="' + which + '" aria-label="Previous month">&#8249;</button>';
+            html += '<span class="date-picker-month">' + monthNames[view.m] + " " + view.y + "</span>";
+            html += '<button type="button" class="date-picker-nav" data-bs-nav="next" data-bs-which="' + which + '" aria-label="Next month">&#8250;</button>';
+            html += "</div>";
+            html += '<div class="date-picker-grid date-picker-weekdays">';
+            ["S","M","T","W","T","F","S"].forEach((w) => { html += "<span>" + w + "</span>"; });
+            html += "</div>";
+            html += '<div class="date-picker-grid">';
+            for (let i = 0; i < startWeekday; i++) html += '<span class="date-picker-cell is-empty"></span>';
+            for (let day = 1; day <= daysInMonth; day++) {
+                const iso = bsISO(view.y, view.m, day);
+                const cellDate = new Date(view.y, view.m, day);
+                const visualBooked = bsIsBlocked(iso, bookedMap, guestsWanted);
+                const beforeMin = cellDate < minDate;
+                const afterMax  = maxIso ? (iso > maxIso) : false;
+
+                // Check-in must land on a genuinely open night. Check-out
+                // just needs to be after check-in and not stretch past the
+                // next occupied night — the checkout day itself is fine
+                // even if another booking starts that same day.
+                const disabled = which === "checkin"
+                    ? (visualBooked || beforeMin)
+                    : (beforeMin || afterMax);
+
+                const isSelected = iso === selectedIso;
+                let cls = "date-picker-cell";
+                if (disabled) cls += " is-disabled";
+                if (isSelected) cls += " is-selected";
+                if (visualBooked && !beforeMin) cls += " is-booked";
+
+                html += '<button type="button" class="' + cls + '"' +
+                    (disabled ? " disabled" : (' data-bs-pick="' + iso + '" data-bs-which="' + which + '"')) +
+                    (visualBooked && !beforeMin ? ' title="Already booked"' : "") +
+                    ">" + day + "</button>";
+            }
+            html += "</div>";
+            html += '<div class="date-picker-legend"><span class="dp-swatch"></span> Booked / unavailable</div>';
+
+            pop.innerHTML = html;
+        }
+
+        function bsCloseDatePickers() {
+            bsOpenPicker = null;
+            document.getElementById("checkinPicker").classList.remove("is-open");
+            document.getElementById("checkoutPicker").classList.remove("is-open");
+        }
+
+        function bsOpenDatePicker(which) {
+            bsCloseDatePickers();
+            bsOpenPicker = which;
+            bsRenderCalendar(which);
+            document.getElementById(which === "checkin" ? "checkinPicker" : "checkoutPicker").classList.add("is-open");
+        }
+
+        document.getElementById("checkinTrigger").addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (bsOpenPicker === "checkin") { bsCloseDatePickers(); return; }
+            bsOpenDatePicker("checkin");
+        });
+        document.getElementById("checkoutTrigger").addEventListener("click", (e) => {
+            e.stopPropagation();
+            if (bsOpenPicker === "checkout") { bsCloseDatePickers(); return; }
+            bsOpenDatePicker("checkout");
+        });
+        document.addEventListener("click", (e) => {
+            if (bsOpenPicker && !e.target.closest("#checkinPicker") && !e.target.closest("#checkoutPicker")) {
+                bsCloseDatePickers();
+            }
+        });
+        document.addEventListener("keydown", (e) => {
+            if (e.key === "Escape" && bsOpenPicker) bsCloseDatePickers();
+        });
+
+        function bsSelectDate(which, iso) {
+            const hidden = document.getElementById(which === "checkin" ? "checkin" : "checkout");
+            const text = document.getElementById(which === "checkin" ? "checkinText" : "checkoutText");
+            hidden.value = iso;
+            text.textContent = bsFormatDisplay(iso);
+            text.classList.remove("is-placeholder");
+
+            if (which === "checkin") {
+                // If the previously-picked check-out no longer fits (it's
+                // now on/before the new check-in, or beyond the next
+                // occupied night), clear it so the visitor re-picks one.
+                const coEl = document.getElementById("checkout");
+                if (coEl.value) {
+                    const bookedMap = bsBuildBookedMap();
+                    const guestsWanted = bsGuestsWanted();
+                    const maxIso = bsFirstBlockedAfter(iso, bookedMap, guestsWanted);
+                    if (coEl.value <= iso || (maxIso && coEl.value > maxIso)) {
+                        coEl.value = "";
+                        const coText = document.getElementById("checkoutText");
+                        coText.textContent = "Select date";
+                        coText.classList.add("is-placeholder");
+                    }
+                }
+                bsViewMonth.checkout = null;
+            }
+
+            bsCloseDatePickers();
+
+            // The check-in/check-out linking listener declared just above
+            // this block keeps working off this 'change' event unchanged.
+            hidden.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+
+        const stripEl = document.querySelector(".booking-strip");
+        if (stripEl) {
+            stripEl.addEventListener("click", (e) => {
+                const navBtn = e.target.closest("[data-bs-nav]");
+                if (navBtn) {
+                    e.stopPropagation();
+                    const which = navBtn.getAttribute("data-bs-which");
+                    const dir = navBtn.getAttribute("data-bs-nav") === "next" ? 1 : -1;
+                    const view = bsViewMonth[which];
+                    let m = view.m + dir, y = view.y;
+                    if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; }
+                    bsViewMonth[which] = { y, m };
+                    bsRenderCalendar(which);
+                    return;
+                }
+                const pickBtn = e.target.closest("[data-bs-pick]");
+                if (pickBtn) {
+                    e.stopPropagation();
+                    bsSelectDate(pickBtn.getAttribute("data-bs-which"), pickBtn.getAttribute("data-bs-pick"));
+                }
+            });
+        }
+
+        function bsResetDates() {
+            ciHidden.value = "";
+            coHidden.value = "";
+            const ciText = document.getElementById("checkinText");
+            const coText = document.getElementById("checkoutText");
+            ciText.textContent = "Select date"; ciText.classList.add("is-placeholder");
+            coText.textContent = "Select date"; coText.classList.add("is-placeholder");
+        }
+
+        // Fetch fresh availability whenever the accommodation changes,
+        // and reset any previously-picked dates — they belonged to the
+        // old room.
+        function bsLoadAvailability(accommodationId) {
+            bsAvailability = null;
+            bsViewMonth = { checkin: null, checkout: null };
+            bsCloseDatePickers();
+            bsResetDates();
+
+            if (!accommodationId) return;
+
+            fetch("api/availability.php?accommodation_id=" + encodeURIComponent(accommodationId))
+                .then((r) => r.json())
+                .then((res) => {
+                    if (res.success) {
+                        bsAvailability = {
+                            capacity: res.accommodation.capacity,
+                            isPool: res.accommodation.is_pool,
+                            bookings: res.bookings,
+                        };
+                    }
+                    // Silent on failure — the strip falls back to an
+                    // unrestricted calendar rather than breaking the page.
+                })
+                .catch(() => {});
+        }
+
+        accomSelect.addEventListener("change", () => {
+            const opt = accomSelect.options[accomSelect.selectedIndex];
+            bsLoadAvailability(opt ? opt.dataset.id : "");
+        });
+
+        // Pool bookings are shared by guest count, so changing the guest
+        // range can invalidate an already-picked date range — re-check it.
+        if (guestSelect) {
+            guestSelect.addEventListener("change", () => {
+                if (!bsAvailability || !bsAvailability.isPool) return;
+                const ci = ciHidden.value, co = coHidden.value;
+                if (!ci || !co) return;
+
+                const bookedMap = bsBuildBookedMap();
+                const guestsWanted = bsGuestsWanted();
+                let cur = bsParseISO(ci);
+                const end = bsParseISO(co);
+                let stillOk = true;
+                while (cur < end) {
+                    const iso = bsISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
+                    if (bsIsBlocked(iso, bookedMap, guestsWanted)) { stillOk = false; break; }
+                    cur.setDate(cur.getDate() + 1);
+                }
+                if (!stillOk) bsResetDates();
+            });
+        }
+    })();
+
     /* ---------- booking strip submit (scrolls to rooms) ---------- */
     const bookingStrip = document.querySelector(".booking-strip");
     const roomsSection = document.getElementById("rooms");
@@ -607,6 +927,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 const opt = document.createElement("option");
                 opt.value = room.name;
                 opt.textContent = room.name;
+                // Used by the check-in/check-out date pickers below to
+                // know which accommodation to fetch availability for —
+                // the name alone isn't enough for that lookup.
+                opt.dataset.id = room.id;
                 bookingAccommodationSelect.appendChild(opt);
             });
         }

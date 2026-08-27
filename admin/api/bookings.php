@@ -26,6 +26,73 @@ try {
     error_log('[bookings api] companion_names migration warning: ' . $e->getMessage());
 }
 
+/* ================================================================
+   GET ?action=availability — read-only lookup used by the New/Edit
+   Booking date pickers to grey out already-reserved dates before the
+   admin ever submits the form. Session + admin role are already
+   enforced above; no CSRF token is required since this performs no
+   writes. Every other action on this endpoint remains POST+CSRF, so
+   this is handled and exited before that flow ever runs.
+   ================================================================ */
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
+    if (($_GET['action'] ?? '') !== 'availability') {
+        http_response_code(400);
+        echo json_encode(['success' => false, 'error' => 'Unknown action.']);
+        exit;
+    }
+
+    $accommodationId = (int) ($_GET['accommodation_id'] ?? 0);
+    $excludeId       = (int) ($_GET['exclude_id'] ?? 0);
+
+    if ($accommodationId <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Invalid accommodation.']);
+        exit;
+    }
+
+    $room = $pdo->prepare("SELECT id, type, capacity, status FROM accommodations WHERE id = :id");
+    $room->execute(['id' => $accommodationId]);
+    $room = $room->fetch();
+
+    if (!$room) {
+        echo json_encode(['success' => false, 'error' => 'Accommodation not found.']);
+        exit;
+    }
+
+    // Every confirmed/pending booking for this accommodation (minus the
+    // booking currently being edited, if any) — the client turns this
+    // into a per-date "blocked" map. Cancelled bookings free up their
+    // dates and are intentionally excluded.
+    $sql    = "SELECT check_in, check_out, guests_count FROM bookings
+               WHERE accommodation_id = :aid
+                 AND status IN ('confirmed','pending')";
+    $params = ['aid' => $accommodationId];
+    if ($excludeId > 0) {
+        $sql .= " AND id != :xid";
+        $params['xid'] = $excludeId;
+    }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    $rows = $stmt->fetchAll();
+
+    echo json_encode([
+        'success'       => true,
+        'accommodation' => [
+            'id'       => (int) $room['id'],
+            'capacity' => (int) $room['capacity'],
+            'is_pool'  => strcasecmp(trim((string) $room['type']), 'Swimming Pool') === 0,
+            'status'   => $room['status'],
+        ],
+        'bookings' => array_map(function ($r) {
+            return [
+                'check_in'     => $r['check_in'],
+                'check_out'    => $r['check_out'],
+                'guests_count' => (int) $r['guests_count'],
+            ];
+        }, $rows),
+    ]);
+    exit;
+}
+
 $body = json_decode(file_get_contents('php://input'), true) ?? [];
 
 /* CSRF check */

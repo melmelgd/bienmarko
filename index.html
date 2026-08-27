@@ -77,19 +77,36 @@
         </label>
         <label>
             <span>Check-in</span>
-            <input type="date" id="checkin" aria-label="Check-in date">
+            <!-- Dates already reserved for the selected accommodation are
+                 fetched from api/availability.php and greyed out here —
+                 see script.js "BOOKING STRIP DATE PICKERS". -->
+            <div class="date-picker" id="checkinPicker">
+                <button type="button" class="date-picker-trigger" id="checkinTrigger" aria-haspopup="dialog" aria-label="Check-in date">
+                    <span id="checkinText" class="is-placeholder">Select date</span>
+                    <svg class="date-picker-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
+                </button>
+                <div class="date-picker-pop" id="checkinPop"></div>
+            </div>
+            <input type="hidden" id="checkin">
         </label>
         <label>
             <span>Check-out</span>
-            <input type="date" id="checkout" aria-label="Check-out date">
+            <div class="date-picker" id="checkoutPicker">
+                <button type="button" class="date-picker-trigger" id="checkoutTrigger" aria-haspopup="dialog" aria-label="Check-out date">
+                    <span id="checkoutText" class="is-placeholder">Select date</span>
+                    <svg class="date-picker-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
+                </button>
+                <div class="date-picker-pop" id="checkoutPop"></div>
+            </div>
+            <input type="hidden" id="checkout">
         </label>
         <label>
             <span>Guest</span>
-            <select aria-label="Number of guests">
-                <option>1-2</option>
-                <option>3-4</option>
-                <option>5-6</option>
-                <option>7+</option>
+            <select id="bookingGuestSelect" aria-label="Number of guests">
+                <option value="1">1-2</option>
+                <option value="3">3-4</option>
+                <option value="5">5-6</option>
+                <option value="7">7+</option>
             </select>
         </label>
         <button type="submit">Check Availability</button>

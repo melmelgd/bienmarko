@@ -366,6 +366,48 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .form-input:focus { outline: none; border-color: var(--gold-500); }
 .form-input::placeholder { color: var(--text-tertiary); }
 
+/* New Booking: availability-aware date picker */
+.date-picker { position: relative; }
+.date-picker-trigger {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    font-family: inherit; text-align: left; cursor: pointer;
+}
+.date-picker-trigger .is-placeholder { color: var(--text-tertiary); }
+.date-picker-trigger.has-error { border-color: var(--red); }
+.date-picker-icon { width: 16px; height: 16px; color: var(--text-tertiary); flex-shrink: 0; }
+.date-picker-pop {
+    display: none;
+    position: absolute; top: calc(100% + 6px); left: 0; z-index: 50;
+    width: 266px; padding: 12px;
+    background: var(--panel-alt); border: 1px solid var(--border-strong);
+    border-radius: var(--r-md); box-shadow: 0 12px 32px rgba(0,0,0,.5);
+}
+.date-picker.is-open .date-picker-pop { display: block; }
+.date-picker-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.date-picker-month { font-family: var(--font-display); font-size: 13px; font-weight: 700; color: var(--text); }
+.date-picker-nav {
+    width: 26px; height: 26px; border-radius: var(--r-sm); border: 1px solid var(--border);
+    background: var(--panel); color: var(--text-secondary); cursor: pointer;
+    font-size: 15px; line-height: 1; transition: border-color var(--transition), color var(--transition);
+}
+.date-picker-nav:hover { border-color: var(--gold-500); color: var(--gold-400); }
+.date-picker-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 2px; }
+.date-picker-weekdays { margin-bottom: 4px; }
+.date-picker-weekdays span { font-size: 10px; font-weight: 700; text-align: center; color: var(--text-tertiary); }
+.date-picker-cell {
+    aspect-ratio: 1 / 1; border: none; background: none; border-radius: var(--r-sm);
+    color: var(--text); font-size: 12.5px; font-family: inherit; cursor: pointer;
+    transition: background var(--transition), color var(--transition);
+}
+.date-picker-cell:hover:not(.is-disabled) { background: var(--gold-tint-bg); color: var(--gold-400); }
+.date-picker-cell.is-empty { cursor: default; }
+.date-picker-cell.is-disabled { color: var(--text-muted); cursor: not-allowed; }
+.date-picker-cell.is-booked { color: var(--red); text-decoration: line-through; }
+.date-picker-cell.is-selected { background: var(--gold-500); color: var(--on-accent); font-weight: 700; }
+.date-picker-note { margin-top: 8px; font-size: 11.5px; color: var(--text-tertiary); text-align: center; }
+.date-picker-legend { margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-tertiary); }
+.dp-swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; background: var(--red-bg); border: 1px solid var(--red); }
+
 /* Responsive */
 @media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 700px)  { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
@@ -702,11 +744,25 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                         </div>
                         <div class="form-group">
                             <label class="form-label">Check-in <span style="color:var(--red)">*</span></label>
-                            <input class="form-input" type="date" name="check_in" min="<?php echo $today; ?>" required id="nbCheckIn">
+                            <div class="date-picker" id="nbCheckInPicker">
+                                <button type="button" class="form-input date-picker-trigger" id="nbCheckInTrigger" aria-haspopup="dialog">
+                                    <span id="nbCheckInText" class="is-placeholder">Select date</span>
+                                    <?php echo icon('calendar', 'date-picker-icon'); ?>
+                                </button>
+                                <div class="date-picker-pop" id="nbCheckInPop"></div>
+                            </div>
+                            <input type="hidden" name="check_in" required id="nbCheckIn">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Check-out <span style="color:var(--red)">*</span></label>
-                            <input class="form-input" type="date" name="check_out" min="<?php echo date('Y-m-d', strtotime('+1 day')); ?>" required id="nbCheckOut">
+                            <div class="date-picker" id="nbCheckOutPicker">
+                                <button type="button" class="form-input date-picker-trigger" id="nbCheckOutTrigger" aria-haspopup="dialog">
+                                    <span id="nbCheckOutText" class="is-placeholder">Select date</span>
+                                    <?php echo icon('calendar', 'date-picker-icon'); ?>
+                                </button>
+                                <div class="date-picker-pop" id="nbCheckOutPop"></div>
+                            </div>
+                            <input type="hidden" name="check_out" required id="nbCheckOut">
                         </div>
                         <div class="form-group">
                             <label class="form-label">Payment Method</label>
@@ -1069,11 +1125,335 @@ document.getElementById('nbCheckIn').addEventListener('change', function () {
 });
 document.getElementById('nbCheckOut').addEventListener('change', calcTotal);
 
+/* ---------- New booking modal: availability-aware date pickers ----------
+   Blocks dates already reserved for the selected accommodation so the
+   admin can only pick genuinely open dates, then relies on the
+   existing transactional check in api/bookings.php (action=create) as
+   the authoritative final check when Confirm Booking is clicked.
+------------------------------------------------------------------- */
+var nbAvailability = null;                        // { capacity, isPool, bookings: [...] } for the selected room, or null
+var nbOpenPicker    = null;                        // 'checkin' | 'checkout' | null
+var nbViewMonth      = { checkin: null, checkout: null }; // {y,m} currently shown in each calendar
+
+function nbPad(n) { return n < 10 ? '0' + n : '' + n; }
+function nbISO(y, m, d) { return y + '-' + nbPad(m + 1) + '-' + nbPad(d); }
+function nbParseISO(s) {
+    if (!s) return null;
+    var p = s.split('-');
+    return new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+}
+function nbFormatDisplay(iso) {
+    var d = nbParseISO(iso);
+    return d ? d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+}
+
+// Map of ISO date -> guests already booked that day, built from
+// nbAvailability.bookings. A date is "covered" by a booking when
+// check_in <= date < check_out (checkout day itself is free — the
+// same half-open range the server uses for its own conflict check).
+function nbBuildBookedMap() {
+    var map = {};
+    if (!nbAvailability) return map;
+    nbAvailability.bookings.forEach(function (b) {
+        var cur = nbParseISO(b.check_in);
+        var end = nbParseISO(b.check_out);
+        while (cur < end) {
+            var iso = nbISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
+            map[iso] = (map[iso] || 0) + (nbAvailability.isPool ? b.guests_count : 1);
+            cur.setDate(cur.getDate() + 1);
+        }
+    });
+    return map;
+}
+
+// Whether `iso` is unavailable as a stay-night for `guestsWanted`. Every
+// other accommodation type is exclusive (any existing booking blocks
+// it); the Swimming Pool is shared up to capacity, same rule as the
+// server-side conflict check.
+function nbIsBlocked(iso, bookedMap, guestsWanted) {
+    if (!nbAvailability) return false;
+    var used = bookedMap[iso] || 0;
+    if (nbAvailability.isPool) return (used + Math.max(1, guestsWanted)) > nbAvailability.capacity;
+    return used > 0;
+}
+
+// Earliest blocked date strictly after `fromIso` — a check-out can
+// never be pushed past this, or the stay would span an occupied night.
+function nbFirstBlockedAfter(fromIso, bookedMap, guestsWanted) {
+    if (!nbAvailability || !fromIso) return null;
+    var d = nbParseISO(fromIso);
+    d.setDate(d.getDate() + 1);
+    for (var i = 0; i < 730; i++) {
+        var iso = nbISO(d.getFullYear(), d.getMonth(), d.getDate());
+        if (nbIsBlocked(iso, bookedMap, guestsWanted)) return iso;
+        d.setDate(d.getDate() + 1);
+    }
+    return null;
+}
+
+function nbRenderCalendar(which) {
+    var pop         = document.getElementById(which === 'checkin' ? 'nbCheckInPop' : 'nbCheckOutPop');
+    var selectedIso = document.getElementById(which === 'checkin' ? 'nbCheckIn' : 'nbCheckOut').value;
+    var otherIso    = document.getElementById(which === 'checkin' ? 'nbCheckOut' : 'nbCheckIn').value;
+    var guestsWanted = Math.max(1, parseInt(document.getElementById('nbGuestsCount').value, 10) || 1);
+    var bookedMap   = nbBuildBookedMap();
+
+    if (!nbViewMonth[which]) {
+        var base = nbParseISO(selectedIso) || nbParseISO(otherIso) || new Date();
+        nbViewMonth[which] = { y: base.getFullYear(), m: base.getMonth() };
+    }
+    var view = nbViewMonth[which];
+
+    var today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    var minDate, maxIso = null;
+    if (which === 'checkout') {
+        if (otherIso) {
+            minDate = nbParseISO(otherIso);
+            minDate.setDate(minDate.getDate() + 1);
+            maxIso = nbFirstBlockedAfter(otherIso, bookedMap, guestsWanted);
+        } else {
+            minDate = new Date(today.getTime() + 86400000);
+        }
+    } else {
+        minDate = today;
+    }
+
+    var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+    var startWeekday = new Date(view.y, view.m, 1).getDay();
+    var daysInMonth  = new Date(view.y, view.m + 1, 0).getDate();
+
+    var html = '';
+    html += '<div class="date-picker-head">';
+    html += '<button type="button" class="date-picker-nav" data-nb-nav="prev" data-nb-which="' + which + '" aria-label="Previous month">&#8249;</button>';
+    html += '<span class="date-picker-month">' + monthNames[view.m] + ' ' + view.y + '</span>';
+    html += '<button type="button" class="date-picker-nav" data-nb-nav="next" data-nb-which="' + which + '" aria-label="Next month">&#8250;</button>';
+    html += '</div>';
+    html += '<div class="date-picker-grid date-picker-weekdays">';
+    ['S','M','T','W','T','F','S'].forEach(function (w) { html += '<span>' + w + '</span>'; });
+    html += '</div>';
+    html += '<div class="date-picker-grid">';
+    for (var i = 0; i < startWeekday; i++) html += '<span class="date-picker-cell is-empty"></span>';
+    for (var day = 1; day <= daysInMonth; day++) {
+        var iso         = nbISO(view.y, view.m, day);
+        var cellDate    = new Date(view.y, view.m, day);
+        var visualBooked = nbAvailability ? nbIsBlocked(iso, bookedMap, guestsWanted) : false;
+        var beforeMin   = cellDate < minDate;
+        var afterMax    = maxIso ? (iso > maxIso) : false;
+
+        // Check-in must land on a genuinely open night. Check-out just
+        // needs to be after check-in and not stretch past the next
+        // occupied night — the checkout day itself is always fine even
+        // if another booking starts that same day (same-day turnover).
+        var disabled = which === 'checkin'
+            ? (!nbAvailability || visualBooked || beforeMin)
+            : (!nbAvailability || beforeMin || afterMax);
+
+        var isSelected = (iso === selectedIso);
+        var cls = 'date-picker-cell';
+        if (disabled)   cls += ' is-disabled';
+        if (isSelected) cls += ' is-selected';
+        if (visualBooked && !beforeMin) cls += ' is-booked';
+
+        html += '<button type="button" class="' + cls + '"' +
+            (disabled ? ' disabled' : (' data-nb-pick="' + iso + '" data-nb-which="' + which + '"')) +
+            (visualBooked && !beforeMin ? ' title="Already booked"' : '') +
+            '>' + day + '</button>';
+    }
+    html += '</div>';
+    html += !nbAvailability
+        ? '<div class="date-picker-note">Select an accommodation first.</div>'
+        : '<div class="date-picker-legend"><span class="dp-swatch"></span> Booked / unavailable</div>';
+
+    pop.innerHTML = html;
+}
+
+function nbCloseDatePickers() {
+    nbOpenPicker = null;
+    document.getElementById('nbCheckInPicker').classList.remove('is-open');
+    document.getElementById('nbCheckOutPicker').classList.remove('is-open');
+}
+
+function nbOpenDatePicker(which) {
+    if (which === 'checkout' && !document.getElementById('nbCheckIn').value) {
+        toast('Please select a check-in date first.', 'error');
+        return;
+    }
+    nbCloseDatePickers();
+    nbOpenPicker = which;
+    nbRenderCalendar(which);
+    document.getElementById(which === 'checkin' ? 'nbCheckInPicker' : 'nbCheckOutPicker').classList.add('is-open');
+}
+
+document.getElementById('nbCheckInTrigger').addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (nbOpenPicker === 'checkin') { nbCloseDatePickers(); return; }
+    nbOpenDatePicker('checkin');
+});
+document.getElementById('nbCheckOutTrigger').addEventListener('click', function (e) {
+    e.stopPropagation();
+    if (nbOpenPicker === 'checkout') { nbCloseDatePickers(); return; }
+    nbOpenDatePicker('checkout');
+});
+document.addEventListener('click', function (e) {
+    if (nbOpenPicker && !e.target.closest('#nbCheckInPicker') && !e.target.closest('#nbCheckOutPicker')) {
+        nbCloseDatePickers();
+    }
+});
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && nbOpenPicker) nbCloseDatePickers();
+});
+
+function nbSelectDate(which, iso) {
+    var hidden = document.getElementById(which === 'checkin' ? 'nbCheckIn' : 'nbCheckOut');
+    var text   = document.getElementById(which === 'checkin' ? 'nbCheckInText' : 'nbCheckOutText');
+    hidden.value = iso;
+    text.textContent = nbFormatDisplay(iso);
+    text.classList.remove('is-placeholder');
+
+    if (which === 'checkin') {
+        // If the previously-picked check-out no longer fits (it's now
+        // on/before the new check-in, or beyond the next occupied
+        // night), clear it so the admin re-picks a valid one.
+        var coEl = document.getElementById('nbCheckOut');
+        if (coEl.value) {
+            var bookedMap = nbBuildBookedMap();
+            var guestsWanted = Math.max(1, parseInt(document.getElementById('nbGuestsCount').value, 10) || 1);
+            var maxIso = nbFirstBlockedAfter(iso, bookedMap, guestsWanted);
+            if (coEl.value <= iso || (maxIso && coEl.value > maxIso)) {
+                coEl.value = '';
+                var coText = document.getElementById('nbCheckOutText');
+                coText.textContent = 'Select date';
+                coText.classList.add('is-placeholder');
+            }
+        }
+        nbViewMonth.checkout = null;
+    }
+
+    nbCloseDatePickers();
+    document.getElementById('nbCheckInTrigger').classList.remove('has-error');
+    document.getElementById('nbCheckOutTrigger').classList.remove('has-error');
+
+    // Existing 'change' listeners on these hidden fields (calcTotal,
+    // etc.) already handle recomputing the total from here.
+    hidden.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+document.getElementById('newBookingModal').addEventListener('click', function (e) {
+    var navBtn = e.target.closest('[data-nb-nav]');
+    if (navBtn) {
+        e.stopPropagation();
+        var which = navBtn.getAttribute('data-nb-which');
+        var dir   = navBtn.getAttribute('data-nb-nav') === 'next' ? 1 : -1;
+        var view  = nbViewMonth[which];
+        var m = view.m + dir, y = view.y;
+        if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; }
+        nbViewMonth[which] = { y: y, m: m };
+        nbRenderCalendar(which);
+        return;
+    }
+    var pickBtn = e.target.closest('[data-nb-pick]');
+    if (pickBtn) {
+        e.stopPropagation();
+        nbSelectDate(pickBtn.getAttribute('data-nb-which'), pickBtn.getAttribute('data-nb-pick'));
+    }
+});
+
+// Fetch fresh availability whenever the accommodation changes, and
+// reset any previously-picked dates — they belonged to the old room.
+function nbLoadAvailability(accommodationId) {
+    nbAvailability = null;
+    nbViewMonth = { checkin: null, checkout: null };
+    nbCloseDatePickers();
+
+    document.getElementById('nbCheckIn').value  = '';
+    document.getElementById('nbCheckOut').value = '';
+    var ciText = document.getElementById('nbCheckInText');
+    var coText = document.getElementById('nbCheckOutText');
+    ciText.textContent = 'Select date'; ciText.classList.add('is-placeholder');
+    coText.textContent = 'Select date'; coText.classList.add('is-placeholder');
+    calcTotal();
+
+    if (!accommodationId) return;
+
+    fetch('api/bookings.php?action=availability&accommodation_id=' + encodeURIComponent(accommodationId))
+        .then(function (r) { return r.json(); })
+        .then(function (res) {
+            if (res.success) {
+                nbAvailability = {
+                    capacity: res.accommodation.capacity,
+                    isPool:   res.accommodation.is_pool,
+                    bookings: res.bookings,
+                };
+            } else {
+                toast(res.error || 'Could not load availability for this accommodation.', 'error');
+            }
+        })
+        .catch(function () {
+            toast('Network error while checking availability.', 'error');
+        });
+}
+document.getElementById('nbAccomSelect').addEventListener('change', function () {
+    nbLoadAvailability(this.value);
+});
+
+// Pool bookings are shared by guest count, so changing the guest count
+// can invalidate an already-picked date range — re-check it.
+function nbRevalidateSelection() {
+    if (!nbAvailability) return;
+    var ci = document.getElementById('nbCheckIn').value;
+    var co = document.getElementById('nbCheckOut').value;
+    if (!ci || !co) return;
+
+    var bookedMap = nbBuildBookedMap();
+    var guestsWanted = Math.max(1, parseInt(document.getElementById('nbGuestsCount').value, 10) || 1);
+    var cur = nbParseISO(ci), end = nbParseISO(co), stillOk = true;
+    while (cur < end) {
+        var iso = nbISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
+        if (nbIsBlocked(iso, bookedMap, guestsWanted)) { stillOk = false; break; }
+        cur.setDate(cur.getDate() + 1);
+    }
+
+    if (!stillOk) {
+        document.getElementById('nbCheckIn').value  = '';
+        document.getElementById('nbCheckOut').value = '';
+        var ciText = document.getElementById('nbCheckInText');
+        var coText = document.getElementById('nbCheckOutText');
+        ciText.textContent = 'Select date'; ciText.classList.add('is-placeholder');
+        coText.textContent = 'Select date'; coText.classList.add('is-placeholder');
+        toast('Selected dates no longer fit that many guests — please pick again.', 'error');
+        calcTotal();
+    }
+}
+document.getElementById('nbGuestsCount').addEventListener('input', nbRevalidateSelection);
+
+// If the modal is reopened with an accommodation already selected
+// (e.g. it was left mid-fill), make sure availability data is current.
+function nbOnModalOpen() {
+    var sel = document.getElementById('nbAccomSelect');
+    if (sel.value) nbLoadAvailability(sel.value);
+}
+var nbActionBtn = document.querySelector('.btn-action');
+if (nbActionBtn) nbActionBtn.addEventListener('click', nbOnModalOpen);
+
 function submitNewBooking(e) {
     e.preventDefault();
     var form  = document.getElementById('newBookingForm');
     var data  = Object.fromEntries(new FormData(form).entries());
     var btn   = document.getElementById('nbSubmitBtn');
+
+    if (!data.accommodation_id) {
+        toast('Please select an accommodation.', 'error');
+        return;
+    }
+    if (!data.check_in || !data.check_out) {
+        document.getElementById('nbCheckInTrigger').classList.toggle('has-error', !data.check_in);
+        document.getElementById('nbCheckOutTrigger').classList.toggle('has-error', !data.check_out);
+        toast('Please select both check-in and check-out dates.', 'error');
+        return;
+    }
+
     btn.disabled = true;
     btn.textContent = 'Saving…';
 
@@ -1093,6 +1473,13 @@ function submitNewBooking(e) {
             toast(res.error || 'Failed to create booking.', 'error');
             btn.disabled = false;
             btn.textContent = 'Confirm Booking';
+            // A conflict here means another booking claimed these dates
+            // between the calendar loading and Confirm being clicked —
+            // this is the server's final availability check (see
+            // api/bookings.php, action=create). Refresh availability so
+            // the picker reflects reality immediately.
+            var sel = document.getElementById('nbAccomSelect');
+            if (sel.value) nbLoadAvailability(sel.value);
         }
     })
     .catch(function () {
