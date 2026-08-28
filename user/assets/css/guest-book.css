@@ -390,6 +390,121 @@ h1, h2, h3, p { margin-top: 0; }
     color: var(--muted);
 }
 
+/* ── DATE PICKER (check-in / check-out) ──────────────────────────── */
+.gb-date-picker { position: relative; }
+
+.gb-date-picker-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    text-align: left;
+    cursor: pointer;
+}
+.gb-date-picker-trigger .is-placeholder { color: rgba(255,247,232,0.3); }
+.gb-date-picker-icon { width: 16px; height: 16px; color: var(--gold); flex-shrink: 0; }
+
+.gb-date-picker-pop {
+    display: none;
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    z-index: 60;
+    width: 272px;
+    padding: 14px;
+    background: var(--panel-soft);
+    border: 1px solid var(--line);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.55);
+}
+.gb-date-picker.is-open .gb-date-picker-pop { display: block; }
+
+.gb-date-picker-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+}
+.gb-date-picker-month {
+    font-family: var(--serif);
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+}
+.gb-date-picker-nav {
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 1;
+    transition: border-color 160ms ease, color 160ms ease;
+}
+.gb-date-picker-nav:hover { border-color: var(--gold); color: var(--gold-soft); }
+
+.gb-date-picker-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    grid-auto-rows: 34px;
+    gap: 2px;
+}
+.gb-date-picker-weekdays { margin-bottom: 4px; }
+.gb-date-picker-weekdays span {
+    font-size: 10px;
+    font-weight: 700;
+    text-align: center;
+    color: var(--muted);
+    line-height: 1;
+}
+.gb-date-picker-cell {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 34px;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--text);
+    font-size: 12.5px;
+    font-family: inherit;
+    line-height: 1;
+    cursor: pointer;
+    transition: background 160ms ease, color 160ms ease;
+}
+.gb-date-picker-cell:hover:not(.is-disabled) {
+    background: rgba(198, 154, 84, 0.14);
+    color: var(--gold-soft);
+}
+.gb-date-picker-cell.is-empty { cursor: default; }
+.gb-date-picker-cell.is-disabled { color: rgba(255, 247, 232, 0.28); cursor: not-allowed; }
+.gb-date-picker-cell.is-booked { color: var(--danger); text-decoration: line-through; }
+.gb-date-picker-cell.is-selected { background: var(--gold); color: var(--black); font-weight: 700; }
+
+.gb-date-picker-note {
+    padding: 4px 0;
+    font-size: 12px;
+    color: var(--muted);
+    text-align: center;
+}
+.gb-date-picker-legend {
+    margin-top: 10px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--muted);
+}
+.gb-dp-swatch {
+    width: 9px;
+    height: 9px;
+    display: inline-block;
+    background: var(--danger-bg);
+    border: 1px solid var(--danger);
+}
+
 /* ── ROOM SUMMARY PILL ────────────────────────────────────────────── */
 .gb-room-summary {
     display: flex;

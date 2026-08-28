@@ -150,8 +150,8 @@ function gb_e(string $s): string {
         <strong>Pension House</strong>
     </a>
     <nav class="gb-header-nav">
-        <a href="login.php">Log in</a>
-        <a class="gb-btn gb-btn--gold gb-btn--sm" href="register.php">Create Account</a>
+        <a href="../login.php">Log in</a>
+        <a class="gb-btn gb-btn--gold gb-btn--sm" href="../register.php">Create Account</a>
     </nav>
 </header>
 
@@ -224,21 +224,33 @@ function gb_e(string $s): string {
             <div class="gb-row gb-row--2">
                 <!-- Check-in -->
                 <div class="gb-field">
-                    <label class="gb-label" for="gb_checkin">Check-in Date <span class="gb-required" aria-hidden="true">*</span></label>
-                    <input class="gb-input" type="date" id="gb_checkin" name="checkin"
-                           value="<?= gb_e($preCheckin) ?>"
-                           min="<?= gb_e($today) ?>"
-                           required aria-required="true" aria-describedby="gb_checkin_err">
+                    <label class="gb-label" for="gb_checkinTrigger">Check-in Date <span class="gb-required" aria-hidden="true">*</span></label>
+                    <!-- Dates already reserved for the selected accommodation
+                         are fetched from ../api/availability.php and greyed
+                         out here — see the "GUEST BOOK DATE PICKERS" block
+                         in the script below. -->
+                    <div class="gb-date-picker" id="gb_checkinPicker">
+                        <button type="button" class="gb-input gb-date-picker-trigger" id="gb_checkinTrigger" aria-haspopup="dialog" aria-describedby="gb_checkin_err">
+                            <span id="gb_checkinText" class="<?= $preCheckin === '' ? 'is-placeholder' : '' ?>"><?= $preCheckin !== '' ? gb_e(date('M j, Y', strtotime($preCheckin))) : 'Select date' ?></span>
+                            <svg class="gb-date-picker-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
+                        </button>
+                        <div class="gb-date-picker-pop" id="gb_checkinPop"></div>
+                    </div>
+                    <input type="hidden" id="gb_checkin" name="checkin" value="<?= gb_e($preCheckin) ?>" required aria-required="true">
                     <span class="gb-field-err" id="gb_checkin_err" role="alert"></span>
                 </div>
 
                 <!-- Check-out -->
                 <div class="gb-field">
-                    <label class="gb-label" for="gb_checkout">Check-out Date <span class="gb-required" aria-hidden="true">*</span></label>
-                    <input class="gb-input" type="date" id="gb_checkout" name="checkout"
-                           value="<?= gb_e($preCheckout) ?>"
-                           min="<?= gb_e($today) ?>"
-                           required aria-required="true" aria-describedby="gb_checkout_err">
+                    <label class="gb-label" for="gb_checkoutTrigger">Check-out Date <span class="gb-required" aria-hidden="true">*</span></label>
+                    <div class="gb-date-picker" id="gb_checkoutPicker">
+                        <button type="button" class="gb-input gb-date-picker-trigger" id="gb_checkoutTrigger" aria-haspopup="dialog" aria-describedby="gb_checkout_err">
+                            <span id="gb_checkoutText" class="<?= $preCheckout === '' ? 'is-placeholder' : '' ?>"><?= $preCheckout !== '' ? gb_e(date('M j, Y', strtotime($preCheckout))) : 'Select date' ?></span>
+                            <svg class="gb-date-picker-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
+                        </button>
+                        <div class="gb-date-picker-pop" id="gb_checkoutPop"></div>
+                    </div>
+                    <input type="hidden" id="gb_checkout" name="checkout" value="<?= gb_e($preCheckout) ?>" required aria-required="true">
                     <span class="gb-field-err" id="gb_checkout_err" role="alert"></span>
                 </div>
             </div>
@@ -510,6 +522,12 @@ function gb_e(string $s): string {
     var checkinIn    = document.getElementById('gb_checkin');
     var checkoutIn   = document.getElementById('gb_checkout');
     var guestsIn     = document.getElementById('gb_guests');
+    // The visible date pickers — #gb_checkin/#gb_checkout above are now
+    // hidden inputs (see "GUEST BOOK DATE PICKERS" below), so any error
+    // styling meant to be seen has to land on these trigger buttons
+    // instead of on checkinIn/checkoutIn directly.
+    var checkinTrigger  = document.getElementById('gb_checkinTrigger');
+    var checkoutTrigger = document.getElementById('gb_checkoutTrigger');
 
     // Summary elements
     var sumSection   = document.getElementById('gbSummarySection');
@@ -813,6 +831,331 @@ function gb_e(string $s): string {
     // init on load if URL params pre-filled values
     onRoomChange();
 
+    /* ── GUEST BOOK DATE PICKERS ──────────────────────────────────────
+       Turns #gb_checkin / #gb_checkout into a small calendar popover
+       that greys out dates already reserved for whichever accommodation
+       is selected, fetched from the public ../api/availability.php
+       endpoint (the same one the landing page's booking strip uses —
+       no login required here either). #gb_checkin / #gb_checkout stay
+       as hidden inputs holding the real ISO value, so the date-linking
+       block above, updateSummary(), and api/guest-book.php's own
+       transaction-locked final conflict check all keep working
+       unchanged.
+       ------------------------------------------------------------- */
+    var gbdpAvailability = null;   // { capacity, isPool, bookings: [...] } for the selected room, or null
+    var gbdpOpenPicker   = null;   // 'checkin' | 'checkout' | null
+    var gbdpViewMonth    = { checkin: null, checkout: null };
+
+    function gbdpPad(n) { return n < 10 ? '0' + n : '' + n; }
+    function gbdpISO(y, m, d) { return y + '-' + gbdpPad(m + 1) + '-' + gbdpPad(d); }
+    function gbdpParseISO(s) {
+        if (!s) return null;
+        var p = s.split('-');
+        return new Date(parseInt(p[0], 10), parseInt(p[1], 10) - 1, parseInt(p[2], 10));
+    }
+
+    function gbdpGuestsWanted() {
+        var n = parseInt(guestsIn.value, 10);
+        return (!n || n < 1) ? 1 : n;
+    }
+
+    // Map of ISO date -> guests already booked that day, built from
+    // gbdpAvailability.bookings. A date is "covered" by a booking when
+    // check_in <= date < check_out (checkout day itself is free — same
+    // half-open range api/guest-book.php uses for its own conflict check).
+    function gbdpBuildBookedMap() {
+        var map = {};
+        if (!gbdpAvailability) return map;
+        gbdpAvailability.bookings.forEach(function (b) {
+            var cur = gbdpParseISO(b.check_in);
+            var end = gbdpParseISO(b.check_out);
+            while (cur < end) {
+                var iso = gbdpISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
+                map[iso] = (map[iso] || 0) + (gbdpAvailability.isPool ? b.guests_count : 1);
+                cur.setDate(cur.getDate() + 1);
+            }
+        });
+        return map;
+    }
+
+    // Whether `iso` is unavailable as a stay-night for `guestsWanted`.
+    // Every accommodation type but the Swimming Pool is exclusive (any
+    // existing booking blocks it); the pool is shared up to capacity —
+    // mirrors gb_is_pool_type()/the conflict query in api/guest-book.php.
+    function gbdpIsBlocked(iso, bookedMap, guestsWanted) {
+        if (!gbdpAvailability) return false;
+        var used = bookedMap[iso] || 0;
+        if (gbdpAvailability.isPool) return (used + Math.max(1, guestsWanted)) > gbdpAvailability.capacity;
+        return used > 0;
+    }
+
+    // Earliest blocked date strictly after `fromIso` — check-out can
+    // never be pushed past this, or the stay would span an occupied night.
+    function gbdpFirstBlockedAfter(fromIso, bookedMap, guestsWanted) {
+        if (!gbdpAvailability || !fromIso) return null;
+        var d = gbdpParseISO(fromIso);
+        d.setDate(d.getDate() + 1);
+        for (var i = 0; i < 730; i++) {
+            var iso = gbdpISO(d.getFullYear(), d.getMonth(), d.getDate());
+            if (gbdpIsBlocked(iso, bookedMap, guestsWanted)) return iso;
+            d.setDate(d.getDate() + 1);
+        }
+        return null;
+    }
+
+    function gbdpRenderCalendar(which) {
+        var pop      = document.getElementById(which === 'checkin' ? 'gb_checkinPop' : 'gb_checkoutPop');
+        var otherIso = document.getElementById(which === 'checkin' ? 'gb_checkout' : 'gb_checkin').value;
+
+        if (which === 'checkout' && !otherIso) {
+            pop.innerHTML = '<div class="gb-date-picker-note">Please select a check-in date first.</div>';
+            return;
+        }
+        if (!roomSel.value) {
+            pop.innerHTML = '<div class="gb-date-picker-note">Please select an accommodation first.</div>';
+            return;
+        }
+
+        var selectedIso  = document.getElementById(which === 'checkin' ? 'gb_checkin' : 'gb_checkout').value;
+        var guestsWanted = gbdpGuestsWanted();
+        var bookedMap    = gbdpBuildBookedMap();
+
+        if (!gbdpViewMonth[which]) {
+            var base = gbdpParseISO(selectedIso) || gbdpParseISO(otherIso) || new Date();
+            gbdpViewMonth[which] = { y: base.getFullYear(), m: base.getMonth() };
+        }
+        var view = gbdpViewMonth[which];
+
+        var today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        var minDate, maxIso = null;
+        if (which === 'checkout') {
+            minDate = gbdpParseISO(otherIso);
+            minDate.setDate(minDate.getDate() + 1);
+            maxIso = gbdpFirstBlockedAfter(otherIso, bookedMap, guestsWanted);
+        } else {
+            minDate = today;
+        }
+
+        var monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+        var startWeekday = new Date(view.y, view.m, 1).getDay();
+        var daysInMonth  = new Date(view.y, view.m + 1, 0).getDate();
+
+        var html = '';
+        html += '<div class="gb-date-picker-head">';
+        html += '<button type="button" class="gb-date-picker-nav" data-gbdp-nav="prev" data-gbdp-which="' + which + '" aria-label="Previous month">&#8249;</button>';
+        html += '<span class="gb-date-picker-month">' + monthNames[view.m] + ' ' + view.y + '</span>';
+        html += '<button type="button" class="gb-date-picker-nav" data-gbdp-nav="next" data-gbdp-which="' + which + '" aria-label="Next month">&#8250;</button>';
+        html += '</div>';
+        html += '<div class="gb-date-picker-grid gb-date-picker-weekdays">';
+        ['S','M','T','W','T','F','S'].forEach(function (w) { html += '<span>' + w + '</span>'; });
+        html += '</div>';
+        html += '<div class="gb-date-picker-grid">';
+        for (var i = 0; i < startWeekday; i++) html += '<span class="gb-date-picker-cell is-empty"></span>';
+        for (var day = 1; day <= daysInMonth; day++) {
+            var iso          = gbdpISO(view.y, view.m, day);
+            var cellDate     = new Date(view.y, view.m, day);
+            var visualBooked = gbdpIsBlocked(iso, bookedMap, guestsWanted);
+            var beforeMin    = cellDate < minDate;
+            var afterMax     = maxIso ? (iso > maxIso) : false;
+
+            // Check-in must land on a genuinely open night. Check-out
+            // just needs to be after check-in and not stretch past the
+            // next occupied night — the checkout day itself is fine even
+            // if another booking starts that same day (same-day turnover).
+            var disabled = which === 'checkin'
+                ? (visualBooked || beforeMin)
+                : (beforeMin || afterMax);
+
+            var isSelected = (iso === selectedIso);
+            var cls = 'gb-date-picker-cell';
+            if (disabled)   cls += ' is-disabled';
+            if (isSelected) cls += ' is-selected';
+            if (visualBooked && !beforeMin) cls += ' is-booked';
+
+            html += '<button type="button" class="' + cls + '"' +
+                (disabled ? ' disabled' : (' data-gbdp-pick="' + iso + '" data-gbdp-which="' + which + '"')) +
+                (visualBooked && !beforeMin ? ' title="Already booked"' : '') +
+                '>' + day + '</button>';
+        }
+        html += '</div>';
+        html += '<div class="gb-date-picker-legend"><span class="gb-dp-swatch"></span> Booked / unavailable</div>';
+
+        pop.innerHTML = html;
+    }
+
+    function gbdpCloseDatePickers() {
+        gbdpOpenPicker = null;
+        document.getElementById('gb_checkinPicker').classList.remove('is-open');
+        document.getElementById('gb_checkoutPicker').classList.remove('is-open');
+    }
+
+    function gbdpOpenDatePicker(which) {
+        gbdpCloseDatePickers();
+        gbdpOpenPicker = which;
+        gbdpRenderCalendar(which);
+        document.getElementById(which === 'checkin' ? 'gb_checkinPicker' : 'gb_checkoutPicker').classList.add('is-open');
+    }
+
+    document.getElementById('gb_checkinTrigger').addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (gbdpOpenPicker === 'checkin') { gbdpCloseDatePickers(); return; }
+        gbdpOpenDatePicker('checkin');
+    });
+    document.getElementById('gb_checkoutTrigger').addEventListener('click', function (e) {
+        e.stopPropagation();
+        if (gbdpOpenPicker === 'checkout') { gbdpCloseDatePickers(); return; }
+        gbdpOpenDatePicker('checkout');
+    });
+    document.addEventListener('click', function (e) {
+        if (gbdpOpenPicker && !e.target.closest('#gb_checkinPicker') && !e.target.closest('#gb_checkoutPicker')) {
+            gbdpCloseDatePickers();
+        }
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && gbdpOpenPicker) gbdpCloseDatePickers();
+    });
+
+    function gbdpSelectDate(which, iso) {
+        var hidden = document.getElementById(which === 'checkin' ? 'gb_checkin' : 'gb_checkout');
+        var text   = document.getElementById(which === 'checkin' ? 'gb_checkinText' : 'gb_checkoutText');
+        hidden.value = iso;
+        text.textContent = formatDate(iso);
+        text.classList.remove('is-placeholder');
+
+        checkinTrigger.classList.remove('gb-input--error');
+        checkoutTrigger.classList.remove('gb-input--error');
+
+        if (which === 'checkin') {
+            // If the previously-picked check-out no longer fits (it's now
+            // on/before the new check-in, or beyond the next occupied
+            // night), clear it so the visitor re-picks one.
+            var coEl = document.getElementById('gb_checkout');
+            if (coEl.value) {
+                var bookedMap    = gbdpBuildBookedMap();
+                var guestsWanted = gbdpGuestsWanted();
+                var maxIso       = gbdpFirstBlockedAfter(iso, bookedMap, guestsWanted);
+                if (coEl.value <= iso || (maxIso && coEl.value > maxIso)) {
+                    coEl.value = '';
+                    var coText = document.getElementById('gb_checkoutText');
+                    coText.textContent = 'Select date';
+                    coText.classList.add('is-placeholder');
+                }
+            }
+            gbdpViewMonth.checkout = null;
+        }
+
+        gbdpCloseDatePickers();
+
+        // The date-linking listener declared above keeps working off
+        // this 'change' event, same as before.
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    form.addEventListener('click', function (e) {
+        var navBtn = e.target.closest('[data-gbdp-nav]');
+        if (navBtn) {
+            e.stopPropagation();
+            var which = navBtn.getAttribute('data-gbdp-which');
+            var dir   = navBtn.getAttribute('data-gbdp-nav') === 'next' ? 1 : -1;
+            var view  = gbdpViewMonth[which];
+            var m = view.m + dir, y = view.y;
+            if (m < 0) { m = 11; y--; } else if (m > 11) { m = 0; y++; }
+            gbdpViewMonth[which] = { y: y, m: m };
+            gbdpRenderCalendar(which);
+            return;
+        }
+        var pickBtn = e.target.closest('[data-gbdp-pick]');
+        if (pickBtn) {
+            e.stopPropagation();
+            gbdpSelectDate(pickBtn.getAttribute('data-gbdp-which'), pickBtn.getAttribute('data-gbdp-pick'));
+        }
+    });
+
+    function gbdpResetDates() {
+        document.getElementById('gb_checkin').value  = '';
+        document.getElementById('gb_checkout').value = '';
+        var ciText = document.getElementById('gb_checkinText');
+        var coText = document.getElementById('gb_checkoutText');
+        ciText.textContent = 'Select date'; ciText.classList.add('is-placeholder');
+        coText.textContent = 'Select date'; coText.classList.add('is-placeholder');
+        updateSummary();
+    }
+
+    // True when the currently-picked check-in/check-out range is still
+    // fully open against the latest fetched availability. Read-only —
+    // callers decide what to do when it comes back false.
+    function gbdpSelectionStillValid() {
+        var ci = document.getElementById('gb_checkin').value;
+        var co = document.getElementById('gb_checkout').value;
+        if (!ci || !co) return true;
+
+        var bookedMap    = gbdpBuildBookedMap();
+        var guestsWanted = gbdpGuestsWanted();
+        var cur = gbdpParseISO(ci);
+        var end = gbdpParseISO(co);
+        while (cur < end) {
+            var iso = gbdpISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
+            if (gbdpIsBlocked(iso, bookedMap, guestsWanted)) return false;
+            cur.setDate(cur.getDate() + 1);
+        }
+        return true;
+    }
+
+    // Fetches fresh availability for `accommodationId`. When
+    // `preserveDates` is true (page load, possibly pre-filled from the
+    // landing page's booking strip), an existing check-in/check-out is
+    // kept if it's still open and cleared with a note otherwise; when
+    // false (the visitor changed the room, or the server just rejected a
+    // conflicting submit), any previously-picked dates are always
+    // cleared since they no longer apply.
+    function gbdpLoadAvailability(accommodationId, preserveDates) {
+        gbdpAvailability = null;
+        gbdpViewMonth = { checkin: null, checkout: null };
+        gbdpCloseDatePickers();
+
+        if (!preserveDates) gbdpResetDates();
+
+        if (!accommodationId) return;
+
+        fetch('../api/availability.php?accommodation_id=' + encodeURIComponent(accommodationId))
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (res.success) {
+                    gbdpAvailability = {
+                        capacity: res.accommodation.capacity,
+                        isPool:   res.accommodation.is_pool,
+                        bookings: res.bookings,
+                    };
+                    if (preserveDates && !gbdpSelectionStillValid()) {
+                        gbdpResetDates();
+                        formErr.textContent = 'Your pre-filled dates are no longer available for this room — please pick new ones.';
+                    }
+                }
+                // Silent otherwise — the picker falls back to an
+                // unrestricted calendar rather than breaking the page.
+            })
+            .catch(function () {});
+    }
+
+    roomSel.addEventListener('change', function () {
+        gbdpLoadAvailability(roomSel.value, false);
+    });
+
+    // Pool bookings are shared by guest count, so changing the guest
+    // count can invalidate an already-picked date range — re-check it.
+    guestsIn.addEventListener('input', function () {
+        if (!gbdpAvailability || !gbdpAvailability.isPool) return;
+        if (!gbdpSelectionStillValid()) gbdpResetDates();
+    });
+
+    // Initial fetch: the room may already be selected via a `?room=`
+    // query param forwarded from the landing page, possibly with
+    // pre-filled dates from its own booking strip — keep those if
+    // they're still open, per preserveDates=true above.
+    gbdpLoadAvailability(roomSel.value, true);
+
     /* ── client-side validation ───────────────────────────────────── */
     function validate() {
         var ok = true;
@@ -828,19 +1171,19 @@ function gb_e(string $s): string {
 
         if (!cin) {
             fieldErr('gb_checkin_err', 'Please choose a check-in date.');
-            checkinIn.classList.add('gb-input--error');
+            checkinTrigger.classList.add('gb-input--error');
             ok = false;
         }
 
         if (!cout) {
             fieldErr('gb_checkout_err', 'Please choose a check-out date.');
-            checkoutIn.classList.add('gb-input--error');
+            checkoutTrigger.classList.add('gb-input--error');
             ok = false;
         }
 
         if (cin && cout && cout <= cin) {
             fieldErr('gb_checkout_err', 'Check-out must be after check-in.');
-            checkoutIn.classList.add('gb-input--error');
+            checkoutTrigger.classList.add('gb-input--error');
             ok = false;
         }
 
@@ -922,11 +1265,25 @@ function gb_e(string $s): string {
                 if (json.field_errors) {
                     Object.keys(json.field_errors).forEach(function (field) {
                         fieldErr(field + '_err', json.field_errors[field]);
-                        var el = document.getElementById('gb_' + field);
+                        // checkin/checkout error styling has to land on the
+                        // visible trigger button, not the hidden input.
+                        var el = (field === 'checkin' || field === 'checkout')
+                            ? document.getElementById('gb_' + field + 'Trigger')
+                            : document.getElementById('gb_' + field);
                         if (el) el.classList.add('gb-input--error');
                     });
                     var firstErr = form.querySelector('.gb-input--error');
                     if (firstErr) firstErr.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+                    // A date/room conflict here means the transaction-locked
+                    // final check in api/guest-book.php rejected the
+                    // booking (someone else took these dates in the
+                    // meantime) — refresh availability so the calendar
+                    // reflects reality immediately, same as the admin
+                    // dashboard's New Booking picker does on conflict.
+                    if (json.field_errors.checkin || json.field_errors.room) {
+                        gbdpLoadAvailability(roomSel.value, false);
+                    }
                 }
             }
         })
