@@ -4,10 +4,10 @@
  * -----------------------------------------------------------------------
  * Guest Insights: total/repeat guest counts and average rating for the
  * selected period, plus an all-time Top Returning Guests table. Ratings
- * come from the `feedback` table (created empty by reports-data.php
- * until the guest-facing feedback submission feature exists — see the
- * note on reports_ensure_feedback_table()), so they may show "No
- * ratings yet" on a fresh install.
+ * come from the same `feedback` table admin/feedback.php manages
+ * (rating + is_published), so only published feedback counts toward
+ * the average; a fresh install with no feedback yet shows "No ratings
+ * yet" instead of erroring.
  * -----------------------------------------------------------------------
  */
 require_once __DIR__ . '/../includes/auth-common.php';

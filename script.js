@@ -990,6 +990,110 @@ document.addEventListener("DOMContentLoaded", () => {
             });
     }
 
+    /* =========================================================
+       TESTIMONIALS
+       Populated from api/testimonials.php — guest feedback an admin
+       has explicitly published from admin/feedback.php. Same
+       skeleton-then-swap approach as Featured Rooms above; the
+       section stays hidden if nothing has been published yet.
+       ========================================================= */
+    const testimonialsSection = document.getElementById("testimonials");
+    const feedbackGrid        = document.getElementById("feedbackGrid");
+
+    if (testimonialsSection && feedbackGrid) {
+
+        // Minimal HTML escaper — avoids innerHTML XSS from API data
+        function escHtmlTestimonial(str) {
+            return String(str)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
+        }
+
+        function makeFeedbackSkeleton() {
+            const el = document.createElement("div");
+            el.className = "feedback-skeleton";
+            el.innerHTML =
+                '<div class="feedback-skeleton-line feedback-skeleton-line--rating"></div>' +
+                '<div class="feedback-skeleton-line feedback-skeleton-line--text1"></div>' +
+                '<div class="feedback-skeleton-line feedback-skeleton-line--text2"></div>' +
+                '<div class="feedback-skeleton-line feedback-skeleton-line--text3"></div>' +
+                '<div class="feedback-skeleton-line feedback-skeleton-line--name"></div>' +
+                '<div class="feedback-skeleton-line feedback-skeleton-line--ctx"></div>';
+            return el;
+        }
+
+        function showFeedbackSkeletons() {
+            feedbackGrid.innerHTML = "";
+            for (let i = 0; i < 3; i++) {
+                feedbackGrid.appendChild(makeFeedbackSkeleton());
+            }
+            testimonialsSection.removeAttribute("hidden");
+        }
+
+        function makeTestimonialCard(item, index) {
+            const article = document.createElement("article");
+            article.dataset.reveal = "";
+            article.style.setProperty("--i", index);
+
+            const rating = Math.max(0, Math.min(5, Number(item.rating) || 0)).toFixed(1);
+
+            article.innerHTML =
+                '<span class="quote-mark" aria-hidden="true">&rdquo;</span>' +
+                `<span>${rating} <small>/ 5</small></span>` +
+                `<p>"${escHtmlTestimonial(item.message)}"</p>` +
+                `<strong>${escHtmlTestimonial(item.name)}</strong>` +
+                `<em>${escHtmlTestimonial(item.context)}</em>`;
+
+            return article;
+        }
+
+        showFeedbackSkeletons();
+
+        fetch("api/testimonials.php")
+            .then((res) => {
+                if (!res.ok) throw new Error("HTTP " + res.status);
+                return res.json();
+            })
+            .then((data) => {
+                const items = (data && data.success && Array.isArray(data.testimonials)) ? data.testimonials : [];
+
+                feedbackGrid.innerHTML = ""; // remove skeletons
+
+                if (items.length === 0) {
+                    // Nothing published yet — hide the whole section cleanly
+                    testimonialsSection.setAttribute("hidden", "");
+                    return;
+                }
+
+                items.forEach((item, i) => {
+                    feedbackGrid.appendChild(makeTestimonialCard(item, i));
+                });
+
+                // Plug newly added [data-reveal] elements into the existing observer
+                // (if it's already set up) — same hand-off used by Featured Rooms.
+                if (document.body.classList.contains("reveal-ready")) {
+                    feedbackGrid.querySelectorAll("[data-reveal]").forEach((el) => {
+                        const rect = el.getBoundingClientRect();
+                        if (rect.top < window.innerHeight - 60) {
+                            el.classList.add("is-visible");
+                        } else if (window.__featuredRevealObserver) {
+                            window.__featuredRevealObserver.observe(el);
+                        } else {
+                            el.classList.add("is-visible");
+                        }
+                    });
+                }
+            })
+            .catch(() => {
+                // API unreachable or returned bad data — hide section silently
+                feedbackGrid.innerHTML = "";
+                testimonialsSection.setAttribute("hidden", "");
+            });
+    }
+
     /* ---------- scroll reveal ---------- */
     const revealEls = document.querySelectorAll("[data-reveal]");
     const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;

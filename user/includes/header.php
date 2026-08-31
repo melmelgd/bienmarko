@@ -4,7 +4,8 @@ if (!empty($currentUser['name'])) {
     $parts = preg_split('/\s+/', trim($currentUser['name']));
     $initials = strtoupper(substr($parts[0], 0, 1) . (isset($parts[1]) ? substr($parts[1], 0, 1) : ''));
 }
-$notifCount = count($notifications ?? []);
+$notifCount       = count($notifications ?? []);
+$notifUnreadCount = $notifUnreadCount ?? 0;
 ?>
 <header class="topbar">
     <a href="dashboard.php" class="topbar__brand">
@@ -17,10 +18,10 @@ $notifCount = count($notifications ?? []);
 
     <div class="topbar__actions">
         <div class="topbar__notif">
-            <button type="button" class="topbar__icon-btn" id="notifToggle" aria-haspopup="true" aria-expanded="false" aria-label="Notifications">
+            <button type="button" class="topbar__icon-btn" id="notifToggle" data-csrf="<?php echo htmlspecialchars(bienmarko_csrf_token()); ?>" aria-haspopup="true" aria-expanded="false" aria-label="Notifications">
                 <?php render_icon('bell'); ?>
-                <?php if ($notifCount > 0): ?>
-                    <span class="topbar__badge"><?php echo (int) $notifCount; ?></span>
+                <?php if ($notifUnreadCount > 0): ?>
+                    <span class="topbar__badge"><?php echo (int) $notifUnreadCount; ?></span>
                 <?php endif; ?>
             </button>
             <div class="topbar__notif-panel" id="notifPanel" hidden>
@@ -33,7 +34,7 @@ $notifCount = count($notifications ?? []);
                 <?php else: ?>
                     <ul class="topbar__notif-list">
                         <?php foreach ($notifications as $notif): ?>
-                            <li>
+                            <li class="<?php echo empty($notif['is_read']) ? 'is-unread' : ''; ?>">
                                 <span><?php echo htmlspecialchars($notif['message']); ?></span>
                                 <span class="topbar__notif-time"><?php echo htmlspecialchars($notif['time']); ?></span>
                             </li>
@@ -44,7 +45,15 @@ $notifCount = count($notifications ?? []);
         </div>
 
         <a href="profile.php" class="topbar__user">
-            <span class="topbar__avatar"><?php if ($initials): ?><?php echo htmlspecialchars($initials); ?><?php else: ?><?php render_icon('user'); ?><?php endif; ?></span>
+            <span class="topbar__avatar">
+                <?php if (!empty($currentUser['avatar'])): ?>
+                    <img src="<?php echo htmlspecialchars($currentUser['avatar']); ?>" alt="">
+                <?php elseif ($initials): ?>
+                    <?php echo htmlspecialchars($initials); ?>
+                <?php else: ?>
+                    <?php render_icon('user'); ?>
+                <?php endif; ?>
+            </span>
             <span class="topbar__username"><?php echo htmlspecialchars($currentUser['name'] ?: 'Guest'); ?></span>
         </a>
 

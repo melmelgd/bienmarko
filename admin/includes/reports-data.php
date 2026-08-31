@@ -27,33 +27,37 @@ const RPT_TYPES            = ['Room', 'Event Hall', 'Cottage', 'Swimming Pool'];
 ------------------------------------------------------------------ */
 
 /**
- * The customer feedback module (guest-facing submission form) isn't
- * built yet, but Guest Insights needs somewhere to read ratings from
- * once it is. Creating the table now — empty until that feature ships —
- * lets the report degrade gracefully ("No ratings yet") instead of
- * erroring, and means no migration is needed later.
+ * Guest Insights reads ratings from the same `feedback` table that
+ * admin/feedback.php and admin/api/feedback.php already create and
+ * maintain (guest_id, rating, category, message, is_read, is_published,
+ * created_at — there is no `status`/`comment`/`booking_id` column).
+ * This guard mirrors that exact CREATE TABLE / ADD COLUMN pair so Guest
+ * Insights works even on a session that has never opened the Feedback
+ * page, and so both places stay byte-for-byte in sync on schema.
  */
 function reports_ensure_feedback_table(PDO $pdo): void
 {
     static $done = false;
     if ($done) return;
 
-    $pdo->exec("
-        CREATE TABLE IF NOT EXISTS `feedback` (
-            `id`               INT UNSIGNED NOT NULL AUTO_INCREMENT,
-            `booking_id`       INT UNSIGNED NULL DEFAULT NULL,
-            `guest_id`         INT UNSIGNED NULL DEFAULT NULL,
-            `guest_name`       VARCHAR(200) NULL DEFAULT NULL,
-            `accommodation_id` INT UNSIGNED NULL DEFAULT NULL,
-            `rating`           TINYINT UNSIGNED NOT NULL DEFAULT 5,
-            `comment`          TEXT NULL,
-            `status`           ENUM('pending','approved','rejected') NOT NULL DEFAULT 'pending',
-            `created_at`       DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    $pdo->exec(
+        "CREATE TABLE IF NOT EXISTS `feedback` (
+            `id`           INT UNSIGNED NOT NULL AUTO_INCREMENT,
+            `guest_id`     INT UNSIGNED NOT NULL,
+            `rating`       TINYINT UNSIGNED NOT NULL,
+            `category`     ENUM('general','room','service','cleanliness','other') NOT NULL DEFAULT 'general',
+            `message`      TEXT NOT NULL,
+            `is_read`      TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
+            `is_published` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0,
+            `created_at`   DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (`id`),
-            KEY `idx_fb_guest`  (`guest_id`),
-            KEY `idx_fb_status` (`status`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    ");
+            KEY `idx_guest`     (`guest_id`),
+            KEY `idx_created`   (`created_at`),
+            KEY `idx_read`      (`is_read`),
+            KEY `idx_published` (`is_published`)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+    );
+    $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `is_published` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `is_read`");
     $done = true;
 }
 
@@ -484,8 +488,8 @@ function reports_guest_insights_data(PDO $pdo, string $start, string $end): arra
     $stmt->execute(['s' => $start, 'e' => $end]);
     $repeatGuests = (int) $stmt->fetchColumn();
 
-    /* Average guest rating (all-time, approved feedback only) */
-    $avgRatingRaw = $pdo->query("SELECT AVG(rating) FROM feedback WHERE status = 'approved'")->fetchColumn();
+    /* Average guest rating (all-time, published feedback only) */
+    $avgRatingRaw = $pdo->query("SELECT AVG(rating) FROM feedback WHERE is_published = 1")->fetchColumn();
     $avgRating    = $avgRatingRaw !== null ? round((float) $avgRatingRaw, 1) : null;
 
     /* Top returning guests (registered, all-time visit count) */
@@ -505,7 +509,7 @@ function reports_guest_insights_data(PDO $pdo, string $start, string $end): arra
          WHERE b.guest_id = :gid AND b.status IN ($activeStatuses)
          GROUP BY a.id, a.name ORDER BY c DESC LIMIT 1"
     );
-    $ratingStmt = $pdo->prepare("SELECT AVG(rating) FROM feedback WHERE guest_id = :gid AND status = 'approved'");
+    $ratingStmt = $pdo->prepare("SELECT AVG(rating) FROM feedback WHERE guest_id = :gid AND is_published = 1");
 
     foreach ($topGuests as &$g) {
         $mostBookedStmt->execute(['gid' => $g['id']]);

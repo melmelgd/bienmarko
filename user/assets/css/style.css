@@ -206,6 +206,8 @@ main.page {
 }
 .topbar__notif-list li:first-child { border-top: none; }
 .topbar__notif-time { color: var(--paper-faint); font-size: 12px; white-space: nowrap; }
+.topbar__notif-list li.is-unread { background: rgba(232, 163, 61, 0.08); }
+.topbar__notif-list li.is-unread span:first-child { color: var(--paper); font-weight: 600; }
 
 .topbar__user {
   display: flex;
@@ -232,8 +234,10 @@ main.page {
   font-weight: 700;
   font-size: 13px;
   flex: none;
+  overflow: hidden;
 }
 .topbar__avatar .icon { width: 16px; height: 16px; }
+.topbar__avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: inherit; display: block; }
 .topbar__username { font-weight: 600; font-size: 13.5px; color: var(--paper); }
 
 /* ---------- Bottom navigation (the "sidebar", moved below) ---------- */
@@ -502,6 +506,7 @@ main.page {
   transition: opacity 0.2s ease, transform 0.2s ease;
 }
 .form__status.is-visible { opacity: 1; transform: translateY(0); }
+.form__status.is-error { color: var(--danger); }
 
 .form > .btn { align-self: flex-start; }
 

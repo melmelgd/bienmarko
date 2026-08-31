@@ -26,6 +26,57 @@ if (empty($body['csrf_token']) || !bienmarko_csrf_valid($body['csrf_token'])) {
 
 $action = trim($body['action'] ?? '');
 
+/* ------------------------------------------------------------------
+   Ensure guest_notifications table exists (additive, self-guarding —
+   safe to run on every request, same pattern as admin_notifications).
+   Scoped to a specific guest_id so the user portal's notification
+   bell (user/includes/bootstrap.php) can show payment updates to the
+   right account without surfacing every guest's notifications to
+   every guest.
+------------------------------------------------------------------ */
+$pdo->exec(
+    "CREATE TABLE IF NOT EXISTS `guest_notifications` (
+        `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
+        `guest_id`   INT UNSIGNED NOT NULL,
+        `booking_id` INT UNSIGNED NULL DEFAULT NULL,
+        `type`       VARCHAR(60)  NOT NULL DEFAULT 'payment',
+        `message`    VARCHAR(400) NOT NULL,
+        `is_read`    TINYINT(1)   NOT NULL DEFAULT 0,
+        `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (`id`),
+        KEY `idx_guest`   (`guest_id`),
+        KEY `idx_booking` (`booking_id`),
+        KEY `idx_read`    (`is_read`)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
+);
+
+/**
+ * Inserts one row into guest_notifications so the signed-in guest's
+ * notification bell (user/includes/bootstrap.php) shows the payment
+ * update the next time they load a page. Silently no-ops for walk-in
+ * guest bookings (guest_id NULL) — those have no account/login to
+ * deliver a notification to.
+ */
+function pay_notify_guest(PDO $pdo, ?int $guestId, int $bookingId, string $message): void
+{
+    if (!$guestId) {
+        return; // guest (no-account) booking — nothing to notify
+    }
+    try {
+        $stmt = $pdo->prepare(
+            "INSERT INTO guest_notifications (guest_id, booking_id, type, message)
+             VALUES (:gid, :bid, 'payment', :msg)"
+        );
+        $stmt->execute([
+            'gid' => $guestId,
+            'bid' => $bookingId,
+            'msg' => $message,
+        ]);
+    } catch (\Throwable $e) {
+        error_log('[bienmarko] guest notification insert failed: ' . $e->getMessage());
+    }
+}
+
 /* ================================================================
    ACTION: save_payment
    ================================================================ */
@@ -138,9 +189,14 @@ if ($action === 'save_payment') {
             )->execute(['bid' => $bookingId]);
         }
 
-        /* Notification */
+        /* Notifications — admin bell + the guest's own account */
         try {
-            $ref = $pdo->query("SELECT reference FROM bookings WHERE id = {$bookingId}")->fetchColumn();
+            $bkInfo = $pdo->prepare("SELECT reference, guest_id FROM bookings WHERE id = :id");
+            $bkInfo->execute(['id' => $bookingId]);
+            $bkRow    = $bkInfo->fetch();
+            $ref      = $bkRow['reference'] ?? '';
+            $refGuest = ($bkRow && $bkRow['guest_id'] !== null) ? (int) $bkRow['guest_id'] : null;
+
             $pdo->prepare(
                 "INSERT INTO admin_notifications (booking_id, type, message)
                  VALUES (:bid, 'payment', :msg)"
@@ -148,6 +204,21 @@ if ($action === 'save_payment') {
                 'bid' => $bookingId,
                 'msg' => "Payment recorded for booking {$ref}: ₱" . number_format($totalPaid, 2) . " ({$paymentStatus}).",
             ]);
+
+            /* Push the same update to the guest's own account, if the
+               booking belongs to a registered user and money was
+               actually recorded (skip zero-amount billing edits). */
+            if ($totalPaid > 0) {
+                if ($paymentStatus === 'paid') {
+                    $guestMsg = "Your payment of ₱" . number_format($totalPaid, 2)
+                        . " for booking {$ref} has been received in full. Your receipt is ready to view.";
+                } else {
+                    $balance  = max(0.0, $finalTotal - $totalPaid);
+                    $guestMsg = "A partial payment of ₱" . number_format($totalPaid, 2)
+                        . " was recorded for booking {$ref}. Remaining balance: ₱" . number_format($balance, 2) . ".";
+                }
+                pay_notify_guest($pdo, $refGuest, $bookingId, $guestMsg);
+            }
         } catch (\Throwable $e) { /* non-fatal */ }
 
         echo json_encode(['success' => true, 'pay_id' => $payId]);

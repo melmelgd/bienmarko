@@ -1,0 +1,5 @@
+# Uploaded files only — never execute scripts from this folder.
+php_flag engine off
+<FilesMatch "\.(php|phtml|php\d|phar)$">
+  Require all denied
+</FilesMatch>

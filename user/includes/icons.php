@@ -22,6 +22,7 @@ $iconLibrary = [
     'phone'            => 'assets/icons/phone.svg',
     'mail'             => 'assets/icons/mail.svg',
     'chevron-down'     => 'assets/icons/chevron-down.svg',
+    'camera'           => 'assets/icons/camera.svg',
 ];
 
 /**

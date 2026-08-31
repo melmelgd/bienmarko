@@ -1242,6 +1242,32 @@ body.reveal-ready [data-reveal].is-visible {
 .feedback-grid strong { display: block; color: var(--text); font-size: 14.5px; font-weight: 700; }
 .feedback-grid em { display: block; margin-top: 2px; color: var(--muted); font-size: 12.5px; font-style: normal; }
 
+.feedback-skeleton {
+    padding: 30px 28px 26px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+.feedback-skeleton-line {
+    height: 14px;
+    border-radius: 3px;
+    background: linear-gradient(90deg, var(--panel) 25%, rgba(198,154,84,0.06) 50%, var(--panel) 75%);
+    background-size: 200% 100%;
+    animation: featSkeleton 1.4s ease infinite;
+}
+.feedback-skeleton-line--rating { height: 22px; width: 35%; }
+.feedback-skeleton-line--text1  { width: 100%; }
+.feedback-skeleton-line--text2  { width: 90%; }
+.feedback-skeleton-line--text3  { width: 60%; margin-bottom: 6px; }
+.feedback-skeleton-line--name   { width: 40%; }
+.feedback-skeleton-line--ctx    { height: 11px; width: 55%; }
+
+@media (prefers-reduced-motion: reduce) {
+    .feedback-skeleton-line { animation: none; }
+}
+
 /* ---------- footer ---------- */
 .site-footer {
     display: flex;

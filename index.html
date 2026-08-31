@@ -166,8 +166,8 @@
             <a class="gold-button" href="#rooms">View Pool Access</a>
         </div>
         <div class="image-stack">
-            <img src="images/pool-area.jpg" alt="Swimming pool surrounded by palm trees" data-reveal>
-            <img src="images/venue-pavilion.jpg" alt="Covered pavilion beside the pool area" data-reveal>
+            <img src="images/swimming2.jpg" alt="Swimming pool surrounded by palm trees" data-reveal>
+            <img src="images/swimming1.jpg" alt="Covered pavilion beside the pool area" data-reveal>
         </div>
     </section>
 
@@ -260,33 +260,15 @@
         <button class="gold-button" type="button" data-open-map>Get Directions</button>
     </section>
 
-    <section class="feedback-section">
+    <section class="feedback-section" id="testimonials" aria-label="Guest Testimonials" hidden>
         <div class="section-title">
             <span>Testimonials</span>
             <h2>What Our Guests Say</h2>
         </div>
-        <div class="feedback-grid">
-            <article data-reveal style="--i:0">
-                <span class="quote-mark" aria-hidden="true">&rdquo;</span>
-                <span>5.0 <small>/ 5</small></span>
-                <p>"The place feels private and relaxing. The rooms were clean, and the pool area made the stay worth it."</p>
-                <strong>Mariel D.</strong>
-                <em>Family stay, Barkada Room</em>
-            </article>
-            <article data-reveal style="--i:1">
-                <span class="quote-mark" aria-hidden="true">&rdquo;</span>
-                <span>5.0 <small>/ 5</small></span>
-                <p>"Perfect for family bonding. Staff were accommodating and the surroundings were peaceful."</p>
-                <strong>Jonas R.</strong>
-                <em>Weekend getaway, Pavilion</em>
-            </article>
-            <article data-reveal style="--i:2">
-                <span class="quote-mark" aria-hidden="true">&rdquo;</span>
-                <span>5.0 <small>/ 5</small></span>
-                <p>"Simple, elegant, and comfortable. Booking was easy and the location was convenient for our group."</p>
-                <strong>Alyssa M.</strong>
-                <em>Group booking, Standard Room</em>
-            </article>
+        <div class="feedback-grid" id="feedbackGrid">
+            <!-- Populated from api/testimonials.php — guest feedback an
+                 admin has published from admin/feedback.php. Hidden
+                 entirely if nothing has been published yet. -->
         </div>
     </section>
 

@@ -51,3 +51,26 @@ function page_head(string $title, ?string $subtitle = null): void
     </div>
     <?php
 }
+
+/**
+ * Formats a MySQL DATETIME string as a short relative time ("2h ago",
+ * "Yesterday", "3d ago") for compact display in the topbar notification
+ * panel. Falls back to an absolute "Mon j" date once it's over a week
+ * old. Used by user/includes/bootstrap.php when building $notifications.
+ */
+function bm_relative_time(string $datetime): string
+{
+    $ts = strtotime($datetime);
+    if (!$ts) {
+        return '';
+    }
+    $diff = time() - $ts;
+
+    if ($diff < 60)     return 'Just now';
+    if ($diff < 3600)   return (int) floor($diff / 60)   . 'm ago';
+    if ($diff < 86400)  return (int) floor($diff / 3600) . 'h ago';
+    if ($diff < 172800) return 'Yesterday';
+    if ($diff < 604800) return (int) floor($diff / 86400) . 'd ago';
+
+    return date('M j', $ts);
+}

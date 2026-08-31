@@ -50,6 +50,8 @@ function icon_paths(): array
         'clock'         => '<circle cx="12" cy="12" r="9"></circle><polyline points="12 7 12 12 15.5 14"></polyline>',
         'edit'          => '<path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"></path>',
         'chevron-right' => '<polyline points="9 5 16 12 9 19"></polyline>',
+        'check'         => '<polyline points="4 12.5 9.5 18 20 6"></polyline>',
+        'trash'         => '<polyline points="4 7 20 7"></polyline><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"></path><path d="M6.5 7 7.3 19.5A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.8L17.5 7"></path>',
         'palm'          => '<img src="../logo/palm-tree.png" alt="Palm icon" width="24" height="24"/>',
     ];
 }
