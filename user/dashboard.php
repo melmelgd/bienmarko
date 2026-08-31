@@ -278,7 +278,7 @@ require __DIR__ . '/includes/head.php';
     <div class="page-head">
         <div class="page-head__text">
             <h1 class="page-head__title">
-                Welcome<?php echo $greetingName ? ', ' . htmlspecialchars($greetingName) : ''; ?>! <span aria-hidden="true">👋</span>
+                Welcome<?php echo $greetingName ? ', ' . htmlspecialchars($greetingName) : ''; ?>! <span aria-hidden="true"></span>
             </h1>
             <p class="page-head__subtitle">Here's what's happening with your bookings</p>
         </div>

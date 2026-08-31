@@ -1,8 +1,4 @@
--- ============================================================
--- BienMarko — Accommodation Categories Migration
--- Run AFTER schema.sql and accommodations.sql.
--- Safe to re-run: uses IF NOT EXISTS / IF NOT EXISTS guards.
--- ============================================================
+
 
 -- 1. Categories master table
 CREATE TABLE IF NOT EXISTS `accommodation_categories` (
