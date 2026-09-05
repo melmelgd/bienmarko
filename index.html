@@ -1,191 +1,392 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bien Marko's Pension House | Online Booking</title>
+<meta name="description" content="Bien Marko's Pension House — rooms, cottages, event halls, and pool access in Tabango, Leyte. Book a peaceful, affordable stay with warm local hospitality.">
+<link rel="icon" href="logo/palm-tree.png" viewBox='0 0 24 24'%3E%3Crect width='24' height='24' rx='5' fill='%23050505'/%3E%3Ctext x='12' y='17' font-family='Georgia,serif' font-size='15' fill='%23c69a54' text-anchor='middle'%3EB%3C/text%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Great+Vibes&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
 
-    <title>Website is down</title>
+<header class="site-header" id="siteHeader">
+    <a class="brand" href="#home" aria-label="Bien Marko's Pension House home">
+        <span>Bien Marko's</span>
+        <strong>Pension House</strong>
+    </a>
+    <nav class="main-nav" aria-label="Primary navigation">
+        <a class="active" href="#home">Home</a>
+        <a href="#rooms">Accommodation</a>
+        <a href="#about">About</a>
+        <a href="#contact">Contact</a>
+    </nav>
+    <div class="header-actions">
+        <a class="nav-link" href="login.php">Log in</a>
+        <a class="gold-button small" href="register.php">Sign up</a>
+    </div>
+    <button class="hamburger" id="hamburger" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="mobileMenu">
+        <span></span><span></span><span></span>
+    </button>
+</header>
 
-    <meta
-      name="description"
-      content="This website is temporarily unavailable."
-    />
+<nav class="mobile-menu" id="mobileMenu" aria-label="Mobile navigation">
+    <a href="#home">Home</a>
+    <a href="#rooms">Accommodation</a>
+    <a href="#about">About</a>
+    <a href="#contact">Contact</a>
+    <div class="mobile-menu-actions">
+        <a class="nav-link" href="login.php">Log in</a>
+        <a class="gold-button" href="register.php">Sign up</a>
+    </div>
+</nav>
 
-    <style>
-      :root {
-        font-family: Arial, Helvetica, sans-serif;
-        color: #f8f1e7;
-        background: #2f1f3b;
-        font-synthesis: none;
-        text-rendering: optimizeLegibility;
-      }
+<main>
 
-      * {
-        box-sizing: border-box;
-      }
+    <section class="home-hero" id="home">
+        <img src="images/hero.jpg" alt="Bien Markos Pension House two story building centered with palm trees on either side under bright daylight, no people visible; calm welcoming tropical resort setting; overlaid page text reads Bien Markos Pension House and Book Your Stay">
+        <div class="shade"></div>
+        <div class="hero-center">
+            <p>Bien Marko's</p>
+            <h1>Pension House</h1>
+            <h2>Book Your Stay</h2>
+            <span>Book comfortable rooms, cottages, event spaces, and pool access — with great amenities and excellent service, in a few clear steps.</span>
+            <div class="hero-actions">
+                <a class="gold-button" href="#rooms">Explore Rooms</a>
+                <a class="outline-light" href="#booking-strip">Book Now</a>
+            </div>
+        </div>
+        <a class="scroll-cue" href="#booking-strip" aria-label="Scroll down">
+            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v15M6 13l6 6 6-6"></path></svg>
+        </a>
+    </section>
 
-      html,
-      body {
-        min-width: 320px;
-        min-height: 100%;
-        margin: 0;
-      }
+    <form class="booking-strip" id="booking-strip" aria-label="Check availability">
+        <label>
+            <span>Accommodation</span>
+            <!-- Options populated live from admin data by script.js
+                 (same api/accommodations.php fetch used by #roomGrid).
+                 Only the placeholder ships here — everything else is
+                 whatever the admin has actually added. -->
+            <select id="bookingAccommodationSelect" aria-label="Accommodation type">
+                <option value="">Room Type</option>
+            </select>
+        </label>
+        <label>
+            <span>Check-in</span>
+            <!-- Dates already reserved for the selected accommodation are
+                 fetched from api/availability.php and greyed out here —
+                 see script.js "BOOKING STRIP DATE PICKERS". -->
+            <div class="date-picker" id="checkinPicker">
+                <button type="button" class="date-picker-trigger" id="checkinTrigger" aria-haspopup="dialog" aria-label="Check-in date">
+                    <span id="checkinText" class="is-placeholder">Select date</span>
+                    <svg class="date-picker-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
+                </button>
+                <div class="date-picker-pop" id="checkinPop"></div>
+            </div>
+            <input type="hidden" id="checkin">
+        </label>
+        <label>
+            <span>Check-out</span>
+            <div class="date-picker" id="checkoutPicker">
+                <button type="button" class="date-picker-trigger" id="checkoutTrigger" aria-haspopup="dialog" aria-label="Check-out date">
+                    <span id="checkoutText" class="is-placeholder">Select date</span>
+                    <svg class="date-picker-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"></rect><path d="M16 3v4M8 3v4M3 10h18"></path></svg>
+                </button>
+                <div class="date-picker-pop" id="checkoutPop"></div>
+            </div>
+            <input type="hidden" id="checkout">
+        </label>
+        <label>
+            <span>Guest</span>
+            <select id="bookingGuestSelect" aria-label="Number of guests">
+                <option value="1">1-2</option>
+                <option value="3">3-4</option>
+                <option value="5">5-6</option>
+                <option value="7">7+</option>
+            </select>
+        </label>
+        <button type="submit">Check Availability</button>
+    </form>
 
-      body {
-        min-height: 100vh;
-      }
+    <!-- ═══════════════════════════════════════════════════════════
+         FEATURED ROOMS — directly below the booking strip.
+         Dynamically populated from the database via script.js.
+         Hidden until JS confirms there are featured rooms.
+         ═══════════════════════════════════════════════════════════ -->
+    <section class="featured-section" id="featured" aria-label="Featured Rooms" hidden>
+        <div class="section-title">
+            <span>Handpicked for You</span>
+            <h2>Featured Rooms</h2>
+        </div>
+        <!-- Cards injected by script.js -->
+        <div class="featured-grid" id="featuredGrid" role="list"></div>
+        <div class="center-action">
+            <a class="outline-dark" href="#rooms">View All Accommodations</a>
+        </div>
+    </section>
 
-      .down-page {
-        position: relative;
-        display: grid;
-        min-height: 100vh;
-        min-height: 100dvh;
-        place-items: center;
-        overflow: hidden;
-        padding: 2rem;
-        background:
-          linear-gradient(
-            135deg,
-            rgba(47, 31, 59, 0.98),
-            rgba(64, 38, 73, 0.94)
-          ),
-          #2f1f3b;
-      }
+    <section class="intro-block" id="about">
+        <div>
+            <p class="eyebrow">Welcome to Bien Marko's</p>
+            <h2>A calm private stay for rest, gatherings, and easy days by the pool.</h2>
+        </div>
+        <p>Bien Marko's Pension House brings together practical comfort and a quiet tropical setting in Tabango, Leyte. Guests can book clean rooms, reserve cottages, plan small events, or enjoy a simple pool day with family and friends — all with warm, attentive local hospitality.</p>
+    </section>
 
-      .down-page::before,
-      .down-page::after {
-        position: absolute;
-        border: 1px solid rgba(248, 241, 231, 0.11);
-        border-radius: 50%;
-        content: '';
-        pointer-events: none;
-      }
+    <section class="amenities-section">
+        <div class="amenity-grid">
+            <div class="amenity" data-reveal style="--i:0">
+                <span class="amenity-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.5a16 16 0 0 1 20 0"></path><path d="M5.5 12a11 11 0 0 1 13 0"></path><path d="M8.8 15.5a6.3 6.3 0 0 1 6.4 0"></path><circle cx="12" cy="19" r="1"></circle></svg></span>
+                <p>Fast, reliable Wi-Fi throughout the property</p>
+            </div>
+            <div class="amenity" data-reveal style="--i:1">
+                <span class="amenity-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 17c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0"></path><path d="M2 21c1.5 1.3 3 1.3 4.5 0s3-1.3 4.5 0 3 1.3 4.5 0 3-1.3 4.5 0"></path><path d="M7 13V6a2 2 0 0 1 4 0v7"></path><path d="M12.5 9.5 16 6"></path></svg></span>
+                <p>Swimming pool open daily for guests</p>
+            </div>
+            <div class="amenity" data-reveal style="--i:2">
+                <span class="amenity-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"></path><path d="M4 21V10l8-6 8 6v11"></path><path d="M9 21v-6h6v6"></path></svg></span>
+                <p>Event spaces for gatherings &amp; celebrations</p>
+            </div>
+            <div class="amenity" data-reveal style="--i:3">
+                <span class="amenity-icon"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v6c0 5-3.5 7.5-7 9-3.5-1.5-7-4-7-9V6Z"></path><path d="M9.5 12l2 2 3.5-3.5"></path></svg></span>
+                <p>Secured gate with curfew for peace of mind</p>
+            </div>
+        </div>
+    </section>
 
-      .down-page::before {
-        width: min(68vw, 52rem);
-        height: min(68vw, 52rem);
-        transform: translate(35%, -23%);
-      }
+    <section class="split-feature">
+        <div class="split-copy">
+            <p class="eyebrow">Cool Off, Your Way</p>
+            <h2>A quiet pool day, right on the property.</h2>
+            <p>Cool off and spend quality time with family and friends in our swimming pool — surrounded by palms, with loungers and a covered pavilion nearby for shade between swims.</p>
+            <a class="gold-button" href="#rooms">View Pool Access</a>
+        </div>
+        <div class="image-stack">
+            <img src="images/swimming2.jpg" alt="Swimming pool surrounded by palm trees" data-reveal>
+            <img src="images/swimming1.jpg" alt="Covered pavilion beside the pool area" data-reveal>
+        </div>
+    </section>
 
-      .down-page::after {
-        width: min(32vw, 23rem);
-        height: min(32vw, 23rem);
-        transform: translate(-105%, 70%);
-        border-color: rgba(244, 181, 75, 0.2);
-      }
+    <section class="accommodation-preview" id="rooms">
+        <div class="section-title">
+            <span>Our Accommodations</span>
+            <h2>Rooms, Venues &amp; More</h2>
+        </div>
 
-      .down-page__glow {
-        position: absolute;
-        width: 18rem;
-        height: 18rem;
-        border-radius: 50%;
-        background: rgba(244, 181, 75, 0.16);
-        filter: blur(80px);
-        transform: translate(-90%, -70%);
-      }
+        <div class="filter-tabs" role="group" aria-label="Filter accommodations">
+            <button type="button" class="active" data-filter="all">All</button>
+            <button type="button" data-filter="rooms">Rooms</button>
+            <button type="button" data-filter="venues">Event Spaces</button>
+            <button type="button" data-filter="cottage">Cottages</button>
+            <button type="button" data-filter="pool">Pool</button>
+        </div>
 
-      .down-page__content {
-        position: relative;
-        z-index: 1;
-        max-width: 48rem;
-        text-align: center;
-        animation: appear 700ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
-      }
+        <!-- ═══════════════════════════════════════════════════════════
+             Populated live from the admin's Accommodations data via
+             script.js (fetch: api/accommodations.php). Whatever the
+             admin adds, edits, or removes in the admin panel is what
+             shows here — nothing below is hand-authored anymore.
+             Skeleton cards render immediately while the fetch is in
+             flight; see script.js "ALL ACCOMMODATIONS GRID" block.
+             ═══════════════════════════════════════════════════════════ -->
+        <div class="room-grid" id="roomGrid"></div>
 
-      .down-page__dot {
-        display: inline-block;
-        width: 0.7rem;
-        height: 0.7rem;
-        margin-bottom: 1.4rem;
-        border-radius: 50%;
-        background: #f4b54b;
-        box-shadow: 0 0 0 0.45rem rgba(244, 181, 75, 0.14);
-        animation: pulse 2.4s ease-in-out infinite;
-      }
+        <div class="center-action">
+            <a class="outline-dark" href="#contact">Inquire About Availability</a>
+        </div>
+    </section>
 
-      .down-page__eyebrow {
-        margin: 0 0 1.1rem;
-        color: rgba(248, 241, 231, 0.62);
-        font-size: 0.74rem;
-        font-weight: 700;
-        letter-spacing: 0.22em;
-        text-transform: uppercase;
-      }
+    <section class="policies-section">
+        <div class="section-title">
+            <span>Policies</span>
+            <h2>A Harmonious Stay</h2>
+        </div>
+        <div class="policy-list">
+            <article data-reveal style="--i:0">
+                <span><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H3v6h3l5 4V5Z"></path><path d="M17 9l6 6M23 9l-6 6"></path></svg></span>
+                <div>
+                    <h3>No Loud Voices</h3>
+                    <p>Please maintain a peaceful volume, especially in hallways and common areas.</p>
+                </div>
+            </article>
+            <article data-reveal style="--i:1">
+                <span><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M6 7l1 13a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-13"></path><path d="M10 11v6M14 11v6"></path></svg></span>
+                <div>
+                    <h3>Keep the Area Clean</h3>
+                    <p>Use trash bins and help keep rooms, cottages, and pool areas pleasant for everyone.</p>
+                </div>
+            </article>
+            <article data-reveal style="--i:2">
+                <span><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l4 2"></path></svg></span>
+                <div>
+                    <h3>Curfew</h3>
+                    <p>The main gate is locked at 11:00 PM. Please coordinate with the front desk for late arrival.</p>
+                </div>
+            </article>
+        </div>
+    </section>
 
-      h1 {
-        margin: 0;
-        color: #f8f1e7;
-        font-size: clamp(3.5rem, 10vw, 7.5rem);
-        font-weight: 500;
-        letter-spacing: -0.07em;
-        line-height: 0.93;
-      }
+    <section class="booking-cta">
+        <img src="images/hero.jpg" alt="Covered common area at Bien Marko's Pension House">
+        <div class="shade"></div>
+        <div>
+            <h2>Your Stay, Your Way</h2>
+            <h3>Book with Ease</h3>
+            <p>Choose a room, venue, cottage, or pool visit and complete your inquiry in a few clear steps.</p>
+            <a class="outline-light" href="#booking-strip">Book Now</a>
+        </div>
+    </section>
 
-      .down-page__message {
-        margin: 1.5rem 0 0;
-        color: rgba(248, 241, 231, 0.7);
-        font-size: clamp(1rem, 2vw, 1.2rem);
-        line-height: 1.6;
-      }
+    <section class="location-section" id="contact">
+        <div>
+            <p class="eyebrow">Location</p>
+            <h2>Find Bien Marko's Pension House.</h2>
+            <p>Open the map in a modal and request directions from your current location without leaving the page.</p>
+            <div class="location-meta">
+                <div>
+                    <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+                    <span><strong>Address</strong>1st Ave Street, Poblacion,<br>Tabango, Philippines</span>
+                </div>
+                <div>
+                    <svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3 3"></path></svg>
+                    <span><strong>Check-in / Check-out</strong>2:00 PM &mdash; 12:00 PM</span>
+                </div>
+            </div>
+        </div>
+        <button class="gold-button" type="button" data-open-map>Get Directions</button>
+    </section>
 
-      @keyframes appear {
-        from {
-          opacity: 0;
-          transform: translateY(1rem);
-        }
+    <section class="feedback-section" id="testimonials" aria-label="Guest Testimonials" hidden>
+        <div class="section-title">
+            <span>Testimonials</span>
+            <h2>What Our Guests Say</h2>
+        </div>
+        <div class="feedback-grid" id="feedbackGrid">
+            <!-- Populated from api/testimonials.php — guest feedback an
+                 admin has published from admin/feedback.php. Hidden
+                 entirely if nothing has been published yet. -->
+        </div>
+    </section>
 
-        to {
-          opacity: 1;
-          transform: translateY(0);
-        }
-      }
+</main>
 
-      @keyframes pulse {
-        0%,
-        100% {
-          box-shadow: 0 0 0 0.45rem rgba(244, 181, 75, 0.14);
-        }
+<footer class="site-footer">
+    <div>
+        <strong>Bien Marko's</strong>
+        <p>Rooms, cottages, event halls, and pool access in one elegant booking experience.</p>
+    </div>
+    <nav aria-label="Footer navigation">
+        <a href="#home">Home</a>
+        <a href="#rooms">Accommodation</a>
+        <a href="#about">About</a>
+        <a href="#contact">Contact</a>
+    </nav>
+    <div class="footer-contact">
+        <strong>Find us on</strong>
+        <span>Facebook: Bien Marko's Pension House</span>
+        <span>Contact: +63 917 588 0942</span>
+    </div>
+</footer>
 
-        50% {
-          box-shadow: 0 0 0 0.7rem rgba(244, 181, 75, 0.04);
-        }
-      }
+<div class="footer-bottom">
+    <span>© 2026 Bien Marko's Pension House. All rights reserved.</span>
+    <span>
+        <svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="3"></circle></svg>
+        Tabango, Philippines
+    </span>
+</div>
 
-      @media (max-width: 640px) {
-        .down-page {
-          padding: 1.5rem;
-        }
+<!-- ═══════════════════════════════════════════════════════════════════
+     MAP MODAL
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="map-modal" data-map-modal aria-hidden="true">
+    <div class="map-dialog" role="dialog" aria-modal="true" aria-labelledby="map-title">
+        <button class="modal-close" type="button" data-close-map aria-label="Close map">&times;</button>
+        <div class="modal-copy">
+            <p class="eyebrow">Directions</p>
+            <h2 id="map-title">Route to Bien Marko's</h2>
+            <p>Use your current location to preview the route inside this page.</p>
+            <button class="gold-button" type="button" data-use-location>Use My Current Location</button>
+        </div>
+        <iframe title="Bien Marko's Pension House map" data-map-frame src="https://www.google.com/maps?q=Bien%20Marko%27s%20Pension%20House%2C%20Tabango%2C%20Leyte&output=embed" loading="lazy"></iframe>
+    </div>
+</div>
 
-        h1 {
-          font-size: clamp(3.1rem, 17vw, 5rem);
-        }
-      }
+<!-- ═══════════════════════════════════════════════════════════════════
+     BOOKING OPTION MODAL
+     Shown when a guest clicks "Book Now" on any room card.
+     Lets them choose: proceed as registered user (login/register)
+     or continue as guest (no account required).
+     ═══════════════════════════════════════════════════════════════════ -->
+<div class="booking-option-modal" id="bookingOptionModal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="bookingOptionTitle">
+    <div class="booking-option-dialog">
+        <button class="modal-close" type="button" id="bookingOptionClose" aria-label="Close">&times;</button>
 
-      @media (prefers-reduced-motion: reduce) {
-        .down-page__content,
-        .down-page__dot {
-          animation: none;
-        }
-      }
-    </style>
-  </head>
+        <div class="booking-option-header">
+            <p class="eyebrow">Ready to Book?</p>
+            <h2 id="bookingOptionTitle">How would you like to continue?</h2>
+            <p id="bookingOptionRoomName" class="booking-option-room"></p>
+        </div>
 
-  <body>
-    <main class="down-page">
-      <div class="down-page__glow" aria-hidden="true"></div>
+        <div class="booking-option-cards">
+            <!-- Option A: Login / register -->
+            <div class="booking-option-card booking-option-card--account">
+                <div class="booking-option-card-icon">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="4"></circle><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"></path></svg>
+                </div>
+                <h3>Book with Account</h3>
+                <ul class="booking-option-perks">
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        Modify or cancel your booking
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        View booking history &amp; receipts
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        Submit guest feedback
+                    </li>
+                </ul>
+                <div class="booking-option-actions">
+                    <a class="gold-button" id="bookingLoginBtn" href="user/login.php">Log in</a>
+                    <a class="outline-dark" id="bookingRegisterBtn" href="user/register.php">Create Account</a>
+                </div>
+            </div>
 
-      <section
-        class="down-page__content"
-        aria-labelledby="website-down-title"
-      >
-        <span class="down-page__dot" aria-hidden="true"></span>
+            <!-- Option B: Guest booking — separate page, no account required -->
+            <div class="booking-option-card booking-option-card--guest">
+                <div class="booking-option-card-icon booking-option-card-icon--muted">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+                </div>
+                <h3>Continue as Guest</h3>
+                <ul class="booking-option-perks booking-option-perks--muted">
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        No account or login needed
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                        Instant booking confirmation
+                    </li>
+                    <li>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>
+                        Modifications require contacting us
+                    </li>
+                </ul>
+                <a class="gold-button booking-option-guest-btn" id="bookingGuestBtn" href="user/guest-book.php">Book as Guest</a>
+            </div>
+        </div>
+    </div>
+</div>
+<!-- Backdrop for booking option modal -->
+<div class="booking-option-backdrop" id="bookingOptionBackdrop" aria-hidden="true"></div>
 
-        <p class="down-page__eyebrow">Temporary outage</p>
-
-        <h1 id="website-down-title">Website is down</h1>
-
-        <p class="down-page__message">We’ll be back soon.</p>
-      </section>
-    </main>
-  </body>
+<script src="script.js"></script>
+</body>
 </html>
