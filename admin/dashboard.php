@@ -51,22 +51,6 @@ $pdo->exec(
 );
 
 /* ------------------------------------------------------------------
-   Ensure admin_notifications table exists
------------------------------------------------------------------- */
-$pdo->exec(
-    "CREATE TABLE IF NOT EXISTS `admin_notifications` (
-        `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
-        `booking_id` INT UNSIGNED NOT NULL,
-        `message`    VARCHAR(400) NOT NULL,
-        `is_read`    TINYINT(1)   NOT NULL DEFAULT 0,
-        `created_at` DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        PRIMARY KEY (`id`),
-        KEY `idx_booking` (`booking_id`),
-        KEY `idx_read`    (`is_read`)
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
-);
-
-/* ------------------------------------------------------------------
    Ensure bookings table has guest-details columns (migration guard)
    Same additive guard used by admin/bookings.php and
    admin/payments.php: guest (no-account) walk-in bookings store
@@ -153,18 +137,6 @@ $totalRooms    = (int) $stmtRoomCount->fetchColumn();
 $daysInMonth   = (int) date('t');
 $maxNights     = $totalRooms * $daysInMonth;
 $occupancyRate = $maxNights > 0 ? round(($statNights / $maxNights) * 100) : 0;
-
-/* ------------------------------------------------------------------
-   Notifications — unread
------------------------------------------------------------------- */
-$stmtNotifs = $pdo->query(
-    "SELECT n.id, n.message, n.created_at, n.is_read, n.booking_id
-     FROM admin_notifications n
-     ORDER BY n.created_at DESC
-     LIMIT 20"
-);
-$allNotifications = $stmtNotifs->fetchAll();
-$unreadCount      = count(array_filter($allNotifications, fn($n) => !(bool)$n['is_read']));
 
 /* ------------------------------------------------------------------
    Pagination — 10 recent bookings per page. The dashboard has no
@@ -261,10 +233,6 @@ function dash_guest_email(array $bk): string
 
 require __DIR__ . '/includes/head.php';
 require __DIR__ . '/includes/sidebar.php';
-
-/* Inject unread count into topbar before including it */
-$_topbar_notif_count    = $unreadCount;
-$_topbar_notifications  = $allNotifications;
 require __DIR__ . '/includes/topbar.php';
 ?>
 
@@ -400,23 +368,6 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
 .empty-state-title   { font-family: var(--font-display); font-size: 15px; font-weight: 700; margin-bottom: 6px; }
 .empty-state-message { font-size: 13.5px; color: var(--text-secondary); }
 
-/* ---------- Notification panel override ---------- */
-.notif-count-badge {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 18px; height: 18px; padding: 0 5px;
-    background: var(--red); color: #fff;
-    border-radius: var(--r-full); font-size: 10px; font-weight: 700;
-    position: absolute; top: -4px; right: -4px;
-}
-.notif-list-item {
-    padding: 12px 16px; border-bottom: 1px solid var(--border);
-    display: flex; flex-direction: column; gap: 3px;
-}
-.notif-list-item:last-child { border-bottom: none; }
-.notif-list-item.unread { background: rgba(249,185,85,.06); }
-.notif-msg  { font-size: 13px; color: var(--text); line-height: 1.45; }
-.notif-time { font-size: 11px; color: var(--text-tertiary); }
-
 /* ---------- Responsive ---------- */
 @media (max-width: 1100px) {
     .stat-grid { grid-template-columns: repeat(3, 1fr); }
@@ -429,113 +380,6 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
     .stat-grid { grid-template-columns: 1fr; }
 }
 </style>
-
-<?php
-/* ---- Topbar notification override ----
-   The existing topbar hardcodes "1" in the bell — we override it here
-   by outputting a replacement after including topbar.php. Since topbar
-   opens <main class="content">, our overriding JS runs inside that. */
-?>
-<script>
-(function () {
-    /* Replace the hardcoded bell badge with the real unread count */
-    var btn = document.querySelector('.icon-btn[aria-label]');
-    if (!btn) return;
-    var count = <?php echo (int) $unreadCount; ?>;
-    btn.setAttribute('aria-label', count + ' unread notification' + (count === 1 ? '' : 's'));
-
-    var dot = btn.querySelector('.notif-dot');
-    if (dot) {
-        if (count === 0) {
-            dot.style.display = 'none';
-        } else {
-            dot.textContent = count > 99 ? '99+' : count;
-        }
-    }
-
-    /* Populate notification panel */
-    var panel = document.querySelector('.topbar-right');
-    if (!panel) return;
-
-    var notifData = <?php echo json_encode(
-        array_map(function ($n) {
-            return [
-                'id'      => (int)  $n['id'],
-                'msg'     => $n['message'],
-                'time'    => date('M j · g:i A', strtotime($n['created_at'])),
-                'unread'  => !(bool) $n['is_read'],
-                'bk_id'   => (int)  $n['booking_id'],
-            ];
-        }, $allNotifications)
-    ); ?>;
-
-    /* Build a proper notification dropdown */
-    var existing = btn.parentElement;
-    var dropdown = document.createElement('div');
-    dropdown.id        = 'notifDropdown';
-    dropdown.className = 'notif-dropdown';
-    dropdown.hidden    = true;
-    dropdown.style.cssText =
-        'position:absolute;top:calc(100% + 8px);right:0;width:320px;max-height:400px;' +
-        'background:var(--panel);border:1px solid var(--border);border-radius:var(--r-lg);' +
-        'overflow-y:auto;z-index:200;box-shadow:0 12px 40px rgba(0,0,0,.5);';
-
-    var header = '<div style="padding:14px 16px;border-bottom:1px solid var(--border);' +
-        'display:flex;align-items:center;justify-content:space-between;">' +
-        '<span style="font-family:var(--font-display);font-size:14px;font-weight:700;">Notifications</span>' +
-        (count > 0 ? '<button id="markAllReadBtn" style="font-size:12px;color:var(--gold-400);background:none;border:none;cursor:pointer;font-weight:600;">Mark all read</button>' : '') +
-        '</div>';
-
-    var body = '';
-    if (notifData.length === 0) {
-        body = '<div class="empty-state" style="padding:28px 16px;">' +
-               '<p class="empty-state-message">No notifications yet.</p></div>';
-    } else {
-        notifData.forEach(function (n) {
-            body += '<div class="notif-list-item' + (n.unread ? ' unread' : '') + '" data-id="' + n.id + '">' +
-                    '<span class="notif-msg">' + escHtml(n.msg) + '</span>' +
-                    '<span class="notif-time">' + escHtml(n.time) + '</span>' +
-                    '</div>';
-        });
-    }
-
-    dropdown.innerHTML = header + body;
-    existing.style.position = 'relative';
-    existing.appendChild(dropdown);
-
-    btn.addEventListener('click', function (e) {
-        e.stopPropagation();
-        dropdown.hidden = !dropdown.hidden;
-    });
-
-    document.addEventListener('click', function () {
-        dropdown.hidden = true;
-    });
-    dropdown.addEventListener('click', function (e) { e.stopPropagation(); });
-
-    var markAllBtn = document.getElementById('markAllReadBtn');
-    if (markAllBtn) {
-        markAllBtn.addEventListener('click', function () {
-            fetch('api/notifications.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'mark_all_read', csrf_token: '<?php echo htmlspecialchars(bienmarko_csrf_token()); ?>' }),
-            }).then(function () {
-                /* Update UI */
-                document.querySelectorAll('.notif-list-item.unread').forEach(function (el) {
-                    el.classList.remove('unread');
-                });
-                if (dot) dot.style.display = 'none';
-                btn.setAttribute('aria-label', '0 unread notifications');
-            });
-        });
-    }
-
-    function escHtml(s) {
-        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
-})();
-</script>
 
 <div class="stack">
 

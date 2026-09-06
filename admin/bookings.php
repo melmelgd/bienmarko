@@ -559,9 +559,6 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                                             <?php echo icon('calendar', 'icon-sm'); ?>
                                         </button>
                                         <?php if (in_array($bk['status'], ['confirmed','pending'])): ?>
-                                            <button class="btn-sm btn-sm--success" onclick="goToPayment(<?php echo (int) $bk['id']; ?>)" title="Process Payment">
-                                                <?php echo icon('wallet', 'icon-sm'); ?>
-                                            </button>
                                             <button class="btn-sm btn-sm--danger" onclick="quickStatus(<?php echo (int) $bk['id']; ?>, 'cancelled')" title="Cancel">
                                                 <?php echo icon('close', 'icon-sm'); ?>
                                             </button>
@@ -1001,7 +998,6 @@ function openDetail(id) {
     var btns = '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
     if (b.status === 'confirmed' || b.status === 'pending') {
         btns  = '<button class="btn btn-blue" onclick="openEdit(' + b.id + ')">Edit Booking</button>';
-        btns += '<button class="btn btn-success" onclick="goToPayment(' + b.id + ')">Process Payment</button>';
         btns += '<button class="btn btn-danger" onclick="changeStatus(' + b.id + ',\'cancelled\')">Cancel Booking</button>';
         btns += '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
     } else if (b.status === 'cancelled') {
@@ -1046,16 +1042,6 @@ function changeStatus(id, newStatus) {
 function quickStatus(id, status) {
     if (!confirm('Mark this booking as ' + status + '?')) return;
     changeStatus(id, status);
-}
-
-/* ---------- Process Payment ---------- */
-// Sends the admin straight to the Payments & Billing page with this
-// booking's billing modal pre-opened, so the accommodation being paid
-// for is already selected. The booking itself is only marked
-// "completed" once the payment recorded there is fully paid — see
-// admin/api/payments.php (save_payment action).
-function goToPayment(id) {
-    window.location.href = 'payments.php?booking_id=' + id;
 }
 
 /* ---------- New booking modal ---------- */
