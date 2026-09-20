@@ -1,0 +1,11 @@
+# Database backups — never served directly. Only
+# admin/backup-download.php (which checks the admin role first)
+# may read files from this folder.
+Require all denied
+
+# Apache 2.2 fallback, in case this host doesn't support
+# the 2.4 "Require" syntax above.
+<IfModule !mod_authz_core.c>
+  Order allow,deny
+  Deny from all
+</IfModule>

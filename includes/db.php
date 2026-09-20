@@ -8,7 +8,7 @@ function bienmarko_db(): PDO
         return $pdo;
     }
 
-    $config = require __DIR__ . '/config/database.php';
+    $config = require __DIR__ . '/../config/database.php';
 
     $dsn = sprintf(
         'mysql:host=%s;port=%d;dbname=%s;charset=%s',
