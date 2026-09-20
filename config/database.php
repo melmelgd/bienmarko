@@ -22,7 +22,7 @@ $local = [
 
 // Online database
 $online = [
-    'host'     => 'sql102.iceiy.com',
+    'host'     => 'sql102.iceiy.cimy',
     'port'     => 3306,
     'database' => 'icei_42293432_bienmarko',
     'username' => 'icei_42293432',
