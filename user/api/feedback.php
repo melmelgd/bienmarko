@@ -1,15 +1,4 @@
 <?php
-/**
- * user/api/feedback.php
- * -----------------------------------------------------------------------
- * POST-only JSON endpoint behind user/feedback.php. Session + 'user' role
- * + CSRF, checked in that order, before anything submitted is looked at.
- * Mirrors the structure of user/api/bookings.php and
- * admin/api/notifications.php.
- *
- *   action=submit — insert a new feedback entry for the signed-in guest.
- * -----------------------------------------------------------------------
- */
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 

@@ -613,6 +613,17 @@ require __DIR__ . '/includes/head.php';
 }
 .btn--cancel:hover { border-color: var(--ember); color: var(--paper); }
 
+.bk-modal__confirm-step {
+  display: none; flex-direction: column; gap: 14px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--line);
+}
+.bk-modal__confirm-step.is-visible { display: flex; }
+.bk-modal__confirm-text {
+  margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--paper-dim);
+}
+.bk-modal__confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
 /* ---------- Success screen ---------- */
 .bk-success {
   display: none; flex-direction: column; align-items: center;
@@ -1354,7 +1365,20 @@ require __DIR__ . '/includes/head.php';
                       placeholder="Special requests, arrival time, accessibility needs…"></textarea>
         </div>
 
-        <div class="bk-modal__foot">
+        <!-- Are-you-sure step: shown after "Confirm Booking" is first clicked;
+             the actual booking is only submitted once the user taps
+             "Yes, Confirm Booking" here. -->
+        <div class="bk-modal__confirm-step" id="bkConfirmStep">
+            <p class="bk-modal__confirm-text">Are you sure you want to submit this booking request? Please double-check the details above.</p>
+            <div class="bk-modal__confirm-actions">
+                <button type="button" class="btn--cancel" id="bkConfirmNoBtn">No, Go Back</button>
+                <button type="button" class="btn-book" id="bkConfirmYesBtn">
+                    <?php render_icon('send'); ?> <span id="bkConfirmYesLabel">Yes, Confirm Booking</span>
+                </button>
+            </div>
+        </div>
+
+        <div class="bk-modal__foot" id="bkModalFoot">
             <span class="bk-modal__error" id="bkModalError" role="alert"></span>
             <div class="bk-modal__foot-actions">
                 <button type="button" class="btn--cancel" id="bkModalCancelBtn">Cancel</button>
@@ -1373,7 +1397,7 @@ require __DIR__ . '/includes/head.php';
         <div class="bk-success__ref" id="bkSuccessRef">BM-XXXXXXXX-XXXX</div>
         <p id="bkSuccessDetails" style="margin-top:4px"></p>
         <p style="font-size:13px;color:var(--paper-faint);margin-top:8px">
-            Payment is settled upon check-in or check-out (cash or GCash).
+            Payment is settled in cash upon check-in or check-out.
         </p>
         <div class="bk-success__actions">
             <button type="button" class="btn btn--primary" id="bkSuccessDone">
@@ -1597,6 +1621,11 @@ require __DIR__ . '/includes/head.php';
   var elSuccDet  = document.getElementById('bkSuccessDetails');
   var elSuccDone = document.getElementById('bkSuccessDone');
   var elConfLbl  = document.getElementById('bkConfirmLabel');
+  var elModalFoot     = document.getElementById('bkModalFoot');
+  var elConfirmStep   = document.getElementById('bkConfirmStep');
+  var elConfirmYesBtn = document.getElementById('bkConfirmYesBtn');
+  var elConfirmYesLbl = document.getElementById('bkConfirmYesLabel');
+  var elConfirmNoBtn  = document.getElementById('bkConfirmNoBtn');
 
   // Calendar modal
   var calModal        = document.getElementById('calModal');
@@ -2361,7 +2390,15 @@ require __DIR__ . '/includes/head.php';
         var notice = document.createElement('div');
         notice.className = 'api-error';
         notice.style.gridColumn = '1/-1';
-        notice.innerHTML = bedIcon() + '<span>No rooms are available for these dates. Try different dates.</span>';
+        // Note: intentionally NOT bedIcon() here — that helper hardcodes
+        // width:100%/height:100% so it can fill the 44×44px room-card
+        // thumbnail it was designed for, and that inline style beats the
+        // ".api-error .icon" (18px) rule below, blowing the icon up to
+        // fill this notice instead. This is a plain class="icon" SVG with
+        // no inline sizing so the existing CSS rule sizes it correctly.
+        notice.innerHTML =
+          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" class="icon"><path d="M2 4v16"/><path d="M2 8h18a2 2 0 0 1 2 2v10"/><path d="M2 17h20"/><path d="M6 8v9"/></svg>' +
+          '<span>No rooms are available for these dates. Try different dates.</span>';
         elGrid.prepend(notice);
       }
     })
@@ -2564,6 +2601,8 @@ require __DIR__ . '/includes/head.php';
     elMConfirm.disabled = false;
     elMContent.style.display = '';
     elSuccess.classList.remove('is-visible');
+    elConfirmStep.classList.remove('is-visible');
+    elModalFoot.style.display = '';
 
     modal.showModal ? modal.showModal() : modal.setAttribute('open', '');
   }
@@ -2582,14 +2621,28 @@ require __DIR__ . '/includes/head.php';
   });
   modal.addEventListener('keydown', function (e) { if (e.key === 'Escape') closeModal(); });
 
-  /* ---- Confirm booking ---- */
+  /* ---- Step 1: "Confirm Booking" reveals the are-you-sure step ---- */
   elMConfirm.addEventListener('click', function () {
+    if (!pendingBooking || isSubmitting) return;
+    elMError.textContent = '';
+    elModalFoot.style.display = 'none';
+    elConfirmStep.classList.add('is-visible');
+  });
+
+  elConfirmNoBtn.addEventListener('click', function () {
+    elConfirmStep.classList.remove('is-visible');
+    elModalFoot.style.display = '';
+  });
+
+  /* ---- Step 2: user confirmed — submit the booking for real ---- */
+  elConfirmYesBtn.addEventListener('click', function () {
     if (!pendingBooking || isSubmitting) return;
 
     elMError.textContent = '';
     isSubmitting = true;
-    elMConfirm.disabled = true;
-    elConfLbl.textContent = 'Booking…';
+    elConfirmYesBtn.disabled = true;
+    elConfirmNoBtn.disabled = true;
+    elConfirmYesLbl.textContent = 'Booking…';
 
     var notes = (document.getElementById('bkNotes').value || '').trim();
     var companionNames = collectCompanionNames();
@@ -2611,10 +2664,14 @@ require __DIR__ . '/includes/head.php';
     .then(function (r) { return r.json(); })
     .then(function (data) {
       isSubmitting = false;
+      elConfirmYesBtn.disabled = false;
+      elConfirmNoBtn.disabled = false;
+      elConfirmYesLbl.textContent = 'Yes, Confirm Booking';
+
       if (!data.success) {
+        elConfirmStep.classList.remove('is-visible');
+        elModalFoot.style.display = '';
         elMError.textContent = data.error || 'Booking failed. Please try again.';
-        elMConfirm.disabled = false;
-        elConfLbl.textContent = 'Confirm Booking';
         return;
       }
 
@@ -2630,9 +2687,12 @@ require __DIR__ . '/includes/head.php';
     })
     .catch(function () {
       isSubmitting = false;
+      elConfirmYesBtn.disabled = false;
+      elConfirmNoBtn.disabled = false;
+      elConfirmYesLbl.textContent = 'Yes, Confirm Booking';
+      elConfirmStep.classList.remove('is-visible');
+      elModalFoot.style.display = '';
       elMError.textContent = 'Network error. Please try again.';
-      elMConfirm.disabled = false;
-      elConfLbl.textContent = 'Confirm Booking';
     });
   });
 

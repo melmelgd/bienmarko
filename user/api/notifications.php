@@ -1,21 +1,4 @@
 <?php
-/**
- * user/api/notifications.php
- * -----------------------------------------------------------------------
- * POST-only JSON endpoint for the signed-in guest's notification bell.
- *
- * Actions:
- *   mark_all_read — marks every unread guest_notifications row that
- *                   belongs to the signed-in guest as read
- *   mark_read     — marks a single notification as read (requires id;
- *                   scoped to the signed-in guest so no one can mark
- *                   another guest's notifications)
- *
- * Both require the 'user' role and a valid CSRF token. Mirrors
- * admin/api/notifications.php, with every query additionally scoped
- * to guest_id so one guest can never touch another guest's rows.
- * -----------------------------------------------------------------------
- */
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 

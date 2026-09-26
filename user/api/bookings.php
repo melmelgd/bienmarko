@@ -1,25 +1,4 @@
 <?php
-/**
- * user/api/bookings.php
- * -----------------------------------------------------------------------
- * JSON API for the registered-user booking feature. Handles three actions:
- *
- *   action=availability   – given check_in + check_out, returns all
- *                           accommodations with their real-time status.
- *
- *   action=book           – submits a new booking for a specific room.
- *                           Auto-approves (status=confirmed) when the room
- *                           is free for the requested dates.
- *
- *   action=room_calendar  – given room_id, returns the admin-set status
- *                           and all confirmed/pending booking date ranges
- *                           for that room (3 months back, 12 months ahead),
- *                           so the front-end calendar can colour each day.
- *
- * All requests must be POST. CSRF is validated on every call.
- * Requires an active user session.
- * -----------------------------------------------------------------------
- */
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 

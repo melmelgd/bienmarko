@@ -1,15 +1,4 @@
 <?php
-/**
- * user/receipts.php
- * -----------------------------------------------------------------------
- * Lists every payment an admin has recorded (admin/api/payments.php,
- * action=save_payment) against one of the signed-in guest's bookings,
- * and lets them view/print each as a receipt. Payments with nothing
- * paid yet (total_paid = 0, i.e. billing set up but no money recorded)
- * are not shown here — a "receipt" only makes sense once a payment
- * has actually happened.
- * -----------------------------------------------------------------------
- */
 require_once __DIR__ . '/../includes/auth-common.php';
 
 bienmarko_start_session();

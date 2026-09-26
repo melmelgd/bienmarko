@@ -1,48 +1,4 @@
 <?php
-/**
- * user/api/guest-book.php
- * -----------------------------------------------------------------------
- * POST-only JSON endpoint for guest (no-account) bookings.
- * No session or login is required to submit.
- *
- * Expected multipart/form-data fields:
- *   csrf_token      string   (from bienmarko_csrf_token in the page)
- *   room_id         int      accommodation ID
- *   checkin         YYYY-MM-DD
- *   checkout        YYYY-MM-DD
- *   guests          int      1–50
- *   first_name      string
- *   last_name       string
- *   email           string
- *   phone           string
- *   address         string   (optional)
- *   requests        string   (optional, max 500 chars — stored in notes)
- *   payment_method  cash|gcash
- *
- * Success response:
- * {
- *   "success": true,
- *   "reference": "BM-XXXXXXXX",
- *   "room_name": "Barkada Room",
- *   "checkin": "2026-08-20",
- *   "checkout": "2026-08-22",
- *   "nights": 2,
- *   "total": "1200.00"
- * }
- *
- * Error response:
- * {
- *   "success": false,
- *   "error": "Human-readable message.",
- *   "field_errors": { "field_key": "Per-field message." }   // optional
- * }
- *
- * Tables used:
- *   accommodations      (read)  — confirms room exists + is available
- *   bookings            (read + write)  — conflict detection + insert
- *   admin_notifications (write) — inserts one row so admin panel bell fires
- * -----------------------------------------------------------------------
- */
 
 require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/auth-common.php';
@@ -274,7 +230,10 @@ if (mb_strlen($requests) > 500) {
     $fieldErrors['requests'] = 'Special requests must be 500 characters or fewer.';
 }
 
-if (!in_array($paymentMethod, ['cash', 'gcash'], true)) {
+if (!in_array($paymentMethod, ['cash'], true)) {
+    // The resort currently accepts cash only; anything else submitted
+    // (tampered request, stale client, etc.) silently falls back to cash
+    // rather than being rejected outright.
     $paymentMethod = 'cash';
 }
 

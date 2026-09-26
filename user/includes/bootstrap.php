@@ -6,20 +6,10 @@ if (session_status() === PHP_SESSION_NONE) {
 define('SITE_NAME', 'BienMarko');
 define('SITE_TAGLINE', "Bien Marko's Pension House");
 
-/* ------------------------------------------------------------------
-   Additive migration: guests.avatar_filename. Safe to run on every
-   request (same pattern admin/bookings.php uses for its own columns)
-   so every page — not just profile.php — can read the column right
-   away, on both fresh installs and existing deployments.
------------------------------------------------------------------- */
+
 $pdo = bienmarko_db();
 $pdo->exec("ALTER TABLE `guests` ADD COLUMN IF NOT EXISTS `avatar_filename` VARCHAR(255) NULL DEFAULT NULL AFTER `phone`");
 
-/* ------------------------------------------------------------------
-   Load the signed-in guest's display info fresh from the database on
-   every page, so header.php's name/avatar always reflect the latest
-   saved profile without every page having to fetch this itself.
------------------------------------------------------------------- */
 $currentUser = [
     'name'   => null, // e.g. 'Shayra Walters'
     'email'  => null,
@@ -47,14 +37,7 @@ require_once __DIR__ . '/nav-items.php';
 require_once __DIR__ . '/icons.php';
 require_once __DIR__ . '/ui.php';
 
-/* ------------------------------------------------------------------
-   Additive migration: guest_notifications table. Payment updates are
-   pushed here by admin/api/payments.php whenever an admin records a
-   payment against one of this guest's bookings — this is how those
-   updates reach the guest's own account. Safe to run on every
-   request (same self-guarding pattern as the avatar_filename column
-   above).
------------------------------------------------------------------- */
+
 $pdo->exec(
     "CREATE TABLE IF NOT EXISTS `guest_notifications` (
         `id`         INT UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -71,12 +54,7 @@ $pdo->exec(
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
 );
 
-/* ------------------------------------------------------------------
-   Load this guest's latest notifications for the topbar bell.
-   $notifUnreadCount drives the badge count; header.php marks unread
-   rows with an .is-unread class. Both stay empty for guest (no-
-   account) bookings — there's no session to key off of.
------------------------------------------------------------------- */
+
 $notifications    = [];
 $notifUnreadCount = 0;
 

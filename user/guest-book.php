@@ -1,21 +1,4 @@
 <?php
-/**
- * user/guest-book.php
- * -----------------------------------------------------------------------
- * Standalone booking page for guests who do not have an account.
- * No login or session is required to access this page.
- *
- * Query-string parameters forwarded from the landing page:
- *   ?room=<name>        pre-selects the accommodation
- *   ?checkin=YYYY-MM-DD pre-fills check-in date
- *   ?checkout=YYYY-MM-DD pre-fills check-out date
- *
- * The form posts to user/api/guest-book.php which handles availability
- * checking, booking insertion, admin notification, and returns a JSON
- * response.  On success this page shows a confirmation overlay with a
- * reference number — no redirect, no account required.
- * -----------------------------------------------------------------------
- */
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/auth-common.php';
@@ -361,7 +344,7 @@ function gb_e(string $s): string {
                 <span class="gb-section-num">3</span>
                 Payment Method
             </h2>
-            <p class="gb-section-note">Payment is collected upon check-in or check-out. Choose your preferred method so we can prepare accordingly.</p>
+            <p class="gb-section-note">Payment is collected in cash upon check-in or check-out.</p>
 
             <div class="gb-payment-options" role="group" aria-label="Payment method">
                 <label class="gb-payment-card">
@@ -370,14 +353,6 @@ function gb_e(string $s): string {
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M2 10h20M6 14h2"></path></svg>
                         <strong>Cash</strong>
                         <span>Pay in person at check-in or check-out</span>
-                    </span>
-                </label>
-                <label class="gb-payment-card">
-                    <input type="radio" name="payment_method" value="gcash">
-                    <span class="gb-payment-card-inner">
-                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="2"></rect><path d="M12 18h.01"></path></svg>
-                        <strong>GCash</strong>
-                        <span>We will send payment details via email/SMS</span>
                     </span>
                 </label>
             </div>
@@ -433,6 +408,42 @@ function gb_e(string $s): string {
     </form>
 
 </main>
+
+<!-- ═══ CONFIRM OVERLAY ═════════════════════════════════════════════ -->
+<!-- Shown after client-side validation passes; the booking is only sent
+     to api/guest-book.php once the guest taps "Yes, Confirm Booking" here. -->
+<div class="gb-success-overlay" id="gbConfirmOverlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="gbConfirmTitle" tabindex="-1">
+    <div class="gb-success-dialog">
+        <h2 id="gbConfirmTitle">Confirm Your Booking</h2>
+        <p>Please review your reservation details before submitting.</p>
+        <div class="gb-success-details">
+            <div class="gb-success-detail-row">
+                <span>Room</span>
+                <strong id="gbConfirmRoom">—</strong>
+            </div>
+            <div class="gb-success-detail-row">
+                <span>Check-in</span>
+                <strong id="gbConfirmCheckin">—</strong>
+            </div>
+            <div class="gb-success-detail-row">
+                <span>Check-out</span>
+                <strong id="gbConfirmCheckout">—</strong>
+            </div>
+            <div class="gb-success-detail-row">
+                <span>Guests</span>
+                <strong id="gbConfirmGuests">—</strong>
+            </div>
+        </div>
+        <p class="gb-success-note">Once submitted, this request will be sent to Bien Marko's Pension House for confirmation.</p>
+        <div class="gb-confirm-actions">
+            <button type="button" class="gb-btn gb-btn--outline" id="gbConfirmBackBtn">Go Back</button>
+            <button type="button" class="gb-btn gb-btn--gold" id="gbConfirmYesBtn">
+                <span id="gbConfirmYesLabel">Yes, Confirm Booking</span>
+            </button>
+        </div>
+    </div>
+</div>
+<div class="gb-success-backdrop" id="gbConfirmBackdrop" aria-hidden="true"></div>
 
 <!-- ═══ SUCCESS OVERLAY ═══════════════════════════════════════════════ -->
 <div class="gb-success-overlay" id="gbSuccessOverlay" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="gbSuccessTitle">
@@ -576,6 +587,17 @@ function gb_e(string $s): string {
     var successRoom     = document.getElementById('gbSuccessRoom');
     var successCheckin  = document.getElementById('gbSuccessCheckin');
     var successCheckout = document.getElementById('gbSuccessCheckout');
+
+    // Confirm overlay (are-you-sure step shown before the booking is sent)
+    var confirmOverlay   = document.getElementById('gbConfirmOverlay');
+    var confirmBackdrop  = document.getElementById('gbConfirmBackdrop');
+    var confirmRoom      = document.getElementById('gbConfirmRoom');
+    var confirmCheckin   = document.getElementById('gbConfirmCheckin');
+    var confirmCheckout  = document.getElementById('gbConfirmCheckout');
+    var confirmGuests    = document.getElementById('gbConfirmGuests');
+    var confirmYesBtn    = document.getElementById('gbConfirmYesBtn');
+    var confirmYesLabel  = document.getElementById('gbConfirmYesLabel');
+    var confirmBackBtn   = document.getElementById('gbConfirmBackBtn');
 
     // Additional guest names — any accommodation type, capped by the
     // room's admin-configured capacity.
@@ -1232,7 +1254,7 @@ function gb_e(string $s): string {
         return ok;
     }
 
-    /* ── form submit ──────────────────────────────────────────────── */
+    /* ── form submit: validate, then ask for confirmation ───────────── */
     form.addEventListener('submit', function (e) {
         e.preventDefault();
         clearErrors();
@@ -1244,10 +1266,51 @@ function gb_e(string $s): string {
             return;
         }
 
+        openConfirm();
+    });
+
+    /* ── confirm overlay ─────────────────────────────────────────────
+       Shown only after validation passes. The booking is not sent to
+       the server until the guest taps "Yes, Confirm Booking" here. */
+    function openConfirm() {
+        var roomOpt = roomSel.options[roomSel.selectedIndex];
+        confirmRoom.textContent     = roomOpt ? roomOpt.text : '—';
+        confirmCheckin.textContent  = document.getElementById('gb_checkinText').textContent || '—';
+        confirmCheckout.textContent = document.getElementById('gb_checkoutText').textContent || '—';
+        var guestsVal = parseInt(guestsIn.value, 10) || 1;
+        confirmGuests.textContent   = guestsVal + ' guest' + (guestsVal === 1 ? '' : 's');
+
+        confirmOverlay.removeAttribute('aria-hidden');
+        confirmOverlay.classList.add('open');
+        confirmBackdrop.classList.add('open');
+        document.body.classList.add('gb-modal-open');
+        confirmOverlay.focus();
+    }
+
+    function closeConfirm() {
+        confirmOverlay.setAttribute('aria-hidden', 'true');
+        confirmOverlay.classList.remove('open');
+        confirmBackdrop.classList.remove('open');
+        if (!successOverlay.classList.contains('open') &&
+            !tourOverlay.classList.contains('open') &&
+            !photoOverlay.classList.contains('open')) {
+            document.body.classList.remove('gb-modal-open');
+        }
+    }
+
+    confirmBackBtn.addEventListener('click', closeConfirm);
+    confirmBackdrop.addEventListener('click', closeConfirm);
+    confirmYesBtn.addEventListener('click', performBooking);
+
+    /* ── actual submission — only runs after the guest confirms ─────── */
+    function performBooking() {
         // Loading state
         submitBtn.disabled = true;
         btnLabel.hidden = true;
         btnSpinner.hidden = false;
+        confirmYesBtn.disabled = true;
+        confirmBackBtn.disabled = true;
+        confirmYesLabel.textContent = 'Submitting…';
 
         var data = new FormData(form);
 
@@ -1258,8 +1321,10 @@ function gb_e(string $s): string {
         .then(function (res) { return res.json(); })
         .then(function (json) {
             if (json.success) {
+                closeConfirm();
                 showSuccess(json);
             } else {
+                closeConfirm();
                 // Server-side validation errors
                 formErr.textContent = json.error || 'An error occurred. Please try again.';
                 if (json.field_errors) {
@@ -1288,14 +1353,18 @@ function gb_e(string $s): string {
             }
         })
         .catch(function () {
+            closeConfirm();
             formErr.textContent = 'Network error. Please check your connection and try again.';
         })
         .finally(function () {
             submitBtn.disabled = false;
             btnLabel.hidden = false;
             btnSpinner.hidden = true;
+            confirmYesBtn.disabled = false;
+            confirmBackBtn.disabled = false;
+            confirmYesLabel.textContent = 'Yes, Confirm Booking';
         });
-    });
+    }
 
     /* ── success overlay ──────────────────────────────────────────── */
     function showSuccess(json) {
@@ -1334,7 +1403,7 @@ function gb_e(string $s): string {
         tourOverlay.setAttribute('aria-hidden', 'true');
         tourOverlay.classList.remove('open');
         tourBackdrop.classList.remove('open');
-        if (!successOverlay.classList.contains('open')) {
+        if (!successOverlay.classList.contains('open') && !confirmOverlay.classList.contains('open')) {
             document.body.classList.remove('gb-modal-open');
         }
         tourFrame.src = 'about:blank'; // stop the tour running in the background once closed
@@ -1394,7 +1463,7 @@ function gb_e(string $s): string {
         photoOverlay.setAttribute('aria-hidden', 'true');
         photoOverlay.classList.remove('open');
         photoBackdrop.classList.remove('open');
-        if (!successOverlay.classList.contains('open') && !tourOverlay.classList.contains('open')) {
+        if (!successOverlay.classList.contains('open') && !tourOverlay.classList.contains('open') && !confirmOverlay.classList.contains('open')) {
             document.body.classList.remove('gb-modal-open');
         }
         photoImg.src = '';
@@ -1410,6 +1479,7 @@ function gb_e(string $s): string {
         if (e.key === 'Escape') {
             if (photoOverlay.classList.contains('open')) closePhotos();
             else if (tourOverlay.classList.contains('open')) closeTour();
+            else if (confirmOverlay.classList.contains('open')) closeConfirm();
             return;
         }
         if (photoOverlay.classList.contains('open')) {

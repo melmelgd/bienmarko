@@ -1,19 +1,4 @@
 <?php
-/**
- * user/api/profile.php
- * -----------------------------------------------------------------------
- * POST-only, multipart/form-data endpoint behind user/profile.php.
- * Session + 'user' role + CSRF, checked in that order. Updates the
- * signed-in guest's first/last name, email, phone, and profile photo.
- *
- * Avatar files are stored under admin/assets/uploads/avatars/ — the same
- * "uploads live under admin/assets/uploads/" convention already used for
- * accommodation photos, so both portals reference photos through one
- * canonical uploads folder. Validation mirrors
- * admin/api/accommodations.php's image handling (extension whitelist,
- * 5MB cap, getimagesize() check, random filename).
- * -----------------------------------------------------------------------
- */
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 

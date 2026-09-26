@@ -31,7 +31,7 @@ $pageTitle = 'Logged Out';
         <span class="standalone__icon"><?php render_icon('log-out'); ?></span>
         <h1>You've been logged out</h1>
         <p>Thanks for visiting <?php echo htmlspecialchars(SITE_NAME); ?>. See you again soon!</p>
-        <a href="../index.php" class="btn btn--primary btn--block">ge</a>
+        <a href="../index.php" class="btn btn--primary btn--block">Bye bye bye</a>
     </div>
 </body>
 </html>

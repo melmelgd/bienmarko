@@ -1,9 +1,4 @@
-/* =================================================================
-   user/assets/css/guest-book.css
-   Guest Booking page — standalone styles.
-   Visual language: dark ground, antique gold, Cormorant + Inter.
-   Matches the shared landing page palette (same CSS variables).
-   ================================================================= */
+
 
 :root {
     --black:      #050505;
@@ -547,7 +542,8 @@ h1, h2, h3, p { margin-top: 0; }
 /* ── PAYMENT OPTIONS ─────────────────────────────────────────────── */
 .gb-payment-options {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1fr;
+    max-width: 360px;
     gap: 14px;
 }
 
@@ -832,6 +828,14 @@ h1, h2, h3, p { margin-top: 0; }
     font-style: italic;
 }
 
+/* ── CONFIRM OVERLAY ACTIONS ─────────────────────────────────────── */
+.gb-confirm-actions {
+    display: flex;
+    gap: 12px;
+    width: 100%;
+}
+.gb-confirm-actions .gb-btn { flex: 1; }
+
 /* ── ACCESSIBILITY ────────────────────────────────────────────────── */
 a:focus-visible,
 button:focus-visible,
@@ -864,6 +868,8 @@ textarea:focus-visible {
     .gb-btn--submit { max-width: 100%; }
 
     .gb-success-dialog { padding: 28px 20px; }
+
+    .gb-confirm-actions { flex-direction: column; }
 }
 
 @media (max-width: 480px) {

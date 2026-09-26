@@ -1,8 +1,3 @@
-/* =========================================================
-   Bien Marko's Pension House — landing page
-   Visual language matches the supplied style.css reference:
-   dark ground, antique gold, Cormorant Garamond + Great Vibes.
-   ========================================================= */
 
 :root {
     --black: #050505;
@@ -1528,6 +1523,10 @@ body.reveal-ready [data-reveal].is-visible {
 .booking-option-actions .outline-dark {
     flex: 1;
     min-width: 100px;
+    white-space: normal;
+    text-align: center;
+    padding: 10px 14px;
+    line-height: 1.3;
 }
 
 .booking-option-guest-note {

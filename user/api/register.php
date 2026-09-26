@@ -1,25 +1,4 @@
 <?php
-/**
- * user/api/register.php
- *
- * Handles guest account creation. Accepts both JSON (register.js fetch)
- * and classic form POST (no-JS fallback). Mirrors the structure of
- * user/api/auth.php throughout.
- *
- * On success  → JSON { success:true,  redirect:null }
- *               (JS shows the success overlay then redirects to login.php)
- *            or redirect to ../../login.php?registered=1 (form fallback)
- * On failure  → JSON { success:false, message:"…" }
- *            or redirect to ../../register.php?error=CODE (form fallback)
- *
- * NOTE: No session is written on success. The guest must sign in normally
- * after registration so the login flow (CSRF, rate limiting, session
- * hardening) runs as designed.
- *
- * guests table columns expected:
- *   id (PK AI), first_name, last_name, email (UNIQUE), phone, password_hash,
- *   created_at (TIMESTAMP DEFAULT CURRENT_TIMESTAMP)
- */
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 
