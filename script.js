@@ -1,4 +1,17 @@
-
+/* =========================================================
+   Bien Marko's Pension House — interactivity
+   =========================================================
+   Changes from original:
+   1. Featured Rooms section — fetches api/featured-rooms.php,
+      renders skeleton loaders while waiting, then replaces them
+      with real cards. Section stays hidden if no featured rooms
+      are returned.
+   2. Booking Option Modal — triggered by any [data-book-room]
+      link (room hover "Book Now") or the featured card "Book Now".
+      Lets guests choose: Log in, Create Account, or Continue as
+      Guest. The selected room name is forwarded to book.php as
+      a query-string parameter.
+   ========================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
 
