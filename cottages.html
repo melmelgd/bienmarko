@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Available Cottages | Bien Marko's Pension House</title>
+    <meta name="description" content="Browse available cottages at Bien Marko's Pension House in Tabango, Leyte.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="listing-page" data-listing-category="cottage" data-listing-label="cottages">
+    <header class="listing-topbar">
+        <a href="index.html#home" class="logo" aria-label="Bien Marko's home">
+            <span>BIEN MARKO'S</span>
+            <strong>Pension House</strong>
+        </a>
+        <a class="listing-back" href="index.html#accommodations">← Our Accommodations</a>
+    </header>
+
+    <main class="listing-main">
+        <div class="section-heading">
+            <p class="section-label">OUR ACCOMMODATIONS</p>
+            <h1>Available Cottages</h1>
+            <p>Find a peaceful cottage surrounded by the relaxing atmosphere of the property.</p>
+        </div>
+
+        <div class="room-grid" id="roomGrid" aria-live="polite">
+            <p class="room-grid-empty">Loading available cottages…</p>
+        </div>
+        <p class="listing-footnote">Availability may change. Your selected dates will be confirmed during the booking process.</p>
+    </main>
+
+    <footer class="site-footer">
+        <div class="footer-bottom">
+            <span>© 2026 Bien Marko's Pension House. All rights reserved.</span>
+            <a href="index.html#accommodations">Back to accommodations</a>
+        </div>
+    </footer>
+    <script src="accommodation-list.js"></script>
+</body>
+</html>

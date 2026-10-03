@@ -11,6 +11,9 @@
       Lets guests choose: Log in, Create Account, or Continue as
       Guest. The selected room name is forwarded to book.php as
       a query-string parameter.
+   4. Updated design — hero background slider and in-hero
+      navigation. Rooms and event-hall categories now open
+      separate live listing pages.
    ========================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -39,6 +42,16 @@ document.addEventListener("DOMContentLoaded", () => {
             button.classList.add("active");
 
             applyAccommodationFilter(activeAccommodationFilter);
+        });
+    });
+
+    // Keep this optional filter behavior for any page that still includes
+    // filter tabs. Home-page category cards now link to dedicated pages.
+    document.querySelectorAll("[data-filter-link]").forEach((link) => {
+        link.addEventListener("click", () => {
+            const wanted = link.dataset.filterLink || "all";
+            const tab = document.querySelector('[data-filter="' + wanted + '"]');
+            if (tab) tab.click();
         });
     });
 
@@ -112,58 +125,93 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     }
 
-    /* ---------- hamburger / mobile drawer ---------- */
-    const hamburger = document.getElementById("hamburger");
-    const mobileMenu = document.getElementById("mobileMenu");
-    const siteHeader = document.getElementById("siteHeader");
+    /* ---------- hero background slider ---------- */
+    const heroSlides = document.querySelectorAll(".hero-slide");
+    const heroDots = document.querySelectorAll(".slider-dots .dot");
+    const prevSlideBtn = document.getElementById("prevSlide");
+    const nextSlideBtn = document.getElementById("nextSlide");
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let currentSlide = 0;
+    let sliderTimer = null;
 
-    if (hamburger && mobileMenu) {
-        const positionMenu = () => {
-            if (siteHeader) mobileMenu.style.top = siteHeader.getBoundingClientRect().height + "px";
-        };
-        positionMenu();
-        window.addEventListener("resize", positionMenu);
-
-        const closeMenu = () => {
-            mobileMenu.classList.remove("open");
-            hamburger.classList.remove("open");
-            hamburger.setAttribute("aria-expanded", "false");
-            document.body.classList.remove("menu-open");
-        };
-
-        hamburger.addEventListener("click", () => {
-            positionMenu();
-            const isOpen = mobileMenu.classList.toggle("open");
-            hamburger.classList.toggle("open", isOpen);
-            hamburger.setAttribute("aria-expanded", isOpen ? "true" : "false");
-            document.body.classList.toggle("menu-open", isOpen);
-        });
-
-        mobileMenu.querySelectorAll("a").forEach((link) => {
-            link.addEventListener("click", closeMenu);
-        });
+    function showSlide(index) {
+        if (!heroSlides.length) return;
+        currentSlide = (index + heroSlides.length) % heroSlides.length;
+        heroSlides.forEach((slide, i) => slide.classList.toggle("active", i === currentSlide));
+        heroDots.forEach((dot, i) => dot.classList.toggle("active", i === currentSlide));
     }
 
-    /* ---------- header solid state on scroll ---------- */
-    if (siteHeader) {
-        const toggleSolid = () => {
-            siteHeader.classList.toggle("solid", window.scrollY > 8);
+    function startSlider() {
+        clearInterval(sliderTimer);
+        if (reduceMotion || heroSlides.length < 2) return;
+        sliderTimer = setInterval(() => showSlide(currentSlide + 1), 6000);
+    }
+
+    if (heroSlides.length) {
+        if (nextSlideBtn) nextSlideBtn.addEventListener("click", () => { showSlide(currentSlide + 1); startSlider(); });
+        if (prevSlideBtn) prevSlideBtn.addEventListener("click", () => { showSlide(currentSlide - 1); startSlider(); });
+        heroDots.forEach((dot, index) => {
+            dot.addEventListener("click", () => { showSlide(index); startSlider(); });
+        });
+        startSlider();
+    }
+
+    /* ---------- mobile menu (nav inside the hero) ---------- */
+    const menuBtn = document.getElementById("menuBtn");
+    const navLinksWrap = document.getElementById("navLinks");
+
+    if (menuBtn && navLinksWrap) {
+        const closeMenu = () => {
+            navLinksWrap.classList.remove("mobile-open");
+            menuBtn.classList.remove("open");
+            menuBtn.setAttribute("aria-expanded", "false");
+            menuBtn.setAttribute("aria-label", "Open menu");
         };
-        window.addEventListener("scroll", toggleSolid, { passive: true });
-        toggleSolid();
+
+        menuBtn.addEventListener("click", () => {
+            const isOpen = navLinksWrap.classList.toggle("mobile-open");
+            menuBtn.classList.toggle("open", isOpen);
+            menuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            menuBtn.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
+        });
+
+        navLinksWrap.querySelectorAll("a").forEach((link) => {
+            link.addEventListener("click", closeMenu);
+        });
+
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") closeMenu();
+        });
+
+        // leaving the mobile breakpoint resets the menu state
+        window.addEventListener("resize", () => {
+            if (window.innerWidth > 800) closeMenu();
+        });
     }
 
     /* ---------- active nav link on scroll ---------- */
-    const sections = document.querySelectorAll("main section[id]");
-    const navLinks = document.querySelectorAll(".main-nav a, .mobile-menu a");
+    const sections = document.querySelectorAll("header#home, main section[id]");
+    const navLinks = document.querySelectorAll(".nav-links > a");
+
+    // Sections that live "inside" a nav item
+    const navGroup = { featured: "accommodations", rooms: "accommodations" };
 
     const setActiveLink = () => {
-        let currentId = sections[0] ? sections[0].id : "";
+        let currentId = "home";
         const scrollPos = window.scrollY + 140;
 
         sections.forEach((section) => {
+            // hidden sections (display:none) report offsetTop 0 — skip them
+            if (section.offsetParent === null && section.id !== "home") return;
             if (section.offsetTop <= scrollPos) currentId = section.id;
         });
+
+        // at the very bottom of the page, highlight the last nav item
+        if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
+            currentId = "contact";
+        }
+
+        currentId = navGroup[currentId] || currentId;
 
         navLinks.forEach((link) => {
             const href = link.getAttribute("href").replace("#", "");
@@ -794,7 +842,7 @@ document.addEventListener("DOMContentLoaded", () => {
        One shared fetch of api/accommodations.php feeds two things,
        so both always reflect exactly what the admin has added and
        never drift apart from a duplicate/stale second fetch:
-       1. The "Our Accommodations" grid (#roomGrid) — full cards.
+       1. The optional accommodation grid (#roomGrid), when present.
        2. The booking-strip "Accommodation" <select> — name options.
        ========================================================= */
     const roomGrid = document.getElementById("roomGrid");
@@ -1047,11 +1095,16 @@ document.addEventListener("DOMContentLoaded", () => {
             article.dataset.reveal = "";
             article.style.setProperty("--i", index);
 
-            const rating = Math.max(0, Math.min(5, Number(item.rating) || 0)).toFixed(1);
+            const ratingNum = Math.max(0, Math.min(5, Number(item.rating) || 0));
+            const rating = ratingNum.toFixed(1);
+            const filled = Math.round(ratingNum);
+            const starsHtml =
+                "&#9733;".repeat(filled) +
+                (filled < 5 ? '<span class="off">' + "&#9733;".repeat(5 - filled) + "</span>" : "");
 
             article.innerHTML =
                 '<span class="quote-mark" aria-hidden="true">&rdquo;</span>' +
-                `<span>${rating} <small>/ 5</small></span>` +
+                `<span class="stars" role="img" aria-label="${rating} out of 5">${starsHtml}</span>` +
                 `<p>"${escHtmlTestimonial(item.message)}"</p>` +
                 `<strong>${escHtmlTestimonial(item.name)}</strong>` +
                 `<em>${escHtmlTestimonial(item.context)}</em>`;
