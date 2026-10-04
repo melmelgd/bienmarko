@@ -10,6 +10,15 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
+<style>
+/* Map popup: route status line + "Open in Google Maps" fallback link */
+.map-status{font-size:.92rem;line-height:1.55;overflow-wrap:anywhere}
+.map-status:not(:empty){margin:14px 0 0;padding-left:12px;border-left:3px solid currentColor}
+.map-status[data-state="error"]{font-weight:600}
+.map-external{display:inline-flex;align-items:center;gap:8px;min-height:44px;margin-top:8px;font-size:.92rem;font-weight:600;color:inherit;text-decoration:underline;text-underline-offset:4px}
+.map-external svg{flex:none}
+[data-use-location]:disabled{opacity:.65;cursor:progress}
+</style>
 </head>
 <body>
 
@@ -158,7 +167,7 @@
         <div class="accommodation-grid">
         <article class="accommodation-card">
             <div class="card-image">
-                <img src="images/IMG_4075.jpeg" alt="Bien Marko's Rooms" loading="lazy">
+                <img src="images/rooms.jpeg" alt="Bien Marko's Rooms" loading="lazy">
                 <div class="card-hover">
                     <h3>ROOMS</h3>
                     <a href="rooms.html">EXPLORE</a>
@@ -173,7 +182,7 @@
 
         <article class="accommodation-card">
             <div class="card-image">
-                <img src="images/IMG_4056.jpeg" alt="Bien Marko's Event Hall" loading="lazy">
+                <img src="images/hero2.jpg" alt="Bien Marko's Event Hall" loading="lazy">
                 <div class="card-hover">
                     <h3>EVENT HALLS</h3>
                     <a href="event-halls.html">EXPLORE</a>
@@ -188,7 +197,7 @@
 
         <article class="accommodation-card">
             <div class="card-image">
-                <img src="images/IMG_4074.jpeg" alt="Bien Marko's Cottages" loading="lazy">
+                <img src="images/cottages.jpg" alt="Bien Marko's Cottages" loading="lazy">
                 <div class="card-hover">
                     <h3>COTTAGES</h3>
                     <a href="cottages.html">EXPLORE</a>
@@ -203,7 +212,7 @@
 
         <article class="accommodation-card">
             <div class="card-image">
-                <img src="images/IMG_3867.jpeg" alt="Bien Marko's Swimming Pool" loading="lazy">
+                <img src="images/swimming2.jpg" alt="Bien Marko's Swimming Pool" loading="lazy">
                 <div class="card-hover">
                     <h3>POOL</h3>
                     <a href="pool.html">EXPLORE</a>
@@ -228,7 +237,7 @@
     ===================================================== -->
     <section class="about" id="about">
         <div class="about-image">
-            <img src="images/IMG_3867.jpeg" alt="Bien Marko's Pension House" loading="lazy">
+            <img src="images/swimming1.jpg" alt="Bien Marko's Pension House" loading="lazy">
         </div>
         <div class="about-content">
             <p class="section-label">ABOUT BIEN MARKO'S</p>
@@ -435,8 +444,13 @@
             <h2 id="map-title">Route to Bien Marko's</h2>
             <p>Use your current location to preview the route inside this page.</p>
             <button class="gold-button" type="button" data-use-location>Use My Current Location</button>
+            <p class="map-status" data-map-status role="status" aria-live="polite"></p>
+            <a class="map-external" data-map-external href="https://www.google.com/maps/dir/?api=1&amp;destination=Bien%20Marko%27s%20Pension%20House%2C%20Tabango%2C%20Leyte&amp;travelmode=driving" target="_blank" rel="noopener noreferrer">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v6"></path><path d="M20 4l-9 9"></path><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"></path></svg>
+                Open in Google Maps
+            </a>
         </div>
-        <iframe title="Bien Marko's Pension House map" data-map-frame src="https://www.google.com/maps?q=Bien%20Marko%27s%20Pension%20House%2C%20Tabango%2C%20Leyte&output=embed" loading="lazy"></iframe>
+        <iframe title="Bien Marko's Pension House map" data-map-frame src="https://www.google.com/maps?q=Bien%20Marko%27s%20Pension%20House%2C%20Tabango%2C%20Leyte&output=embed" loading="lazy" referrerpolicy="strict-origin-when-cross-origin"></iframe>
     </div>
 </div>
 
@@ -511,6 +525,151 @@
 <!-- Backdrop for booking option modal -->
 <div class="booking-option-backdrop" id="bookingOptionBackdrop" aria-hidden="true"></div>
 
+<!-- ═══════════════════════════════════════════════════════════════════
+     MAP DIRECTIONS: "Use My Current Location"
+     Google refuses to show its normal directions pages (google.com/maps/dir)
+     inside an iframe, which is what caused "www.google.com refused to connect".
+     This block loads a URL that Google DOES allow inside an iframe, and always
+     offers "Open in Google Maps" as a fallback. Nothing here depends on a login,
+     so guests and registered users get exactly the same behaviour.
+     ═══════════════════════════════════════════════════════════════════ -->
+<script>
+(function () {
+    'use strict';
+
+    /* ── Settings ───────────────────────────────────────────────────── */
+    var DESTINATION = {
+        // Same search text the default map uses.
+        query: "Bien Marko's Pension House, Tabango, Leyte",
+        // OPTIONAL: exact pin as "latitude,longitude" for pinpoint routes.
+        // In Google Maps, right-click the pin and click the numbers to copy them.
+        coords: ''
+    };
+    // OPTIONAL: Google Maps Embed API key. Leave empty to use the free keyless embed.
+    var EMBED_API_KEY = '';
+    /* ───────────────────────────────────────────────────────────────── */
+
+    var MSG = {
+        finding:     "Finding your location...",
+        found:       "Showing the route from your current location. If the map doesn't load, use the Open in Google Maps link below.",
+        denied:      "Location is blocked for this site. Allow location access in your browser settings and try again, or use the Open in Google Maps link below.",
+        unavailable: "We couldn't detect your location. Use the Open in Google Maps link below. It starts from where you are.",
+        timeout:     "Finding your location took too long. Please try again, or use the Open in Google Maps link below.",
+        unsupported: "This browser can't share your location. Use the Open in Google Maps link below instead.",
+        insecure:    "Location sharing needs a secure (https) connection. Use the Open in Google Maps link below instead."
+    };
+
+    var frame    = document.querySelector('[data-map-frame]');
+    var button   = document.querySelector('[data-use-location]');
+    var statusEl = document.querySelector('[data-map-status]');
+    var linkEl   = document.querySelector('[data-map-external]');
+    if (!frame || !button) { return; }
+
+    var defaultSrc  = frame.getAttribute('src');
+    var buttonLabel = button.textContent;
+
+    // encodeURIComponent leaves the apostrophe alone; escape it like the original embed link does.
+    function enc(value) {
+        return encodeURIComponent(value).replace(/'/g, '%27');
+    }
+
+    function destination() {
+        return DESTINATION.coords || DESTINATION.query;
+    }
+
+    // Opens the real Google Maps (app or website) in a new tab.
+    // With no origin, Google Maps starts from the device's own location.
+    function mapsLink(origin) {
+        return 'https://www.google.com/maps/dir/?api=1' +
+               (origin ? '&origin=' + enc(origin) : '') +
+               '&destination=' + enc(destination()) +
+               '&travelmode=driving';
+    }
+
+    // A directions URL that Google allows inside an iframe.
+    function embedUrl(origin) {
+        if (EMBED_API_KEY) {
+            return 'https://www.google.com/maps/embed/v1/directions?key=' + enc(EMBED_API_KEY) +
+                   '&origin=' + enc(origin) +
+                   '&destination=' + enc(destination()) +
+                   '&mode=driving';
+        }
+        return 'https://www.google.com/maps?saddr=' + enc(origin) +
+               '&daddr=' + enc(destination()) +
+               '&dirflg=d&output=embed';
+    }
+
+    function say(message, state) {
+        if (!statusEl) { return; }
+        statusEl.textContent = message || '';
+        if (state) { statusEl.setAttribute('data-state', state); }
+        else { statusEl.removeAttribute('data-state'); }
+    }
+
+    function busy(isBusy) {
+        button.disabled = isBusy;
+        button.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+        button.textContent = isBusy ? 'Locating...' : buttonLabel;
+    }
+
+    function setLink(origin) {
+        if (linkEl) { linkEl.href = mapsLink(origin); }
+    }
+
+    // Back to the default pin map with a clean status line.
+    function reset() {
+        if (frame.getAttribute('src') !== defaultSrc) { frame.setAttribute('src', defaultSrc); }
+        busy(false);
+        say('');
+        setLink('');
+    }
+
+    function onFound(position) {
+        var origin = position.coords.latitude.toFixed(6) + ',' + position.coords.longitude.toFixed(6);
+        frame.setAttribute('src', embedUrl(origin));
+        setLink(origin);
+        busy(false);
+        say(MSG.found, 'ok');
+    }
+
+    function onFailed(error) {
+        var code = error && error.code;   // 1 = denied, 2 = unavailable, 3 = timeout
+        busy(false);
+        setLink('');
+        say(code === 1 ? MSG.denied : (code === 3 ? MSG.timeout : MSG.unavailable), 'error');
+    }
+
+    function locate() {
+        if (!('geolocation' in navigator)) { say(MSG.unsupported, 'error'); return; }
+        if (window.isSecureContext === false) { say(MSG.insecure, 'error'); return; }
+        busy(true);
+        say(MSG.finding);
+        navigator.geolocation.getCurrentPosition(onFound, onFailed, {
+            enableHighAccuracy: false,
+            timeout: 20000,
+            maximumAge: 300000
+        });
+    }
+
+    // Capture phase, so this runs before any older click handler on the same button.
+    document.addEventListener('click', function (event) {
+        var el = event.target;
+        if (!el || typeof el.closest !== 'function') { return; }
+
+        if (el.closest('[data-use-location]')) {
+            // Replace the older handler so the blocked directions URL is never loaded.
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            locate();
+        } else if (el.closest('[data-open-map]')) {
+            // The popup always opens on the default map (the other script still opens it).
+            reset();
+        }
+    }, true);
+
+    setLink('');
+}());
+</script>
 <script src="script.js"></script>
 <script src="availability-search.js"></script>
 </body>
