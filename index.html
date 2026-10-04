@@ -28,7 +28,7 @@
 
     <nav class="navbar" aria-label="Primary navigation">
         <a href="#home" class="logo" aria-label="Bien Marko's Pension House home">
-            <strong>Bien Markos</strong>
+            <strong>Bien Marko's</strong>
         </a>
 
         <div class="nav-links" id="navLinks">
@@ -53,19 +53,20 @@
     </nav>
 
     <div class="hero-content">
-        <p class="hero-label">WELCOME</p>
+        <p class="hero-label">WELCOME TO</p>
         <h1>Bien Marko's Pension House</h1>
-        <p class="hero-description">Comfort, relaxation, and memorable stays in Tabango, Philippines.</p>
+        <p class="hero-description">Your Stay. Your Way.</p>
 
-        <!-- Live availability panel.
-             Accommodation options come from api/accommodations.php and the
-             date pickers grey out booked dates from api/availability.php
-             (see script.js). "Check Availability" opens the booking-option modal. -->
+        <!-- Search by accommodation category, dates, and guest count. -->
         <form class="booking-strip" id="booking-strip" aria-label="Check availability">
             <label class="field">
-                <span class="field-label">Accommodation</span>
-                <select id="bookingAccommodationSelect" aria-label="Accommodation type">
-                    <option value="">Room Type</option>
+                <span class="field-label">Accommodation Type</span>
+                <select id="bookingAccommodationSelect" aria-label="Accommodation type" required>
+                    <option value="">Select type</option>
+                    <option value="rooms">Rooms</option>
+                    <option value="venues">Event Halls</option>
+                    <option value="cottage">Cottages</option>
+                    <option value="pool">Pool</option>
                 </select>
             </label>
 
@@ -120,6 +121,15 @@
 
 <main>
 
+    <section class="availability-results" id="availabilityResults" hidden aria-labelledby="availabilityResultsTitle">
+        <div class="section-heading">
+            <p class="section-label">AVAILABILITY</p>
+            <h2 id="availabilityResultsTitle">Matching accommodations</h2>
+            <p id="availabilityResultsSummary" aria-live="polite"></p>
+        </div>
+        <div class="room-grid availability-results-grid" id="availabilityResultsGrid" aria-live="polite"></div>
+    </section>
+
     <!-- =====================================================
          FEATURED ROOMS — populated from api/featured-rooms.php
          Hidden until JS confirms there are featured rooms.
@@ -148,7 +158,7 @@
         <div class="accommodation-grid">
         <article class="accommodation-card">
             <div class="card-image">
-                <img src="images/rooms.jpeg" alt="Bien Marko's Rooms" loading="lazy">
+                <img src="images/IMG_4075.jpeg" alt="Bien Marko's Rooms" loading="lazy">
                 <div class="card-hover">
                     <h3>ROOMS</h3>
                     <a href="rooms.html">EXPLORE</a>
@@ -502,5 +512,6 @@
 <div class="booking-option-backdrop" id="bookingOptionBackdrop" aria-hidden="true"></div>
 
 <script src="script.js"></script>
+<script src="availability-search.js"></script>
 </body>
 </html>

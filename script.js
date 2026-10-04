@@ -17,6 +17,9 @@
    ========================================================= */
 
 document.addEventListener("DOMContentLoaded", () => {
+    window.bienMarkoAccommodations = [];
+    window.bienMarkoInventoryLoaded = false;
+    window.bienMarkoInventoryFailed = false;
 
     /* ---------- accommodation filter tabs ---------- */
     // Cards are now rendered asynchronously (see the "ALL ACCOMMODATIONS
@@ -239,14 +242,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* =========================================================
        BOOKING STRIP DATE PICKERS
-       Turns #checkin / #checkout into a small calendar popover that
-       greys out dates already reserved for whichever accommodation is
-       selected — the same idea as the admin dashboard's "New Booking"
-       date pickers, fed here by the public, no-login-required
-       api/availability.php endpoint. #checkin / #checkout stay as
-       hidden inputs holding the real ISO value, so the check-in/
-       check-out linking above and the URL-forwarding logic further
-       down keep working unchanged.
+       Turns #checkin / #checkout into calendar popovers. Since the
+       accommodation selector now chooses a category, exact availability
+       is checked for each matching item after search. The hidden inputs
+       retain ISO dates for the search and booking links.
        ========================================================= */
     (() => {
         const accomSelect = document.getElementById("bookingAccommodationSelect");
@@ -332,7 +331,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
             if (!accomSelect.value) {
-                pop.innerHTML = '<div class="date-picker-note">Please select an accommodation first.</div>';
+                pop.innerHTML = '<div class="date-picker-note">Please select Rooms or Event Halls first.</div>';
                 return;
             }
 
@@ -400,7 +399,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     ">" + day + "</button>";
             }
             html += "</div>";
-            html += '<div class="date-picker-legend"><span class="dp-swatch"></span> Booked / unavailable</div>';
+            html += '<div class="date-picker-legend">Exact availability is checked for every matching item after search.</div>';
 
             pop.innerHTML = html;
         }
@@ -502,36 +501,18 @@ document.addEventListener("DOMContentLoaded", () => {
             coText.textContent = "Select date"; coText.classList.add("is-placeholder");
         }
 
-        // Fetch fresh availability whenever the accommodation changes,
-        // and reset any previously-picked dates — they belonged to the
-        // old room.
-        function bsLoadAvailability(accommodationId) {
+        // The selector now represents a category rather than one specific
+        // accommodation, so exact dates are checked for every matching item
+        // when the guest submits the availability search.
+        function bsLoadAvailability() {
             bsAvailability = null;
             bsViewMonth = { checkin: null, checkout: null };
             bsCloseDatePickers();
             bsResetDates();
-
-            if (!accommodationId) return;
-
-            fetch("api/availability.php?accommodation_id=" + encodeURIComponent(accommodationId))
-                .then((r) => r.json())
-                .then((res) => {
-                    if (res.success) {
-                        bsAvailability = {
-                            capacity: res.accommodation.capacity,
-                            isPool: res.accommodation.is_pool,
-                            bookings: res.bookings,
-                        };
-                    }
-                    // Silent on failure — the strip falls back to an
-                    // unrestricted calendar rather than breaking the page.
-                })
-                .catch(() => {});
         }
 
         accomSelect.addEventListener("change", () => {
-            const opt = accomSelect.options[accomSelect.selectedIndex];
-            bsLoadAvailability(opt ? opt.dataset.id : "");
+            bsLoadAvailability();
         });
 
         // Pool bookings are shared by guest count, so changing the guest
@@ -556,25 +537,6 @@ document.addEventListener("DOMContentLoaded", () => {
             });
         }
     })();
-
-    /* ---------- booking strip submit (opens booking option modal) ----------
-       "Check Availability" now opens the same Login / Create Account /
-       Continue as Guest modal used by the room cards' "Book Now" links,
-       instead of scrolling down to #rooms. The selected accommodation
-       (if any) is passed through as the room name so the modal shows
-       "Selected: <room>" and forwards it to book.php / guest-book.php;
-       the strip's check-in/check-out are already forwarded by
-       openBookingOptionModal() below, which is a hoisted function
-       declaration and so is safe to call from here. */
-    const bookingStrip = document.querySelector(".booking-strip");
-    if (bookingStrip) {
-        bookingStrip.addEventListener("submit", (event) => {
-            event.preventDefault();
-            const stripAccomSelect = document.getElementById("bookingAccommodationSelect");
-            const selectedRoomName = stripAccomSelect ? stripAccomSelect.value : "";
-            openBookingOptionModal(selectedRoomName);
-        });
-    }
 
     /* =========================================================
        BOOKING OPTION MODAL
@@ -630,6 +592,7 @@ document.addEventListener("DOMContentLoaded", () => {
             if (bookingClose) bookingClose.focus();
         }, 50);
     }
+    window.bienMarkoOpenBookingOption = openBookingOptionModal;
 
     function closeBookingOptionModal() {
         if (!bookingModal) return;
@@ -839,11 +802,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     /* =========================================================
        ACCOMMODATIONS DATA
-       One shared fetch of api/accommodations.php feeds two things,
-       so both always reflect exactly what the admin has added and
-       never drift apart from a duplicate/stale second fetch:
+       One shared fetch of api/accommodations.php feeds the listing
+       grid, when present, and the category-based availability search:
        1. The optional accommodation grid (#roomGrid), when present.
-       2. The booking-strip "Accommodation" <select> — name options.
+       2. The Rooms/Event Halls search results.
        ========================================================= */
     const roomGrid = document.getElementById("roomGrid");
     const bookingAccommodationSelect = document.getElementById("bookingAccommodationSelect");
@@ -967,31 +929,6 @@ document.addEventListener("DOMContentLoaded", () => {
             return article;
         }
 
-        // Fills the booking-strip select with one <option> per admin
-        // accommodation, keeping the existing "Room Type" placeholder as
-        // the first entry. Value is the accommodation's name (matching
-        // the same `room=<name>` convention the "Book Now" links already
-        // use via data-book-room), so it stays consistent if the strip's
-        // submit handler is ever wired to forward the selected room.
-        function populateBookingSelect(rooms) {
-            if (!bookingAccommodationSelect) return;
-
-            while (bookingAccommodationSelect.options.length > 1) {
-                bookingAccommodationSelect.remove(1);
-            }
-
-            rooms.forEach((room) => {
-                const opt = document.createElement("option");
-                opt.value = room.name;
-                opt.textContent = room.name;
-                // Used by the check-in/check-out date pickers below to
-                // know which accommodation to fetch availability for —
-                // the name alone isn't enough for that lookup.
-                opt.dataset.id = room.id;
-                bookingAccommodationSelect.appendChild(opt);
-            });
-        }
-
         if (roomGrid) showRoomSkeletons();
 
         fetch("api/accommodations.php")
@@ -1002,7 +939,10 @@ document.addEventListener("DOMContentLoaded", () => {
             .then((data) => {
                 const rooms = (data && data.success && Array.isArray(data.rooms)) ? data.rooms : [];
 
-                populateBookingSelect(rooms);
+                window.bienMarkoAccommodations = rooms;
+                window.bienMarkoInventoryLoaded = true;
+                window.bienMarkoInventoryFailed = false;
+                window.dispatchEvent(new CustomEvent("bienmarko:inventory-loaded", { detail: rooms }));
 
                 if (!roomGrid) return;
 
@@ -1039,8 +979,10 @@ document.addEventListener("DOMContentLoaded", () => {
                 }
             })
             .catch(() => {
-                // Select just keeps its "Room Type" placeholder — graceful
-                // degradation, same principle as the featured section.
+                window.bienMarkoAccommodations = [];
+                window.bienMarkoInventoryLoaded = true;
+                window.bienMarkoInventoryFailed = true;
+                window.dispatchEvent(new CustomEvent("bienmarko:inventory-loaded", { detail: [] }));
                 if (roomGrid) {
                     showRoomGridMessage("We couldn't load accommodations right now. Please refresh the page or check back shortly.");
                 }
