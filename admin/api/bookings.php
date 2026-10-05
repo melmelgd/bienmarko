@@ -10,6 +10,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/auth-common.php';
+require_once __DIR__ . '/../../includes/booking-emails.php';
 
 bienmarko_start_session();
 bienmarko_require_role('admin');
@@ -141,6 +142,11 @@ if ($action === 'update_status') {
         exit;
     }
 
+    // Previous status — so the guest is only emailed on a real change to Cancelled.
+    $prevStatus = $pdo->prepare("SELECT status FROM bookings WHERE id = :id");
+    $prevStatus->execute(['id' => $id]);
+    $prevStatus = (string) $prevStatus->fetchColumn();
+
     $stmt = $pdo->prepare("UPDATE bookings SET status = :status WHERE id = :id");
     $stmt->execute(['status' => $status, 'id' => $id]);
 
@@ -161,6 +167,13 @@ if ($action === 'update_status') {
         ]);
     } catch (\Throwable $e) {
         /* Non-fatal: notification table may not have this column yet */
+    }
+
+    if ($status === 'cancelled' && $prevStatus !== 'cancelled') {
+        // Email the guest (sent after the response; never blocks the admin action).
+        bienmarko_email_after_response(static function () use ($pdo, $id): void {
+            bienmarko_email_send_booking($pdo, $id, 'cancelled');
+        });
     }
 
     echo json_encode(['success' => true]);
@@ -328,6 +341,13 @@ if ($action === 'create') {
         } catch (\Throwable $e) { /* non-fatal */ }
 
         $pdo->commit();
+
+        if ($email !== '') {
+            // Email the guest (sent after the response; never blocks the admin action).
+            bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
+                bienmarko_email_send_booking($pdo, $bookingId, 'confirmation');
+            });
+        }
 
         echo json_encode(['success' => true, 'reference' => $ref, 'booking_id' => $bookingId]);
 
@@ -517,6 +537,13 @@ if ($action === 'update') {
         } catch (\Throwable $e) { /* non-fatal */ }
 
         $pdo->commit();
+
+        if (($existing['status'] ?? '') !== 'cancelled') {
+            // Email the guest the updated details (sent after the response).
+            bienmarko_email_after_response(static function () use ($pdo, $id): void {
+                bienmarko_email_send_booking($pdo, $id, 'modified');
+            });
+        }
 
         echo json_encode(['success' => true, 'reference' => $existing['reference'], 'booking_id' => $id]);
 

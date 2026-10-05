@@ -104,6 +104,27 @@ require_once __DIR__ . '/includes/ui.php';
 .toast--success { background: var(--emerald-bg); border: 1px solid var(--emerald); color: var(--emerald); }
 .toast--error   { background: var(--red-bg);     border: 1px solid var(--red);     color: var(--red); }
 
+/* Email (Gmail) panel */
+.gmail-pill--ok    { color: var(--emerald); border-color: var(--emerald); }
+.gmail-pill--bad   { color: var(--red);     border-color: var(--red); }
+.gmail-pill--muted { color: var(--text-tertiary); border-color: var(--border); }
+.gmail-info { font-size: 0.875rem; color: var(--text-secondary); line-height: 1.5; word-break: break-word; }
+.gmail-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.gmail-actions .btn { text-decoration: none; }
+.gmail-test-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+.gmail-test-row .field { flex: 1 1 220px; }
+.gmail-details summary { cursor: pointer; font-size: 0.8rem; color: var(--text-tertiary); }
+.gmail-details p { font-size: 0.8rem; color: var(--text-tertiary); line-height: 1.5; margin-top: 8px; word-break: break-word; }
+.gmail-details code { font-size: 0.78rem; color: var(--text-secondary); }
+.gmail-recent { display: flex; flex-direction: column; border-top: 1px solid var(--border); }
+.gmail-recent-row { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 0.8rem; color: var(--text-secondary); }
+.gmail-recent-row .when { color: var(--text-tertiary); min-width: 118px; }
+.gmail-recent-row .to { flex: 1 1 160px; word-break: break-all; }
+.gmail-recent-row .st--sent { color: var(--emerald); }
+.gmail-recent-row .st--failed { color: var(--red); }
+.gmail-recent-row .st--skipped { color: var(--text-tertiary); }
+.gmail-recent-row .err { flex-basis: 100%; color: var(--text-tertiary); }
+
 @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
 </style>
 
@@ -225,6 +246,54 @@ require_once __DIR__ . '/includes/ui.php';
       </div>
     </form>
 
+  </div>
+
+  <!-- ===== Email (Gmail) ===== -->
+  <div class="panel panel-pad" id="gmailPanel">
+    <div class="panel-title-row">
+      <div>
+        <h2 class="panel-title">Email (Gmail)</h2>
+        <p class="panel-sub">Sends booking confirmations, updates, cancellations and reminders to guests.</p>
+      </div>
+      <span class="pill gmail-pill--muted" id="gmailPill">Checking&hellip;</span>
+    </div>
+
+    <div class="form-alert form-alert--error" id="gmailAlert" role="alert"></div>
+
+    <div class="stack" style="gap:16px;">
+      <div class="gmail-info" id="gmailInfo">Loading connection status&hellip;</div>
+
+      <div class="gmail-actions">
+        <a class="btn btn-primary" id="gmailConnectBtn" href="../gmail_authorize.php" hidden>
+          <?php echo icon('mail', 'icon-sm'); ?> <span id="gmailConnectLabel">Connect Gmail</span>
+        </a>
+        <button type="button" class="btn btn-secondary" id="gmailDisconnectBtn" hidden>Disconnect</button>
+      </div>
+
+      <div class="gmail-test-row" id="gmailTestRow" hidden>
+        <div class="field">
+          <label class="field-label" for="gmailTestTo">Send a test email to</label>
+          <div class="field-input-wrap">
+            <?php echo icon('mail'); ?>
+            <input class="has-icon" type="email" id="gmailTestTo" maxlength="190" placeholder="you@example.com"
+                   value="<?php echo htmlspecialchars($admin['email'], ENT_QUOTES, 'UTF-8'); ?>">
+          </div>
+        </div>
+        <button type="button" class="btn btn-secondary" id="gmailTestBtn">
+          <?php echo icon('mail', 'icon-sm'); ?> Send test
+        </button>
+      </div>
+
+      <div class="gmail-recent" id="gmailRecent" hidden></div>
+
+      <details class="gmail-details">
+        <summary>Connection details</summary>
+        <p>Redirect URI in use: <code id="gmailRedirect">&hellip;</code><br>
+           This exact address must be listed under <em>Authorized redirect URIs</em> on the OAuth client in Google Cloud.</p>
+        <p>While the Google app is in <em>Testing</em> mode, Google ends the connection every 7 days. Publish the app
+           (Google Auth Platform &rarr; Audience &rarr; Publish app) to stop that.</p>
+      </details>
+    </div>
   </div>
 
   <!-- ===== Notifications ===== -->
@@ -380,6 +449,160 @@ document.getElementById('accountForm').addEventListener('submit', function (e) {
         showAlert('accountAlert', 'Network error. Please try again.');
     });
 });
+
+/* ---------- Email (Gmail) ---------- */
+(function () {
+    var pill       = document.getElementById('gmailPill');
+    var info       = document.getElementById('gmailInfo');
+    var connectBtn = document.getElementById('gmailConnectBtn');
+    var connectLbl = document.getElementById('gmailConnectLabel');
+    var discBtn    = document.getElementById('gmailDisconnectBtn');
+    var testRow    = document.getElementById('gmailTestRow');
+    var testBtn    = document.getElementById('gmailTestBtn');
+    var testTo     = document.getElementById('gmailTestTo');
+    var recentBox  = document.getElementById('gmailRecent');
+    var redirectEl = document.getElementById('gmailRedirect');
+
+    function gmailApi(action, extra) {
+        var payload = { action: action, csrf_token: CSRF };
+        if (extra) { for (var k in extra) { if (Object.prototype.hasOwnProperty.call(extra, k)) { payload[k] = extra[k]; } } }
+        return postJSON('api/gmail.php', payload);
+    }
+
+    function setPill(text, cls) {
+        pill.textContent = text;
+        pill.className = 'pill gmail-pill--' + cls;
+    }
+
+    function fmtWhen(s) {
+        if (!s) { return ''; }
+        var d = new Date(String(s).replace(' ', 'T'));
+        if (isNaN(d.getTime())) { return String(s); }
+        return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+    }
+
+    function renderRecent(rows) {
+        recentBox.innerHTML = '';
+        if (!rows || !rows.length) { recentBox.hidden = true; return; }
+        rows.forEach(function (r) {
+            var row = document.createElement('div');
+            row.className = 'gmail-recent-row';
+
+            var when = document.createElement('span');
+            when.className = 'when';
+            when.textContent = fmtWhen(r.created_at);
+
+            var to = document.createElement('span');
+            to.className = 'to';
+            to.textContent = (r.kind || '') + ' → ' + (r.recipient || '(no address)');
+
+            var st = document.createElement('span');
+            st.className = 'st--' + r.status;
+            st.textContent = r.status;
+
+            row.appendChild(when);
+            row.appendChild(to);
+            row.appendChild(st);
+
+            if (r.error) {
+                var err = document.createElement('span');
+                err.className = 'err';
+                err.textContent = r.error;
+                row.appendChild(err);
+            }
+            recentBox.appendChild(row);
+        });
+        recentBox.hidden = false;
+    }
+
+    function render(g, recent) {
+        redirectEl.textContent = g.redirect_uri || '(could not be detected — set redirect_uri in includes/gmail-config.php)';
+        connectBtn.hidden = true;
+        discBtn.hidden = true;
+        testRow.hidden = true;
+
+        if (!g.configured) {
+            setPill('Not configured', 'muted');
+            info.textContent = 'Add the Google Client ID and Client Secret to includes/gmail-config.php, then reload this page.';
+        } else if (g.connected) {
+            setPill('Connected', 'ok');
+            info.textContent = 'Sending as ' + (g.sender_email || 'the connected Gmail account') +
+                (g.connected_at ? ' · connected ' + fmtWhen(g.connected_at) : '') + '.';
+            connectLbl.textContent = 'Switch account';
+            connectBtn.className = 'btn btn-secondary';
+            connectBtn.hidden = false;
+            discBtn.hidden = false;
+            testRow.hidden = false;
+        } else if (g.status === 'needs_reauth') {
+            setPill('Reconnect needed', 'bad');
+            info.textContent = 'Booking emails are paused. ' + (g.last_error || 'The Gmail connection needs to be re-authorized.');
+            connectLbl.textContent = 'Reconnect Gmail';
+            connectBtn.className = 'btn btn-primary';
+            connectBtn.hidden = false;
+            discBtn.hidden = false;
+        } else {
+            setPill('Not connected', 'muted');
+            info.textContent = 'Connect the Gmail account that booking emails should be sent from. You only need to do this once.';
+            connectLbl.textContent = 'Connect Gmail';
+            connectBtn.className = 'btn btn-primary';
+            connectBtn.hidden = false;
+        }
+        renderRecent(recent);
+    }
+
+    function load() {
+        return gmailApi('status').then(function (data) {
+            if (data.success) { render(data.gmail, data.recent); }
+            else { setPill('Error', 'bad'); info.textContent = data.error || 'Could not load the Gmail status.'; }
+        }).catch(function () {
+            setPill('Error', 'bad');
+            info.textContent = 'Network error while loading the Gmail status.';
+        });
+    }
+
+    testBtn.addEventListener('click', function () {
+        hideAlert('gmailAlert');
+        var to = testTo.value.trim();
+        if (!to) { showAlert('gmailAlert', 'Enter an email address to send the test to.'); return; }
+        testBtn.disabled = true;
+        gmailApi('send_test', { to: to }).then(function (data) {
+            testBtn.disabled = false;
+            if (data.success) { toast('Test email sent to ' + data.sent_to + '.', 'success'); }
+            else { showAlert('gmailAlert', data.error || 'The test email could not be sent.'); }
+            load();
+        }).catch(function () {
+            testBtn.disabled = false;
+            showAlert('gmailAlert', 'Network error. Please try again.');
+        });
+    });
+
+    discBtn.addEventListener('click', function () {
+        if (!window.confirm('Disconnect Gmail? Booking emails will stop until you connect again.')) { return; }
+        hideAlert('gmailAlert');
+        discBtn.disabled = true;
+        gmailApi('disconnect').then(function (data) {
+            discBtn.disabled = false;
+            if (data.success) { toast('Gmail disconnected.', 'success'); }
+            else { showAlert('gmailAlert', data.error || 'Could not disconnect Gmail.'); }
+            load();
+        }).catch(function () {
+            discBtn.disabled = false;
+            showAlert('gmailAlert', 'Network error. Please try again.');
+        });
+    });
+
+    // Result of the Google round-trip (set by gmail_callback.php / gmail_authorize.php).
+    try {
+        var qs = new URLSearchParams(window.location.search);
+        if (qs.get('gmail') === 'connected') { toast('Gmail connected. Booking emails are now active.', 'success'); }
+        if (qs.get('gmail_error')) { showAlert('gmailAlert', qs.get('gmail_error')); }
+        if (qs.has('gmail') || qs.has('gmail_error')) {
+            window.history.replaceState(null, '', window.location.pathname);
+        }
+    } catch (e) { /* very old browser: just skip the toast */ }
+
+    load();
+})();
 
 /* ---------- Notifications (auto-save on change) ---------- */
 document.querySelectorAll('[data-notify-toggle]').forEach(function (input) {

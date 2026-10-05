@@ -6,6 +6,7 @@ bienmarko_start_session();
 bienmarko_require_role('user');
 
 require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../../includes/booking-emails.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -810,6 +811,11 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
 
     bk_notify_admin($pdo, $bookingId, $reference, $guestName, $room['name'], $checkIn, $checkOut);
 
+    // Email the guest (sent after the response; never blocks or breaks the booking).
+    bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
+        bienmarko_email_send_booking($pdo, $bookingId, 'confirmation');
+    });
+
     bk_ok([
         'booking_id'      => $bookingId,
         'reference'       => $reference,
@@ -960,6 +966,11 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
         "Booking {$booking['reference']} for {$booking['room_name']} was modified by the guest."
     );
 
+    // Email the guest (sent after the response; never blocks or breaks the booking).
+    bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
+        bienmarko_email_send_booking($pdo, $bookingId, 'modified');
+    });
+
     bk_ok([
         'booking_id'      => $bookingId,
         'reference'       => $booking['reference'],
@@ -1029,6 +1040,11 @@ function bk_action_cancel(PDO $pdo, array $input, int $guestId): never
         'cancellation',
         "Booking {$booking['reference']} for {$booking['room_name']} was cancelled by the guest."
     );
+
+    // Email the guest (sent after the response; never blocks or breaks the booking).
+    bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
+        bienmarko_email_send_booking($pdo, $bookingId, 'cancelled');
+    });
 
     bk_ok([
         'booking_id' => $bookingId,
