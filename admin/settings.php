@@ -272,7 +272,7 @@ require_once __DIR__ . '/includes/ui.php';
 
       <div class="gmail-test-row" id="gmailTestRow" hidden>
         <div class="field">
-          <label class="field-label" for="gmailTestTo">Send a test email to</label>
+          <label class="field-label" for="gmailTestTo">Send a test email to <p style="color: yellow;">Existing Gmail only. Yeah</p></label>
           <div class="field-input-wrap">
             <?php echo icon('mail'); ?>
             <input class="has-icon" type="email" id="gmailTestTo" maxlength="190" placeholder="you@example.com"
