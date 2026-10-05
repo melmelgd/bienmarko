@@ -710,7 +710,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         <label class="form-label">Payment Method</label>
                         <select class="form-input" id="fPayMethod">
                             <option value="cash">Cash</option>
-                            <option value="gcash">GCash</option>
                         </select>
                     </div>
                     <div class="form-group full">

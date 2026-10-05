@@ -9,6 +9,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/auth-common.php';
+require_once __DIR__ . '/../../includes/booking-emails.php';
 
 bienmarko_start_session();
 bienmarko_require_role('admin');
@@ -116,7 +117,8 @@ if ($action === 'save_payment') {
         /* Upsert: update if payment record exists, else insert */
         $existing = $pdo->prepare("SELECT id FROM payments WHERE booking_id = :bid");
         $existing->execute(['bid' => $bookingId]);
-        $payId = $existing->fetchColumn();
+        $existingRow = $existing->fetch(PDO::FETCH_ASSOC) ?: null;
+        $payId = $existingRow ? (int) $existingRow['id'] : null;
 
         if ($payId) {
             /* UPDATE */
@@ -220,6 +222,30 @@ if ($action === 'save_payment') {
                 pay_notify_guest($pdo, $refGuest, $bookingId, $guestMsg);
             }
         } catch (\Throwable $e) { /* non-fatal */ }
+
+        // Retry paid receipts that were previously skipped or failed, but
+        // never resend one already recorded as sent.
+        if ($paymentStatus === 'paid') {
+            $receiptAlreadySent = false;
+            try {
+                bienmarko_gmail_ensure_tables($pdo);
+                $sentReceipt = $pdo->prepare(
+                    "SELECT 1 FROM `email_log`
+                     WHERE booking_id = :bid AND kind = 'receipt' AND status = 'sent'
+                     LIMIT 1"
+                );
+                $sentReceipt->execute(['bid' => $bookingId]);
+                $receiptAlreadySent = (bool) $sentReceipt->fetchColumn();
+            } catch (\Throwable $e) {
+                error_log('[payments api] receipt status check failed: ' . $e->getMessage());
+            }
+
+            if (!$receiptAlreadySent) {
+                bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
+                    bienmarko_email_send_booking($pdo, $bookingId, 'receipt');
+                });
+            }
+        }
 
         echo json_encode(['success' => true, 'pay_id' => $payId]);
 

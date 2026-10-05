@@ -3,7 +3,7 @@
  * includes/booking-emails.php
  * -----------------------------------------------------------------------
  * Guest-facing booking emails (confirmation, update, cancellation,
- * reminder) built on includes/gmail-mailer.php.
+ * reminder, and payment receipt) built on includes/gmail-mailer.php.
  *
  * Call sites use:
  *
@@ -133,6 +133,27 @@ function bienmarko_email_load_booking(PDO $pdo, int $bookingId): ?array
 }
 
 /**
+ * Payment details are loaded only for a receipt, so ordinary booking
+ * emails do not depend on the payments table being present.
+ *
+ * @return array<string,mixed>|null
+ */
+function bienmarko_email_load_payment(PDO $pdo, int $bookingId): ?array
+{
+    $stmt = $pdo->prepare(
+        "SELECT room_fee, extra_guest_fee, other_charges, discount, total_paid,
+                payment_method, payment_status, paid_at
+         FROM `payments`
+         WHERE booking_id = :id
+         LIMIT 1"
+    );
+    $stmt->execute(['id' => $bookingId]);
+    $row = $stmt->fetch(PDO::FETCH_ASSOC);
+
+    return is_array($row) ? $row : null;
+}
+
+/**
  * Confirmed bookings checking in on $checkInDate that have an email address
  * and have not already been sent a reminder (failed attempts are retried,
  * up to 3 times).
@@ -230,6 +251,51 @@ function bienmarko_email_render(string $kind, array $b, array $site): array
             $intro   = "Hi {$first}, this is a friendly reminder that your stay at {$prop} starts on {$ci}. We look forward to seeing you!";
             break;
 
+        case 'receipt':
+            $payment = is_array($b['payment'] ?? null) ? $b['payment'] : [];
+            $roomFee = (float) ($payment['room_fee'] ?? 0);
+            $extraFee = (float) ($payment['extra_guest_fee'] ?? 0);
+            $otherCharges = (float) ($payment['other_charges'] ?? 0);
+            $discount = (float) ($payment['discount'] ?? 0);
+            $receiptTotal = max(0.0, $roomFee + $extraFee + $otherCharges - $discount);
+            $amountPaid = max(0.0, (float) ($payment['total_paid'] ?? 0));
+            $balance = max(0.0, $receiptTotal - $amountPaid);
+            $receiptMethod = strtolower((string) ($payment['payment_method'] ?? 'cash')) === 'gcash'
+                ? 'GCash'
+                : 'Cash';
+            $paidAt = trim((string) ($payment['paid_at'] ?? ''));
+            $paidOn = $paidAt !== '' && strtotime($paidAt) !== false
+                ? date('M j, Y g:i A', strtotime($paidAt))
+                : '—';
+
+            $eyebrow = 'PAYMENT RECEIPT';
+            $subject = "Your payment receipt — {$ref}";
+            $heading = 'Your payment receipt';
+            $intro   = "Hi {$first}, your payment of " . bienmarko_email_money($amountPaid)
+                . " for booking {$ref} has been recorded. Keep this receipt for your records.";
+            $rows = [
+                ['Reference number', $ref, true],
+                ['Accommodation',    (string) $b['room_name'], false],
+                ['Check-in',         $ci, false],
+                ['Check-out',        $co, false],
+                ['Nights',           (string) $nights, false],
+                ['Guests',           (string) (int) $b['guests_count'], false],
+                ['Room fee',         bienmarko_email_money($roomFee), false],
+                ['Extra guest fee',  bienmarko_email_money($extraFee), false],
+                ['Other charges',    bienmarko_email_money($otherCharges), false],
+            ];
+            if ($discount > 0) {
+                $rows[] = ['Discount', '−' . bienmarko_email_money($discount), false];
+            }
+            $rows[] = ['Total',       bienmarko_email_money($receiptTotal), 'total'];
+            $rows[] = ['Amount paid', bienmarko_email_money($amountPaid), 'paid'];
+            $rows[] = ['Balance due', $balance > 0 ? bienmarko_email_money($balance) : 'Paid in full', false];
+            $rows[] = ['Payment method', $receiptMethod, false];
+            $rows[] = ['Payment status', 'Paid', false];
+            $rows[] = ['Paid on', $paidOn, false];
+            $notes = '';
+            break;
+
         case 'confirmation':
         default:
             $eyebrow = 'BOOKING CONFIRMATION';
@@ -251,6 +317,14 @@ function bienmarko_email_render(string $kind, array $b, array $site): array
 
     if ($kind === 'cancelled') {
         $next = $contactLine !== '' ? "Questions? Contact us: {$contactLine}" : '';
+    } elseif ($kind === 'receipt') {
+        $next = 'Please keep this email as confirmation of your payment.';
+        if ($registered) {
+            $next .= ' A copy is also available in your guest dashboard.';
+            if ($base !== '') {
+                $cta = ['label' => 'View my receipts', 'url' => $base . '/user/receipts.php'];
+            }
+        }
     } elseif ($registered) {
         $next = 'You can view, change or cancel this booking from your dashboard.';
         if ($base !== '') {
@@ -291,7 +365,8 @@ function bienmarko_email_render(string $kind, array $b, array $site): array
     $e = 'bienmarko_email_esc';
     $rowHtml = '';
     foreach ($rows as $r) {
-        if ($r[2]) {
+        $rowType = $r[2] ?? false;
+        if ($rowType === true || $rowType === 'reference') {
             $rowHtml .= '<tr><td colspan="2" style="padding:0 0 16px;">'
                 . '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">'
                 . '<tr><td style="padding:14px 16px;background:#f5f2e9;border:1px solid #e9e2d2;border-radius:8px;">'
@@ -300,6 +375,19 @@ function bienmarko_email_render(string $kind, array $b, array $site): array
                 . '<div style="margin-top:5px;font-family:Consolas,Menlo,monospace;font-size:18px;line-height:1.4;font-weight:700;letter-spacing:1px;color:#755b26;">'
                 . $e($r[1]) . '</div>'
                 . '</td></tr></table></td></tr>';
+            continue;
+        }
+
+        if ($rowType === 'total' || $rowType === 'paid') {
+            $highlightBg = $rowType === 'paid' ? '#edf5f0' : '#f5f7f5';
+            $highlight = $rowType === 'paid';
+            $rowHtml .= '<tr>'
+                . '<td style="padding:12px 10px 12px 12px;background:' . $highlightBg . ';border-top:1px solid #e2e9e4;'
+                . 'font-size:13px;line-height:1.45;font-weight:700;color:#52615a;vertical-align:top;">' . $e($r[0]) . '</td>'
+                . '<td align="right" style="padding:12px 12px 12px 0;background:' . $highlightBg . ';border-top:1px solid #e2e9e4;'
+                . 'font-size:' . ($highlight ? '15px' : '14px') . ';line-height:1.45;font-weight:700;color:'
+                . ($highlight ? '#1b684a' : '#26342e') . ';vertical-align:top;">' . $e($r[1]) . '</td>'
+                . '</tr>';
             continue;
         }
 
@@ -374,7 +462,7 @@ function bienmarko_email_render(string $kind, array $b, array $site): array
 
 /**
  * Load a booking, render the email for $kind, send it and log the result.
- * $kind: 'confirmation' | 'modified' | 'cancelled' | 'reminder'.
+ * $kind: 'confirmation' | 'modified' | 'cancelled' | 'reminder' | 'receipt'.
  * Never throws.
  *
  * @return array{ok:bool,skipped:bool,error:string}
@@ -385,6 +473,27 @@ function bienmarko_email_send_booking(PDO $pdo, int $bookingId, string $kind): a
         $b = bienmarko_email_load_booking($pdo, $bookingId);
         if (!$b) {
             return ['ok' => false, 'skipped' => true, 'error' => 'Booking not found.'];
+        }
+
+        if ($kind === 'receipt') {
+            $payment = bienmarko_email_load_payment($pdo, $bookingId);
+            if (!$payment || strtolower((string) ($payment['payment_status'] ?? '')) !== 'paid') {
+                $why = !$payment
+                    ? 'No payment record was found for this booking.'
+                    : 'A receipt can only be sent after the payment is marked paid.';
+                bienmarko_email_log(
+                    $pdo,
+                    $bookingId,
+                    'receipt',
+                    (string) $b['recipient'],
+                    'Payment receipt — ' . (string) $b['reference'],
+                    'skipped',
+                    null,
+                    $why
+                );
+                return ['ok' => false, 'skipped' => true, 'error' => $why];
+            }
+            $b['payment'] = $payment;
         }
 
         $to   = (string) $b['recipient'];
