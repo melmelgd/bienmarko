@@ -16,6 +16,10 @@ $errorCode    = $_GET['error'] ?? '';
 $waitSeconds  = isset($_GET['wait']) ? max(0, (int) $_GET['wait']) : 0;
 $errorMessage = $errorCode !== '' ? bienmarko_auth_message($errorCode, $waitSeconds) : '';
 
+$resetNotice = isset($_GET['reset']) && $_GET['reset'] === '1'
+    ? 'Password updated. You can now log in with your new password.'
+    : '';
+
 $loginEndpoint = 'user/api/auth.php';
 
 $siteName    = 'BienMarko';
@@ -99,12 +103,17 @@ $siteTagline = "Bien Marko's Pension House";
                     </div>
                 </div>
 
-                <div class="checkbox-row">
+                <div class="checkbox-row" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
                     <label class="checkbox">
                         <input type="checkbox" name="remember" id="remember">
                         <span>Keep me signed in on this device</span>
                     </label>
+                    <a href="forgot-password.php" class="lobby__footnote-link">Forgot password?</a>
                 </div>
+
+                <?php if ($resetNotice !== '' && $errorMessage === ''): ?>
+                <p class="login-form__status is-visible" role="status" style="color:#34d399"><?php echo htmlspecialchars($resetNotice); ?></p>
+                <?php endif; ?>
 
                 <p class="login-form__status<?php echo $errorMessage !== '' ? ' is-visible' : ''; ?>" id="loginStatus" role="alert" aria-live="assertive" data-wait="<?php echo (int) $waitSeconds; ?>"><?php echo htmlspecialchars($errorMessage); ?></p>
 
