@@ -599,6 +599,69 @@ function bk_action_availability(PDO $pdo, array $input): never
     ]);
 }
 
+// ---- Action: catalog --------------------------------------------------------
+// Date-free listing of every accommodation (photos, amenities, description,
+// capacity, price). Lets the booking page show what each stay includes BEFORE
+// the guest picks dates / clicks "Check Availability". No conflict checks are
+// done here, so no availability is claimed; only the admin-set status
+// (unavailable / maintenance) is passed along.
+
+function bk_action_catalog(PDO $pdo): never
+{
+    bk_ensure_tour_column($pdo);
+    bk_ensure_photos_table($pdo);
+
+    $accStmt = $pdo->query(
+        "SELECT id, name, type, capacity, price, status,
+                description, amenities, image_filename, tour_filename
+         FROM accommodations
+         ORDER BY name ASC"
+    );
+    $accommodations = $accStmt->fetchAll();
+
+    $accIds      = array_map(static function ($r) { return (int) $r['id']; }, $accommodations);
+    $photosByAcc = bk_fetch_photos_by_accommodation($pdo, $accIds);
+
+    $results = [];
+    foreach ($accommodations as $row) {
+        $accId  = (int) $row['id'];
+        $isPool = bk_is_pool_type((string) $row['type']);
+
+        $amenities = [];
+        if ($row['amenities']) {
+            $decoded = json_decode($row['amenities'], true);
+            if (is_array($decoded)) {
+                $amenities = $decoded;
+            }
+        }
+
+        $status      = (string) $row['status'];
+        $adminBlocked = in_array($status, ['unavailable', 'maintenance'], true);
+
+        $results[] = [
+            'id'              => $accId,
+            'name'            => $row['name'],
+            'type'            => $row['type'],
+            'capacity'        => (int) $row['capacity'],
+            'price'           => (float) $row['price'],
+            'price_formatted' => '₱' . number_format((float) $row['price'], 2),
+            'price_unit'      => $isPool ? 'person' : 'night',
+            'description'     => $row['description'] ?? '',
+            'amenities'       => $amenities,
+            'image_filename'  => $row['image_filename'],
+            'tour_filename'   => $row['tour_filename'] ?? null,
+            'photos'          => bk_combine_photos($row['image_filename'], $photosByAcc[$accId] ?? []),
+            'is_pool'         => $isPool,
+            'status'          => $status,
+            'status_label'    => $adminBlocked
+                ? ($status === 'maintenance' ? 'Under Maintenance' : 'Unavailable')
+                : '',
+        ];
+    }
+
+    bk_ok(['rooms' => $results]);
+}
+
 // ---- Action: room_calendar --------------------------------------------------
 
 function bk_action_room_calendar(PDO $pdo, array $input): never
@@ -1062,6 +1125,9 @@ $action  = (string) ($input['action'] ?? '');
 $guestId = (int) ($_SESSION['auth_user_id'] ?? 0);
 
 switch ($action) {
+    case 'catalog':
+        bk_action_catalog($pdo);
+
     case 'availability':
         bk_action_availability($pdo, $input);
 

@@ -9,7 +9,21 @@ require_once __DIR__ . '/../includes/db.php';
 require __DIR__ . '/includes/bootstrap.php';
 
 $currentPage = 'bookings';
-$pageTitle   = 'Book a Room';
+$pageTitle   = 'Book a Stay';
+
+// Accommodation-type filter (Step 1 chips / Step 2 chips). Same categories the
+// public listing pages use. ?type=rooms|cottage|venues|pool pre-selects one.
+$typeOptions = [
+    'all'     => 'All',
+    'rooms'   => 'Rooms',
+    'cottage' => 'Cottages',
+    'venues'  => 'Event Halls',
+    'pool'    => 'Pool',
+];
+$initialType = (string) ($_GET['type'] ?? 'all');
+if (!isset($typeOptions[$initialType])) {
+    $initialType = 'all';
+}
 
 // Pull guest profile for Step 3 pre-fill
 $guestProfile = ['first_name' => '', 'last_name' => '', 'phone' => ''];
@@ -993,6 +1007,52 @@ require __DIR__ . '/includes/head.php';
 }
 
 /* ---------- Responsive ---------- */
+/* ---------- Accommodation catalog (Step 1, shown before dates are picked) ---------- */
+.catalog { margin-top: 28px; padding-top: 24px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 16px; }
+.catalog__head h3 { font-size: 18px; }
+.catalog__head p { font-size: 13px; color: var(--paper-dim); margin-top: 4px; max-width: 560px; }
+.catalog__loading, .catalog__empty { font-size: 13.5px; color: var(--paper-dim); padding: 12px 0; }
+.catalog-card .room-card__desc { display: block; -webkit-line-clamp: unset; overflow: visible; }
+.catalog-card .room-card__amenities { gap: 6px; }
+.catalog-card__label {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--paper-faint); margin-bottom: -4px;
+}
+.catalog-card__status {
+  position: absolute; left: 10px; top: 10px; z-index: 1;
+  border-radius: var(--radius-full); font-size: 11px; font-weight: 700;
+  padding: 4px 10px; background: rgba(80,80,100,.9); color: #ddd;
+}
+.catalog-card__hint { font-size: 12px; color: var(--paper-faint); font-weight: 600; }
+.catalog-card__pick {
+  font-family: var(--font-body); font-size: 12px; font-weight: 700; cursor: pointer;
+  background: transparent; color: var(--ember); border: 1px solid var(--ember);
+  border-radius: var(--radius-full); padding: 7px 14px;
+}
+.catalog-card__pick:hover { background: var(--ember); color: var(--ember-ink); }
+
+/* ---------- Accommodation type chips (Step 1 + Step 2) ---------- */
+.type-field { display: flex; flex-direction: column; gap: 8px; }
+.type-field > label { font-size: 13px; font-weight: 600; color: var(--paper-dim); }
+.type-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.type-chip {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-height: 40px; padding: 0 16px;
+  border: 1px solid var(--line); border-radius: var(--radius-full);
+  background: var(--surface-raised); color: var(--paper-dim);
+  font-family: var(--font-body); font-size: 13px; font-weight: 600;
+  cursor: pointer; transition: background .15s, border-color .15s, color .15s;
+}
+.type-chip:hover { border-color: var(--ember); color: var(--paper); }
+.type-chip[aria-pressed="true"] {
+  background: var(--ember); border-color: var(--ember); color: var(--ember-ink);
+}
+.type-chip__count { margin-left: 6px; font-weight: 500; opacity: .75; }
+.rooms-section > .type-chips { margin-top: -6px; }
+/* The results line is longer now ("5 accommodations · 2 nights · …"); let it wrap on phones. */
+.rooms-header > div, .rooms-meta { min-width: 0; }
+@media (max-width: 600px) { .rooms-meta { white-space: normal; } }
+
 @media (max-width: 600px) {
   .date-row { grid-template-columns: 1fr; }
   .booking-step__label { display: none; }
@@ -1014,8 +1074,8 @@ require __DIR__ . '/includes/head.php';
     <!-- Page header -->
     <div class="page-head">
         <div class="page-head__text">
-            <h1 class="page-head__title">Book a Room</h1>
-            <p class="page-head__subtitle">Choose your dates to see real-time availability.</p>
+            <h1 class="page-head__title">Book a Stay</h1>
+            <p class="page-head__subtitle">Pick a type of accommodation and your dates to see real-time availability.</p>
         </div>
     </div>
 
@@ -1028,7 +1088,7 @@ require __DIR__ . '/includes/head.php';
         <div class="booking-step__connector"></div>
         <div class="booking-step" id="step2Indicator">
             <span class="booking-step__num">2</span>
-            <span class="booking-step__label">Choose Room</span>
+            <span class="booking-step__label">Choose Stay</span>
         </div>
         <div class="booking-step__connector"></div>
         <div class="booking-step" id="step3Indicator">
@@ -1047,6 +1107,16 @@ require __DIR__ . '/includes/head.php';
             </div>
 
             <div class="date-panel">
+                <div class="type-field">
+                    <label id="typeLabel">What would you like to book?</label>
+                    <div class="type-chips" id="typeChipsStep1" role="group" aria-labelledby="typeLabel">
+                        <?php foreach ($typeOptions as $typeKey => $typeLabel): ?>
+                        <button type="button" class="type-chip" data-type="<?php echo htmlspecialchars($typeKey); ?>"
+                                aria-pressed="<?php echo $typeKey === $initialType ? 'true' : 'false'; ?>"><?php echo htmlspecialchars($typeLabel); ?></button>
+                        <?php endforeach; ?>
+                    </div>
+                </div>
+
                 <div class="date-row">
                     <div class="date-field">
                         <label>Check-in date</label>
@@ -1089,6 +1159,17 @@ require __DIR__ . '/includes/head.php';
                     <?php render_icon('bed-double'); ?> Check Availability
                 </button>
             </div>
+
+            <!-- What's inside each accommodation — visible before any dates are chosen -->
+            <div class="catalog" id="catalogSection">
+                <div class="catalog__head">
+                    <h3 id="catalogTitle">What's inside each accommodation</h3>
+                    <p>Browse photos, inclusions and rates below. Pick your dates above to see what's free.</p>
+                </div>
+                <div class="catalog__loading" id="catalogLoading">Loading accommodations…</div>
+                <div class="rooms-grid" id="catalogGrid" style="display:none"></div>
+                <div class="catalog__empty" id="catalogEmpty" style="display:none"></div>
+            </div>
         </section>
 
         <!-- ===== STEP 2: Room results ===== -->
@@ -1096,11 +1177,13 @@ require __DIR__ . '/includes/head.php';
             <div class="rooms-section">
                 <div class="rooms-header">
                     <div>
-                        <h2>Available Rooms</h2>
-                        <p class="rooms-subtitle">Click <strong>View Calendar</strong> on a room to check its booking schedule, or click a room's photo to view it larger.</p>
+                        <h2 id="roomsTitle">Available Accommodations</h2>
+                        <p class="rooms-subtitle">Switch type below, click <strong>View Calendar</strong> to check a schedule, or click a photo to view it larger.</p>
                     </div>
                     <span class="rooms-meta" id="roomsMeta"></span>
                 </div>
+
+                <div class="type-chips" id="typeChipsStep2" role="group" aria-label="Filter by accommodation type" style="display:none"></div>
 
                 <div class="rooms-skeleton" id="roomsSkeleton" style="display:none">
                     <?php for ($i = 0; $i < 3; $i++): ?>
@@ -1124,8 +1207,8 @@ require __DIR__ . '/includes/head.php';
 
                 <div class="rooms-empty" id="roomsEmpty" style="display:none">
                     <div class="rooms-empty__icon"><?php render_icon('bed-double'); ?></div>
-                    <h3>No rooms available</h3>
-                    <p>All our rooms are either occupied or unavailable for those dates. Try different dates.</p>
+                    <h3 id="roomsEmptyTitle">No accommodations available</h3>
+                    <p id="roomsEmptyText">Everything is either occupied or unavailable for those dates. Try different dates.</p>
                 </div>
 
                 <button type="button" class="btn btn--ghost" id="changeDatesBtn" style="align-self:flex-start; margin-top:8px">
@@ -1566,6 +1649,7 @@ require __DIR__ . '/includes/head.php';
 <input type="hidden" id="csrfToken" value="<?php echo htmlspecialchars($csrfToken); ?>">
 <input type="hidden" id="imgBase" value="../admin/assets/uploads/accommodations/">
 <input type="hidden" id="tourBase" value="../admin/assets/uploads/tours/">
+<input type="hidden" id="initialType" value="<?php echo htmlspecialchars($initialType); ?>">
 
 <?php require __DIR__ . '/includes/support-modal.php'; ?>
 <?php require __DIR__ . '/includes/foot.php'; ?>
@@ -1600,6 +1684,11 @@ require __DIR__ . '/includes/head.php';
   var elError      = document.getElementById('roomsError');
   var elErrText    = document.getElementById('roomsErrorText');
   var elEmpty      = document.getElementById('roomsEmpty');
+  var elRoomsTitle = document.getElementById('roomsTitle');
+  var elEmptyTitle = document.getElementById('roomsEmptyTitle');
+  var elEmptyText  = document.getElementById('roomsEmptyText');
+  var elChips1     = document.getElementById('typeChipsStep1');
+  var elChips2     = document.getElementById('typeChipsStep2');
 
   var elChangeDates  = document.getElementById('changeDatesBtn');
   var elBackToRooms  = document.getElementById('backToRoomsBtn');
@@ -2217,6 +2306,8 @@ require __DIR__ . '/includes/head.php';
     elGrid.style.display     = 'none';
     elError.style.display    = 'none';
     elEmpty.style.display    = 'none';
+    elChips2.style.display   = 'none';   // chips come back with the fresh results
+    allRooms = [];
   }
   function hideRoomsLoading() { elSkeleton.style.display = 'none'; }
 
@@ -2275,7 +2366,7 @@ require __DIR__ . '/includes/head.php';
 
     var actionHtml = room.availability === 'available'
       ? '<button type="button" class="btn-book" data-room-id="' + room.id + '">' +
-        sendIcon() + ' Book This Room</button>'
+        sendIcon() + ' Book This Stay</button>'
       : '<span style="font-size:12px;color:var(--paper-faint);font-weight:600">' +
         escHtml(room.availability_label) + '</span>';
 
@@ -2323,6 +2414,278 @@ require __DIR__ . '/includes/head.php';
     return card;
   }
 
+  /* ---- Accommodation type filter ----
+     Categories mirror the public listing pages (rooms / cottage / venues /
+     pool); the availability API already returns every accommodation, so the
+     filter is purely client-side. */
+  var TYPE_LABELS   = { rooms: 'Rooms', cottage: 'Cottages', venues: 'Event Halls', pool: 'Pool', other: 'Other' };
+  var TYPE_SINGULAR = { rooms: 'room', cottage: 'cottage', venues: 'event hall', pool: 'pool option', other: 'accommodation' };
+  var TYPE_ORDER    = ['rooms', 'cottage', 'venues', 'pool', 'other'];
+  var selectedType  = (document.getElementById('initialType') || {}).value || 'all';
+  var allRooms      = [];   // last availability response (sorted), all types
+  var lastNights    = 0;
+
+  function categoryOf(type) {
+    var n = String(type || '').toLowerCase().trim();
+    if (n.indexOf('room') !== -1) return 'rooms';
+    if (n.indexOf('event') !== -1 || n.indexOf('hall') !== -1) return 'venues';
+    if (n.indexOf('cottage') !== -1 || n.indexOf('hut') !== -1 || n.indexOf('nipa') !== -1) return 'cottage';
+    if (n.indexOf('pool') !== -1 || n.indexOf('swim') !== -1) return 'pool';
+    return 'other';
+  }
+
+  function plural(noun, n) { return noun + (n === 1 ? '' : 's'); }
+
+  function syncTypeChips() {
+    Array.prototype.forEach.call(document.querySelectorAll('.type-chip'), function (btn) {
+      btn.setAttribute('aria-pressed', btn.getAttribute('data-type') === selectedType ? 'true' : 'false');
+    });
+  }
+
+  // Step 2 chips carry live counts, so they are rebuilt from the loaded data.
+  function buildStep2Chips() {
+    var counts = { all: allRooms.length };
+    allRooms.forEach(function (r) {
+      var c = categoryOf(r.type);
+      counts[c] = (counts[c] || 0) + 1;
+    });
+    var html = '<button type="button" class="type-chip" data-type="all" aria-pressed="false">All' +
+               '<span class="type-chip__count">' + counts.all + '</span></button>';
+    TYPE_ORDER.forEach(function (key) {
+      if (counts[key] || key === selectedType) {
+        html += '<button type="button" class="type-chip" data-type="' + key + '" aria-pressed="false">' +
+                escHtml(TYPE_LABELS[key]) + '<span class="type-chip__count">' + (counts[key] || 0) + '</span></button>';
+      }
+    });
+    elChips2.innerHTML = html;
+    elChips2.style.display = 'flex';
+    syncTypeChips();
+  }
+
+  function renderRooms() {
+    var visible = selectedType === 'all'
+      ? allRooms
+      : allRooms.filter(function (r) { return categoryOf(r.type) === selectedType; });
+
+    var noun = selectedType === 'all' ? 'accommodation' : TYPE_SINGULAR[selectedType];
+
+    buildStep2Chips();
+    elRoomsTitle.textContent = selectedType === 'all'
+      ? 'Available Accommodations'
+      : 'Available ' + TYPE_LABELS[selectedType];
+
+    elMeta.innerHTML =
+      '<strong>' + visible.length + '</strong> ' + plural(noun, visible.length) +
+      ' · <strong>' + lastNights + '</strong> night' + (lastNights === 1 ? '' : 's') +
+      ' · ' + formatDate(currentCheckIn) + ' → ' + formatDate(currentCheckOut);
+
+    elGrid.innerHTML = '';
+    elGrid.style.display  = 'none';
+    elEmpty.style.display = 'none';
+
+    if (visible.length === 0) {
+      elEmptyTitle.textContent = 'No ' + plural(noun, 0) + ' found';
+      elEmptyText.textContent  = selectedType === 'all'
+        ? 'There are no accommodations to show for those dates. Try different dates.'
+        : 'We have no ' + plural(noun, 0) + ' listed right now. Try another type or different dates.';
+      elEmpty.style.display = 'block';
+      return;
+    }
+
+    elGrid.style.display = 'grid';
+    visible.forEach(function (room) { elGrid.appendChild(buildRoomCard(room)); });
+
+    var availCount = visible.filter(function (r) { return r.availability === 'available'; }).length;
+    if (availCount === 0) {
+      var notice = document.createElement('div');
+      notice.className = 'api-error';
+      notice.style.gridColumn = '1/-1';
+      // Note: intentionally NOT bedIcon() here — that helper hardcodes
+      // width:100%/height:100% so it can fill the 44×44px room-card
+      // thumbnail it was designed for, and that inline style beats the
+      // ".api-error .icon" (18px) rule below, blowing the icon up to
+      // fill this notice instead. This is a plain class="icon" SVG with
+      // no inline sizing so the existing CSS rule sizes it correctly.
+      notice.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" class="icon"><path d="M2 4v16"/><path d="M2 8h18a2 2 0 0 1 2 2v10"/><path d="M2 17h20"/><path d="M6 8v9"/></svg>' +
+        '<span>No ' + plural(noun, 0) + ' are available for these dates. Try different dates' +
+        (selectedType === 'all' ? '.' : ' or another type.') + '</span>';
+      elGrid.prepend(notice);
+    }
+  }
+
+  function onTypeChipClick(e) {
+    var btn = e.target.closest ? e.target.closest('.type-chip') : null;
+    if (!btn) return;
+    selectedType = btn.getAttribute('data-type') || 'all';
+    syncTypeChips();
+    renderCatalog();                       // Step 1 catalog follows the chosen type
+    if (allRooms.length) renderRooms();   // Step 2 already loaded → re-filter in place
+  }
+  elChips1.addEventListener('click', onTypeChipClick);
+  elChips2.addEventListener('click', onTypeChipClick);
+
+  /* ============================================================
+     CATALOG — "what's inside" cards on Step 1, no dates needed.
+     Loaded once from api/bookings.php (action: catalog) and
+     filtered client-side by the same type chips as Step 2.
+     ============================================================ */
+  var elCatalogGrid    = document.getElementById('catalogGrid');
+  var elCatalogLoading = document.getElementById('catalogLoading');
+  var elCatalogEmpty   = document.getElementById('catalogEmpty');
+  var elCatalogTitle   = document.getElementById('catalogTitle');
+  var catalogRooms     = [];
+
+  function buildCatalogCard(room) {
+    var card = document.createElement('div');
+    card.className = 'room-card catalog-card';
+    card.setAttribute('data-room-status', room.status || 'available');
+
+    var photoFiles = (room.photos && room.photos.length)
+      ? room.photos
+      : (room.image_filename ? [room.image_filename] : []);
+    var photoUrls = photoFiles.map(function (f) { return imgBase + encodeURIComponent(f); });
+    var hasPhoto  = photoUrls.length > 0;
+    var zoomLabel = photoUrls.length > 1 ? ('View ' + photoUrls.length + ' photos') : 'View photo';
+
+    var mediaHtml = hasPhoto
+      ? '<img src="' + photoUrls[0] + '" alt="' + escHtml(room.name) + '" loading="lazy">' +
+        '<span class="room-card__zoom-hint" aria-hidden="true">' + zoomIcon() + escHtml(zoomLabel) + '</span>'
+      : '<span class="room-card__media-icon">' + bedIcon() + '</span>';
+
+    var calBtnHtml =
+      '<button type="button" class="room-card__cal-btn" ' +
+        'data-cal-room-id="' + room.id + '" ' +
+        'data-cal-room-name="' + escHtml(room.name) + '" ' +
+        'data-cal-room-type="' + escHtml(room.type) + '" ' +
+        'aria-label="View booking calendar for ' + escHtml(room.name) + '">' +
+        calIcon() + 'View Calendar' +
+      '</button>';
+
+    var tourBtnHtml = room.tour_filename
+      ? '<button type="button" class="room-card__tour-btn" ' +
+          'data-tour-file="' + escHtml(room.tour_filename) + '" ' +
+          'data-tour-name="' + escHtml(room.name) + '" ' +
+          'aria-label="View 360 degree tour of ' + escHtml(room.name) + '">' +
+          globeIcon() + '360&deg; Tour' +
+        '</button>'
+      : '';
+
+    // Every amenity is listed (Step 2 cards truncate to 4 + "more").
+    var amenHtml = '';
+    if (room.amenities && room.amenities.length) {
+      amenHtml =
+        '<div class="catalog-card__label">What\'s included</div>' +
+        '<div class="room-card__amenities">' +
+        room.amenities.map(function (a) {
+          return '<span class="room-tag">' + escHtml(a) + '</span>';
+        }).join('') +
+        '</div>';
+    }
+
+    var descHtml = room.description
+      ? '<p class="room-card__desc">' + escHtml(room.description) + '</p>'
+      : '';
+
+    var statusHtml = room.status_label
+      ? '<span class="catalog-card__status">' + escHtml(room.status_label) + '</span>'
+      : '';
+
+    var capacityText = room.is_pool
+      ? 'Up to ' + room.capacity + ' guest' + (room.capacity === 1 ? '' : 's') + ' per day'
+      : 'Up to ' + room.capacity + ' guest' + (room.capacity === 1 ? '' : 's');
+
+    var footerAction = room.status_label
+      ? '<span class="catalog-card__hint">' + escHtml(room.status_label) + '</span>'
+      : '<button type="button" class="catalog-card__pick" data-catalog-pick>Select dates</button>';
+
+    card.innerHTML =
+      '<div class="room-card__media' + (hasPhoto ? ' room-card__media--zoomable' : '') + '"' +
+        (hasPhoto ? ' data-photo-urls="' + escHtml(JSON.stringify(photoUrls)) + '" data-photo-name="' + escHtml(room.name) + '"' : '') +
+        '>' +
+        mediaHtml + calBtnHtml + tourBtnHtml + statusHtml +
+        '<span class="room-card__price-badge">' + escHtml(room.price_formatted) +
+          '<small>/' + (room.is_pool ? 'person' : 'night') + '</small></span>' +
+      '</div>' +
+      '<div class="room-card__body">' +
+        '<div class="room-card__head">' +
+          '<div class="room-card__name">' + escHtml(room.name) + '</div>' +
+          '<div class="room-card__type">' + escHtml(room.type) + '</div>' +
+        '</div>' +
+        '<div class="room-card__meta">' + usersIcon() + '<span>' + capacityText + '</span></div>' +
+        descHtml + amenHtml +
+      '</div>' +
+      '<div class="room-card__footer">' +
+        '<div class="room-card__total">' + escHtml(room.price_formatted) +
+          '<br><small>per ' + (room.is_pool ? 'person' : 'night') + '</small></div>' +
+        footerAction +
+      '</div>';
+
+    return card;
+  }
+
+  function renderCatalog() {
+    if (!elCatalogGrid) return;
+    var visible = selectedType === 'all'
+      ? catalogRooms
+      : catalogRooms.filter(function (r) { return categoryOf(r.type) === selectedType; });
+
+    elCatalogTitle.textContent = selectedType === 'all'
+      ? 'What\'s inside each accommodation'
+      : 'What\'s inside our ' + TYPE_LABELS[selectedType];
+
+    elCatalogGrid.innerHTML = '';
+    elCatalogGrid.style.display = 'none';
+    elCatalogEmpty.style.display = 'none';
+
+    if (!visible.length) {
+      elCatalogEmpty.textContent = catalogRooms.length
+        ? 'Nothing listed under this type right now. Try another type.'
+        : 'No accommodations are listed yet.';
+      elCatalogEmpty.style.display = 'block';
+      return;
+    }
+
+    visible.forEach(function (room) { elCatalogGrid.appendChild(buildCatalogCard(room)); });
+    elCatalogGrid.style.display = 'grid';
+  }
+
+  // "Select dates" on a catalog card → scroll to the date pickers and open check-in.
+  if (elCatalogGrid) {
+    elCatalogGrid.addEventListener('click', function (e) {
+      if (!e.target.closest('[data-catalog-pick]')) return;
+      var dateRow = triggerCI.closest('.date-panel') || triggerCI;
+      dateRow.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      setTimeout(function () { triggerCI.click(); }, 350);
+    });
+  }
+
+  function loadCatalog() {
+    if (!elCatalogGrid) return;
+    fetch('api/bookings.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'catalog', csrf_token: csrf }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      elCatalogLoading.style.display = 'none';
+      if (!data.success) {
+        elCatalogEmpty.textContent = data.error || 'Could not load accommodations.';
+        elCatalogEmpty.style.display = 'block';
+        return;
+      }
+      catalogRooms = data.rooms || [];
+      renderCatalog();
+    })
+    .catch(function () {
+      elCatalogLoading.style.display = 'none';
+      elCatalogEmpty.textContent = 'Could not load accommodations. Please refresh the page.';
+      elCatalogEmpty.style.display = 'block';
+    });
+  }
+  loadCatalog();
+
   function checkAvailability() {
     if (isLoadingRooms) return;
     hideDateError();
@@ -2361,46 +2724,15 @@ require __DIR__ . '/includes/head.php';
         return;
       }
 
-      var rooms  = data.rooms || [];
-      var nights = data.nights || 0;
+      allRooms = data.rooms || [];
+      lastNights = data.nights || 0;
 
-      elMeta.innerHTML =
-        '<strong>' + rooms.length + '</strong> room' + (rooms.length === 1 ? '' : 's') +
-        ' · <strong>' + nights + '</strong> night' + (nights === 1 ? '' : 's') +
-        ' · ' + formatDate(currentCheckIn) + ' → ' + formatDate(currentCheckOut);
-
-      elGrid.innerHTML = '';
-
-      if (rooms.length === 0) {
-        elEmpty.style.display = 'block';
-        return;
-      }
-
-      elGrid.style.display = 'grid';
-
-      rooms.sort(function (a, b) {
+      allRooms.sort(function (a, b) {
         var order = { available: 0, occupied: 1, unavailable: 2 };
         return (order[a.availability] || 0) - (order[b.availability] || 0);
       });
 
-      rooms.forEach(function (room) { elGrid.appendChild(buildRoomCard(room)); });
-
-      var availCount = rooms.filter(function (r) { return r.availability === 'available'; }).length;
-      if (availCount === 0) {
-        var notice = document.createElement('div');
-        notice.className = 'api-error';
-        notice.style.gridColumn = '1/-1';
-        // Note: intentionally NOT bedIcon() here — that helper hardcodes
-        // width:100%/height:100% so it can fill the 44×44px room-card
-        // thumbnail it was designed for, and that inline style beats the
-        // ".api-error .icon" (18px) rule below, blowing the icon up to
-        // fill this notice instead. This is a plain class="icon" SVG with
-        // no inline sizing so the existing CSS rule sizes it correctly.
-        notice.innerHTML =
-          '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false" class="icon"><path d="M2 4v16"/><path d="M2 8h18a2 2 0 0 1 2 2v10"/><path d="M2 17h20"/><path d="M6 8v9"/></svg>' +
-          '<span>No rooms are available for these dates. Try different dates.</span>';
-        elGrid.prepend(notice);
-      }
+      renderRooms();
     })
     .catch(function () {
       isLoadingRooms = false;
