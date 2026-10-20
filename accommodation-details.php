@@ -422,8 +422,8 @@ button{font:inherit;color:inherit}
             <a href="index.html#contact">Contact</a>
         </div>
         <div class="ad-auth">
-            <a href="user/login.php">Log in</a>
-            <a href="user/register.php" class="ad-signup">Sign up</a>
+            <a href="login.php">Log in</a>
+            <a href="register.php" class="ad-signup">Sign up</a>
         </div>
     </nav>
 </header>
