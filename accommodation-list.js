@@ -60,7 +60,10 @@ document.addEventListener("DOMContentLoaded", () => {
                </div>`;
 
         const priceSuffix = category === "rooms" ? "/night" : (category === "pool" ? "/person" : "/day");
-        const bookingUrl = "user/guest-book.php?room=" + encodeURIComponent(item.name || "");
+        // "Book / Inquire" opens the details page first; "Book Now" there continues to the booking flow.
+        const bookingUrl = "accommodation-details.php?" +
+            (item.id ? "id=" + encodeURIComponent(item.id) + "&" : "") +
+            "room=" + encodeURIComponent(item.name || "");
         card.innerHTML = `
             <div class="room-media">
                 ${image}
