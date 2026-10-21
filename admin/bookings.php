@@ -52,7 +52,10 @@ $pdo->exec("
 ------------------------------------------------------------------ */
 $filterStatus = $_GET['status'] ?? '';
 $filterSearch = trim($_GET['search'] ?? '');
-$allowedStatuses = ['', 'confirmed', 'pending', 'cancelled', 'completed'];
+/* Display statuses only: Upcoming, Checked-in, Cancelled. These are derived
+   from the booking dates + cancelled flag (the DB status column is shared
+   with Payments / Dashboard / Reports, so its values are left untouched). */
+$allowedStatuses = ['', 'upcoming', 'checked_in', 'cancelled'];
 if (!in_array($filterStatus, $allowedStatuses, true)) $filterStatus = '';
 
 /* Pagination — 10 bookings per page, like the Payments and Dashboard tables */
@@ -64,20 +67,20 @@ $currentPage = max(1, (int) ($_GET['page'] ?? 1));
 ------------------------------------------------------------------ */
 $statTotal = (int) $pdo->query("SELECT COUNT(*) FROM bookings")->fetchColumn();
 
-$statConfirmed = (int) $pdo->query(
-    "SELECT COUNT(*) FROM bookings WHERE status = 'confirmed'"
-)->fetchColumn();
+$statUpcomingStmt = $pdo->prepare(
+    "SELECT COUNT(*) FROM bookings WHERE status <> 'cancelled' AND check_in > :today"
+);
+$statUpcomingStmt->execute(['today' => $today]);
+$statUpcoming = (int) $statUpcomingStmt->fetchColumn();
 
-$statPending = (int) $pdo->query(
-    "SELECT COUNT(*) FROM bookings WHERE status = 'pending'"
-)->fetchColumn();
+$statCheckedInStmt = $pdo->prepare(
+    "SELECT COUNT(*) FROM bookings WHERE status <> 'cancelled' AND check_in <= :today"
+);
+$statCheckedInStmt->execute(['today' => $today]);
+$statCheckedIn = (int) $statCheckedInStmt->fetchColumn();
 
 $statCancelled = (int) $pdo->query(
     "SELECT COUNT(*) FROM bookings WHERE status = 'cancelled'"
-)->fetchColumn();
-
-$statCompleted = (int) $pdo->query(
-    "SELECT COUNT(*) FROM bookings WHERE status = 'completed'"
 )->fetchColumn();
 
 /* ------------------------------------------------------------------
@@ -86,9 +89,14 @@ $statCompleted = (int) $pdo->query(
 $whereClauses = [];
 $params       = [];
 
-if ($filterStatus !== '') {
-    $whereClauses[] = 'b.status = :status';
-    $params['status'] = $filterStatus;
+if ($filterStatus === 'cancelled') {
+    $whereClauses[] = "b.status = 'cancelled'";
+} elseif ($filterStatus === 'upcoming') {
+    $whereClauses[] = "b.status <> 'cancelled' AND b.check_in > :today";
+    $params['today'] = $today;
+} elseif ($filterStatus === 'checked_in') {
+    $whereClauses[] = "b.status <> 'cancelled' AND b.check_in <= :today";
+    $params['today'] = $today;
 }
 
 if ($filterSearch !== '') {
@@ -167,43 +175,29 @@ function bk_phone(array $bk): string
     return $bk['reg_phone'] ?? $bk['guest_phone'] ?? '';
 }
 
-function bk_badge(string $status): string
+/**
+ * Display status for a booking — one of: upcoming, checked_in, cancelled.
+ *   cancelled  → the booking was cancelled
+ *   upcoming   → not cancelled and the check-in date is still ahead
+ *   checked_in → not cancelled and check-in date is today or earlier
+ */
+function bk_display_status(array $bk, string $today): string
 {
-    $map = [
-        'confirmed' => ['ab--green', 'Confirmed'],
-        'pending'   => ['ab--amber', 'Pending'],
-        'cancelled' => ['ab--red',   'Cancelled'],
-        'completed' => ['ab--blue',  'Completed'],
-    ];
-    [$cls, $lbl] = $map[$status] ?? ['ab--grey', ucfirst($status)];
-    return '<span class="ab ' . $cls . '">' . htmlspecialchars($lbl, ENT_QUOTES, 'UTF-8') . '</span>';
+    if (($bk['status'] ?? '') === 'cancelled') {
+        return 'cancelled';
+    }
+    return ($bk['check_in'] > $today) ? 'upcoming' : 'checked_in';
 }
 
-/**
- * Combined Payment + Status badge for the bookings table.
- * A booking that hasn't been confirmed yet has no payment to speak of,
- * so it simply reads "Pending". Cancelled/completed bookings show their
- * own state. Only confirmed bookings — the ones actually paid — show
- * the payment method (Cash / GCash) as the badge label.
- */
-function bk_status_payment_badge(array $bk): string
+function bk_display_badge(array $bk, string $today): string
 {
-    $status = $bk['status'];
-
-    if ($status === 'cancelled') {
-        return '<span class="ab ab--red">Cancelled</span>';
-    }
-    if ($status === 'completed') {
-        return '<span class="ab ab--blue">Completed</span>';
-    }
-    if ($status !== 'confirmed') {
-        // pending, or any unexpected value — not paid yet
-        return '<span class="ab ab--amber">Pending</span>';
-    }
-
-    $method = $bk['payment_method'] ?? 'cash';
-    $label  = $method === 'gcash' ? 'GCash' : 'Cash';
-    return '<span class="ab ab--green">' . htmlspecialchars($label, ENT_QUOTES, 'UTF-8') . '</span>';
+    $map = [
+        'upcoming'   => ['ab--amber', 'Upcoming'],
+        'checked_in' => ['ab--green', 'Checked-in'],
+        'cancelled'  => ['ab--red',   'Cancelled'],
+    ];
+    [$cls, $lbl] = $map[bk_display_status($bk, $today)];
+    return '<span class="ab ' . $cls . '">' . $lbl . '</span>';
 }
 
 require __DIR__ . '/includes/head.php';
@@ -216,7 +210,7 @@ require __DIR__ . '/includes/topbar.php';
    admin/bookings.php — page-scoped styles
    ============================================================ */
 .stack       { display: flex; flex-direction: column; gap: 24px; }
-.stat-grid   { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+.stat-grid   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .stat-card   { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px 18px; cursor: pointer; transition: border-color var(--transition), box-shadow var(--transition); }
 .stat-card:hover, .stat-card.is-active { border-color: var(--gold-500); box-shadow: 0 0 0 2px rgba(245,166,35,.15); }
 .stat-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -409,19 +403,20 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .dp-swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; background: var(--red-bg); border: 1px solid var(--red); }
 
 /* Responsive */
-@media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 700px)  { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 540px)  { .detail-grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: 1fr; } }
 </style>
 
 <?php
 /* Pass bookings to JS as JSON for the detail modal */
-$bookingsJson = json_encode(array_map(function ($bk) {
+$bookingsJson = json_encode(array_map(function ($bk) use ($today) {
     return [
         'id'           => (int) $bk['id'],
         'reference'    => $bk['reference'],
         'booking_type' => $bk['booking_type'],
         'status'       => $bk['status'],
+        'display_status' => bk_display_status($bk, $today),
         'accommodation_id' => (int) $bk['accommodation_id'],
         'check_in'     => $bk['check_in'],
         'check_out'    => $bk['check_out'],
@@ -460,19 +455,19 @@ $bookingsJson = json_encode(array_map(function ($bk) {
             </div>
             <span class="stat-value"><?php echo $statTotal; ?></span>
         </div>
-        <div class="stat-card <?php echo $filterStatus === 'confirmed' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('confirmed')">
+        <div class="stat-card <?php echo $filterStatus === 'upcoming' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('upcoming')">
             <div class="stat-card-top">
-                <span class="stat-label">Confirmed</span>
-                <span class="stat-icon stat-icon--emerald"><?php echo icon('calendar-check'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statConfirmed; ?></span>
-        </div>
-        <div class="stat-card <?php echo $filterStatus === 'pending' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('pending')">
-            <div class="stat-card-top">
-                <span class="stat-label">Pending</span>
+                <span class="stat-label">Upcoming</span>
                 <span class="stat-icon stat-icon--amber"><?php echo icon('clock'); ?></span>
             </div>
-            <span class="stat-value"><?php echo $statPending; ?></span>
+            <span class="stat-value"><?php echo $statUpcoming; ?></span>
+        </div>
+        <div class="stat-card <?php echo $filterStatus === 'checked_in' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('checked_in')">
+            <div class="stat-card-top">
+                <span class="stat-label">Checked-in</span>
+                <span class="stat-icon stat-icon--emerald"><?php echo icon('calendar-check'); ?></span>
+            </div>
+            <span class="stat-value"><?php echo $statCheckedIn; ?></span>
         </div>
         <div class="stat-card <?php echo $filterStatus === 'cancelled' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('cancelled')">
             <div class="stat-card-top">
@@ -480,13 +475,6 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                 <span class="stat-icon stat-icon--red"><?php echo icon('close'); ?></span>
             </div>
             <span class="stat-value"><?php echo $statCancelled; ?></span>
-        </div>
-        <div class="stat-card <?php echo $filterStatus === 'completed' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('completed')">
-            <div class="stat-card-top">
-                <span class="stat-label">Completed</span>
-                <span class="stat-icon stat-icon--blue"><?php echo icon('calendar-check'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statCompleted; ?></span>
         </div>
     </div>
 
@@ -499,10 +487,9 @@ $bookingsJson = json_encode(array_map(function ($bk) {
         </div>
         <select class="filter-select" id="statusSelect">
             <option value="">All Statuses</option>
-            <option value="confirmed"  <?php echo $filterStatus === 'confirmed'  ? 'selected' : ''; ?>>Confirmed</option>
-            <option value="pending"    <?php echo $filterStatus === 'pending'    ? 'selected' : ''; ?>>Pending</option>
+            <option value="upcoming"   <?php echo $filterStatus === 'upcoming'   ? 'selected' : ''; ?>>Upcoming</option>
+            <option value="checked_in" <?php echo $filterStatus === 'checked_in' ? 'selected' : ''; ?>>Checked-in</option>
             <option value="cancelled"  <?php echo $filterStatus === 'cancelled'  ? 'selected' : ''; ?>>Cancelled</option>
-            <option value="completed"  <?php echo $filterStatus === 'completed'  ? 'selected' : ''; ?>>Completed</option>
         </select>
     </div>
 
@@ -552,11 +539,11 @@ $bookingsJson = json_encode(array_map(function ($bk) {
                                 </td>
                                 <td><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></td>
                                 <td><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></td>
-                                <td><?php echo bk_status_payment_badge($bk); ?></td>
+                                <td><?php echo bk_display_badge($bk, $today); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
                                         <button class="btn-sm btn-sm--gold" onclick="openDetail(<?php echo (int) $bk['id']; ?>)" title="View Details">
-                                            <?php echo icon('calendar', 'icon-sm'); ?>
+                                            <?php echo icon('eye', 'icon-sm'); ?>
                                         </button>
                                         <?php if (in_array($bk['status'], ['confirmed','pending'])): ?>
                                             <button class="btn-sm btn-sm--danger" onclick="quickStatus(<?php echo (int) $bk['id']; ?>, 'cancelled')" title="Cancel">
@@ -958,7 +945,7 @@ function openDetail(id) {
     var nights = Math.round((co - ci) / 86400000);
 
     document.getElementById('modalRef').textContent    = b.reference;
-    document.getElementById('modalBadge').innerHTML    = badgeHtml(b.status);
+    document.getElementById('modalBadge').innerHTML    = badgeHtml(b.display_status);
     document.getElementById('dGuestName').textContent  = b.guest_name || '—';
     document.getElementById('dGuestType').innerHTML    = typeBadge(b.booking_type);
     document.getElementById('dGuestEmail').textContent = b.guest_email || '—';
@@ -1029,7 +1016,7 @@ function changeStatus(id, newStatus) {
     .then(function (r) { return r.json(); })
     .then(function (data) {
         if (data.success) {
-            toast('Booking status updated to ' + cap(newStatus) + '.', 'success');
+            toast(newStatus === 'cancelled' ? 'Booking cancelled.' : 'Booking restored.', 'success');
             closeDetail();
             setTimeout(function () { window.location.reload(); }, 900);
         } else {
@@ -1606,10 +1593,9 @@ function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : ''; }
 
 function badgeHtml(status) {
     var map = {
-        confirmed: ['ab--green', 'Confirmed'],
-        pending:   ['ab--amber', 'Pending'],
-        cancelled: ['ab--red',   'Cancelled'],
-        completed: ['ab--blue',  'Completed'],
+        upcoming:   ['ab--amber', 'Upcoming'],
+        checked_in: ['ab--green', 'Checked-in'],
+        cancelled:  ['ab--red',   'Cancelled'],
     };
     var b = map[status] || ['ab--grey', cap(status)];
     return '<span class="ab ' + b[0] + '">' + b[1] + '</span>';

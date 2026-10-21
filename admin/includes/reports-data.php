@@ -492,16 +492,23 @@ function reports_guest_insights_data(PDO $pdo, string $start, string $end): arra
     $avgRatingRaw = $pdo->query("SELECT AVG(rating) FROM feedback WHERE is_published = 1")->fetchColumn();
     $avgRating    = $avgRatingRaw !== null ? round((float) $avgRatingRaw, 1) : null;
 
-    /* Top returning guests (registered, all-time visit count) */
-    $stmt = $pdo->query(
+    /* Top returning guests (registered, all-time visit count).
+       A guest only counts as "returning" once they have booked at least
+       $minVisits times, so first-time guests (1 booking) are not listed.
+       Change $minVisits to 3 to require two returns before listing. */
+    $minVisits = 2;
+    $stmt = $pdo->prepare(
         "SELECT g.id, CONCAT(g.first_name, ' ', g.last_name) AS name, g.country,
                 COUNT(b.id) AS visits
          FROM guests g
          JOIN bookings b ON b.guest_id = g.id AND b.status IN ($activeStatuses)
          GROUP BY g.id, g.first_name, g.last_name, g.country
+         HAVING COUNT(b.id) >= :minv
          ORDER BY visits DESC
          LIMIT 5"
     );
+    $stmt->bindValue('minv', $minVisits, PDO::PARAM_INT);
+    $stmt->execute();
     $topGuests = $stmt->fetchAll();
 
     $mostBookedStmt = $pdo->prepare(

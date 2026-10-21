@@ -53,9 +53,15 @@ $pdo->exec("
 
 /* Discount is now entered as a percentage of the subtotal. The peso amount
    stays in `discount` (so reports keep working); the percentage is kept in
-   `discount_percent` so it can be shown and edited again. */
+   `discount_percent` so it can be shown and edited again.
+   The discount only applies to the guests who are entitled to it (e.g. the
+   senior citizen in the room), not the whole bill: the number of those
+   guests is kept in `discount_guests`. */
 if (!$pdo->query("SHOW COLUMNS FROM `payments` LIKE 'discount_percent'")->fetch()) {
     $pdo->exec("ALTER TABLE `payments` ADD COLUMN `discount_percent` DECIMAL(5,2) NULL DEFAULT NULL AFTER `discount`");
+}
+if (!$pdo->query("SHOW COLUMNS FROM `payments` LIKE 'discount_guests'")->fetch()) {
+    $pdo->exec("ALTER TABLE `payments` ADD COLUMN `discount_guests` INT UNSIGNED NULL DEFAULT NULL AFTER `discount_percent`");
 }
 
 /* ------------------------------------------------------------------
@@ -190,7 +196,7 @@ $sql = "SELECT
             g.first_name, g.last_name, g.email AS reg_email, g.phone AS reg_phone,
             p.id              AS pay_id,
             p.room_fee, p.extra_guest_fee, p.other_charges,
-            p.discount, p.discount_percent, p.discount_reason,
+            p.discount, p.discount_percent, p.discount_guests, p.discount_reason,
             p.total_paid,
             p.payment_method  AS pay_method,
             p.payment_status,
@@ -299,6 +305,8 @@ $rowsJson = json_encode(array_map(function ($r) {
         'other_charges'   => $r['other_charges']   !== null ? (float) $r['other_charges']   : 0.0,
         'discount'        => $r['discount']         !== null ? (float) $r['discount']         : 0.0,
         'discount_percent' => pm_discount_percent($r),
+        /* null = old record saved before per-guest discounts (discount was on the whole bill) */
+        'discount_guests' => $r['discount_guests'] !== null ? (int) $r['discount_guests'] : null,
         'discount_reason' => $r['discount_reason'] ?? '',
         'total_paid'      => $r['total_paid']       !== null ? (float) $r['total_paid']       : 0.0,
         'pay_method'      => $r['pay_method'] ?? $r['booking_pm'] ?? 'cash',
@@ -571,7 +579,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         <th>Booking</th>
                         <th>Total Due</th>
                         <th>Paid</th>
-                        <th>Pay Status</th>
+                        <th>Status</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -688,7 +696,12 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     <div class="form-group">
                         <label class="form-label">Discount (%)</label>
                         <input class="form-input" type="number" id="fDiscount" min="0" max="100" step="0.01" oninput="recalc()" placeholder="0">
-                        <span class="form-hint" id="discHint" style="font-size:11px;color:var(--text-tertiary);">Percent off the subtotal (e.g. 20 for senior citizen)</span>
+                        <span class="form-hint" style="font-size:11px;color:var(--text-tertiary);">Percent off per discounted guest (e.g. 20 for senior citizen)</span>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Guests with Discount</label>
+                        <input class="form-input" type="number" id="fDiscountGuests" min="0" step="1" oninput="recalc()" placeholder="0">
+                        <span class="form-hint" id="discHint" style="font-size:11px;color:var(--text-tertiary);">How many of the guests in the room get the discount</span>
                     </div>
                     <div class="form-group full">
                         <label class="form-label">Discount Reason</label>
@@ -863,6 +876,12 @@ function openBilling(bid) {
     document.getElementById('fExtraGuest').value     = r.extra_guest_fee.toFixed(2);
     document.getElementById('fOtherCharges').value   = r.other_charges.toFixed(2);
     document.getElementById('fDiscount').value       = r.discount_percent > 0 ? String(r.discount_percent) : '';
+    /* Old records (discount_guests null) had the discount on the whole bill,
+       so open them as "all guests" to keep them editable. */
+    var dg = r.discount_guests !== null && r.discount_guests !== undefined
+        ? r.discount_guests
+        : (r.discount_percent > 0 ? r.guests_count : 0);
+    document.getElementById('fDiscountGuests').value = dg > 0 ? String(dg) : '';
     document.getElementById('fDiscountReason').value = r.discount_reason || '';
     document.getElementById('fTotalPaid').value      = r.total_paid > 0 ? r.total_paid.toFixed(2) : '';
     document.getElementById('fPayMethod').value      = r.pay_method || 'cash';
@@ -889,6 +908,23 @@ function clampPct(p) { p = parseFloat(p) || 0; return Math.min(100, Math.max(0, 
 function pctLabel(p) { return (Math.round(p * 100) / 100) + '%'; }
 function discountAmount(subtotal, pct) { return Math.round(subtotal * pct) / 100; }
 
+/* Number of discounted guests, kept between 0 and the guests in the room. */
+function clampGuests(n, max) {
+    n = parseInt(n, 10) || 0;
+    return Math.min(Math.max(1, max || 1), Math.max(0, n));
+}
+
+/* The discount is an add-on for the guests who qualify, not for the whole bill.
+   Room fee + extra guest fee is shared equally between the guests in the room,
+   and the percentage is taken off only the share of the discounted guests.
+   Other charges are never discounted. */
+function perGuestShare(rf, eg, guestsCount) {
+    return (rf + eg) / Math.max(1, guestsCount || 1);
+}
+function guestDiscount(rf, eg, guestsCount, discGuests, pct) {
+    return discountAmount(perGuestShare(rf, eg, guestsCount) * discGuests, pct);
+}
+
 /* ---------- Recalculate running total ---------- */
 function recalc() {
     var rf   = parseFloat(document.getElementById('fRoomFee').value)      || 0;
@@ -897,7 +933,10 @@ function recalc() {
     var pct  = clampPct(document.getElementById('fDiscount').value);
     var paid = parseFloat(document.getElementById('fTotalPaid').value)    || 0;
 
-    var disc    = discountAmount(rf + eg + oc, pct);
+    var gc      = activeBid && rowMap[activeBid] ? rowMap[activeBid].guests_count : 1;
+    var dg      = clampGuests(document.getElementById('fDiscountGuests').value, gc);
+    var share   = perGuestShare(rf, eg, gc);
+    var disc    = guestDiscount(rf, eg, gc, dg, pct);
     var total   = Math.max(0, rf + eg + oc - disc);
     var balance = Math.max(0, total - paid);
 
@@ -907,10 +946,12 @@ function recalc() {
     document.getElementById('bsExtraGuest').textContent   = '₱' + fmt(eg);
     document.getElementById('bsOtherCharges').textContent = '₱' + fmt(oc);
     document.getElementById('bsDiscount').textContent     = '– ₱' + fmt(disc);
-    document.getElementById('bsDiscountLabel').textContent = pct > 0 ? 'Discount (' + pctLabel(pct) + ')' : 'Discount';
-    document.getElementById('discHint').textContent       = pct > 0
-        ? '= ₱' + fmt(disc) + ' off the subtotal of ₱' + fmt(rf + eg + oc)
-        : 'Percent off the subtotal (e.g. 20 for senior citizen)';
+    document.getElementById('bsDiscountLabel').textContent = (pct > 0 && dg > 0)
+        ? 'Discount (' + pctLabel(pct) + ' × ' + dg + ' guest' + (dg === 1 ? '' : 's') + ')'
+        : 'Discount';
+    document.getElementById('discHint').textContent       = (pct > 0 && dg > 0)
+        ? dg + ' of ' + gc + ' guest' + (gc === 1 ? '' : 's') + ' × ₱' + fmt(share) + ' each = ₱' + fmt(disc) + ' off'
+        : 'How many of the ' + gc + ' guest' + (gc === 1 ? '' : 's') + ' in the room get the discount';
     document.getElementById('bsTotal').textContent        = '₱' + fmt(total);
     document.getElementById('fPayStatus').value           = payStatus;
     document.getElementById('fBalance').value             = '₱' + fmt(balance);
@@ -928,7 +969,9 @@ function saveBilling() {
     var oc   = parseFloat(document.getElementById('fOtherCharges').value) || 0;
     var pct  = clampPct(document.getElementById('fDiscount').value);
     var paid = parseFloat(document.getElementById('fTotalPaid').value)    || 0;
-    var disc = discountAmount(rf + eg + oc, pct);
+    var gc   = rowMap[activeBid] ? rowMap[activeBid].guests_count : 1;
+    var dg   = clampGuests(document.getElementById('fDiscountGuests').value, gc);
+    var disc = guestDiscount(rf, eg, gc, dg, pct);
     var total = Math.max(0, rf + eg + oc - disc);
 
     var payStatus = paid <= 0 ? 'unpaid' : (paid >= total ? 'paid' : 'partial');
@@ -941,6 +984,7 @@ function saveBilling() {
         extra_guest_fee: eg,
         other_charges:   oc,
         discount_percent: pct,
+        discount_guests: dg,
         discount:        disc,
         discount_reason: document.getElementById('fDiscountReason').value,
         total_paid:      paid,
@@ -965,6 +1009,7 @@ function saveBilling() {
             r.other_charges   = oc;
             r.discount        = disc;
             r.discount_percent = pct;
+            r.discount_guests = dg;
             r.discount_reason = document.getElementById('fDiscountReason').value;
             r.total_paid      = paid;
             r.pay_method      = document.getElementById('fPayMethod').value;
@@ -999,7 +1044,11 @@ function buildReceipt(r) {
     var eg   = r.extra_guest_fee || 0;
     var oc   = r.other_charges   || 0;
     var pct  = r.discount_percent || 0;
-    var disc = pct > 0 ? discountAmount(rf + eg + oc, pct) : (r.discount || 0);
+    var dg   = (r.discount_guests !== null && r.discount_guests !== undefined) ? r.discount_guests : null;
+    /* New records: per-guest discount. Old records (no guest count): use the amount that was saved. */
+    var disc = dg !== null
+        ? guestDiscount(rf, eg, r.guests_count, clampGuests(dg, r.guests_count), pct)
+        : (r.discount || 0);
     var paid = r.total_paid      || 0;
     var total = Math.max(0, rf + eg + oc - disc);
     var bal   = Math.max(0, total - paid);
@@ -1022,7 +1071,9 @@ function buildReceipt(r) {
     var dRow = document.getElementById('rcDiscountRow');
     if (disc > 0) {
         document.getElementById('rcDiscount').textContent = '– ₱' + fmt(disc);
-        document.getElementById('rcDiscountLabel').textContent = pct > 0 ? 'Discount (' + pctLabel(pct) + ')' : 'Discount';
+        document.getElementById('rcDiscountLabel').textContent = (dg !== null && dg > 0 && pct > 0)
+            ? 'Discount (' + pctLabel(pct) + ' × ' + dg + ' guest' + (dg === 1 ? '' : 's') + ')'
+            : (pct > 0 ? 'Discount (' + pctLabel(pct) + ')' : 'Discount');
         dRow.style.display = '';
     } else {
         dRow.style.display = 'none';
