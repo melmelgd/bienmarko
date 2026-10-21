@@ -506,7 +506,15 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 
 @media (max-width: 900px)  { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 540px)  { .stat-grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: 1fr; } }
-@media print { .modal-overlay, .receipt-actions, .stat-grid, .toolbar, .panel { display: none !important; } .receipt-overlay { position: static !important; } .receipt-box { box-shadow: none; } }
+@media print {
+    /* Print only the receipt — hide the page chrome (top bar, sidebar, toasts) */
+    .topbar, .sidebar, .toast-wrap, .topbar-mobile-toggle { display: none !important; }
+    .app-main { margin-left: 0 !important; padding-top: 0 !important; }
+    .content { padding: 0 !important; }
+    .modal-overlay, .receipt-actions, .stat-grid, .toolbar, .panel { display: none !important; }
+    .receipt-overlay { position: static !important; }
+    .receipt-box { box-shadow: none; }
+}
 </style>
 
 <div class="stack">
