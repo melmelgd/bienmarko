@@ -26,24 +26,39 @@ if (!isset($typeOptions[$initialType])) {
 }
 
 // Pull guest profile for Step 3 pre-fill
-$guestProfile = ['first_name' => '', 'last_name' => '', 'phone' => ''];
+$guestProfile = ['first_name' => '', 'last_name' => '', 'email' => '', 'phone' => ''];
+$prefillAddress = '';
 try {
     $pdo     = bienmarko_db();
     $guestId = (int) ($_SESSION['auth_user_id'] ?? 0);
     $gStmt   = $pdo->prepare(
-        "SELECT first_name, last_name, phone FROM guests WHERE id = :id LIMIT 1"
+        "SELECT first_name, last_name, email, phone FROM guests WHERE id = :id LIMIT 1"
     );
     $gStmt->execute(['id' => $guestId]);
     $gRow = $gStmt->fetch(PDO::FETCH_ASSOC);
     if ($gRow) {
-        $guestProfile = $gRow;
+        $guestProfile = array_merge($guestProfile, $gRow);
     }
 } catch (Throwable $e) {
    
 }
 
+// Re-use the address from this guest's most recent booking, if they gave one.
+try {
+    $aStmt = $pdo->prepare(
+        "SELECT address FROM bookings
+         WHERE guest_id = :id AND address IS NOT NULL AND address <> ''
+         ORDER BY id DESC LIMIT 1"
+    );
+    $aStmt->execute(['id' => $guestId]);
+    $prefillAddress = (string) ($aStmt->fetchColumn() ?: '');
+} catch (Throwable $e) {
+    // bookings.address may not exist yet on a fresh install — ignore.
+}
+
 $prefillName  = trim($guestProfile['first_name'] . ' ' . $guestProfile['last_name']);
 $prefillPhone = $guestProfile['phone'] ?? '';
+$prefillEmail = $guestProfile['email'] ?? '';
 
 $myBookings = [];
 try {
@@ -75,6 +90,8 @@ try {
         "SELECT b.id, b.reference, b.check_in, b.check_out,
                 b.guests_count, b.status, b.total_amount, b.notes,
                 b.created_at, b.accommodation_id, b.companion_names,
+                b.guest_name, b.email AS contact_email, b.phone AS contact_phone,
+                b.address AS contact_address,
                 a.name AS room_name, a.type AS room_type,
                 a.capacity AS room_capacity, a.price AS room_price,
                 a.image_filename
@@ -475,6 +492,29 @@ require __DIR__ . '/includes/head.php';
   transition: border-color .15s;
 }
 .guest-info-field input:focus { border-color: var(--ember); outline: none; }
+.guest-info-field select {
+  background: var(--surface-raised);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--paper);
+  padding: 12px 14px;
+  width: 100%;
+  font-size: 15px;
+  font-family: var(--font-body);
+  transition: border-color .15s;
+  cursor: pointer;
+}
+.guest-info-field select:focus { border-color: var(--ember); outline: none; }
+.guest-info-field .req { color: var(--ember); font-weight: 700; }
+.pay-method {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--surface-raised); border: 1px solid var(--ember);
+  border-radius: var(--radius-sm); padding: 12px 14px; font-size: 13px; color: var(--paper-dim);
+}
+.pay-method strong { font-size: 15px; color: var(--paper); }
+.guest-info-field select option,
+.guest-info-field select optgroup { background: var(--surface-raised); color: var(--paper); }
+.guest-info-field select option:disabled { color: var(--paper-faint); }
 .guest-info-field .field-hint {
   font-size: 12px; color: var(--paper-faint);
 }
@@ -780,7 +820,7 @@ require __DIR__ . '/includes/head.php';
 }
 .cal-legend-dot--available   { background: rgba(40,160,90,.7); }
 .cal-legend-dot--booked      { background: rgba(220,80,60,.7); }
-.cal-legend-dot--maintenance { background: rgba(220,160,20,.7); }
+.cal-legend-dot--maintenance { background: rgba(5, 9, 205, 0.7); }
 .cal-legend-dot--unavailable { background: rgba(100,100,120,.7); }
 .cal-legend-dot--selected    { background: var(--ember); }
 
@@ -1232,21 +1272,48 @@ require __DIR__ . '/includes/head.php';
                 </div>
 
                 <div class="guest-info-grid">
-                    <div class="guest-info-field" style="grid-column:1/-1">
-                        <label for="guestFullName">Full Name</label>
-                        <input type="text" id="guestFullName"
-                               value="<?php echo htmlspecialchars($prefillName); ?>"
-                               placeholder="Your full name"
-                               autocomplete="name">
-                        <span class="field-hint">Pre-filled from your account — update if needed.</span>
+                    <div class="guest-info-field">
+                        <label for="guestFirstName">First Name <span class="req">*</span></label>
+                        <input type="text" id="guestFirstName" maxlength="80" required
+                               value="<?php echo htmlspecialchars((string) $guestProfile['first_name']); ?>"
+                               placeholder="Juan" autocomplete="given-name">
                     </div>
                     <div class="guest-info-field">
-                        <label for="guestPhone">Phone Number</label>
-                        <input type="tel" id="guestPhone"
+                        <label for="guestLastName">Last Name <span class="req">*</span></label>
+                        <input type="text" id="guestLastName" maxlength="80" required
+                               value="<?php echo htmlspecialchars((string) $guestProfile['last_name']); ?>"
+                               placeholder="Dela Cruz" autocomplete="family-name">
+                    </div>
+                    <div class="guest-info-field">
+                        <label for="guestEmail">Email Address <span class="req">*</span></label>
+                        <input type="email" id="guestEmail" maxlength="200" required inputmode="email"
+                               value="<?php echo htmlspecialchars((string) $prefillEmail); ?>"
+                               placeholder="juan@example.com" autocomplete="email">
+                        <span class="field-hint">Your confirmation is sent here.</span>
+                    </div>
+                    <div class="guest-info-field">
+                        <label for="guestPhone">Phone Number <span class="req">*</span></label>
+                        <input type="tel" id="guestPhone" maxlength="30" required
                                value="<?php echo htmlspecialchars($prefillPhone); ?>"
                                placeholder="+63 9XX XXX XXXX"
                                autocomplete="tel">
                         <span class="field-hint">For booking confirmation contact.</span>
+                    </div>
+                    <div class="guest-info-field" style="grid-column:1/-1">
+                        <label for="guestAddress">Home Address <span style="font-weight:400;color:var(--paper-faint)">(optional)</span></label>
+                        <input type="text" id="guestAddress" maxlength="255"
+                               value="<?php echo htmlspecialchars($prefillAddress); ?>"
+                               placeholder="Street, Barangay, City / Municipality, Province"
+                               autocomplete="street-address">
+                        <span class="field-hint">Pre-filled from your account and last booking — update if needed.</span>
+                    </div>
+
+                    <div class="guest-info-field" style="grid-column:1/-1">
+                        <label>Payment Method</label>
+                        <div class="pay-method">
+                            <strong>Cash</strong>
+                            <span>Pay in person at check-in or check-out.</span>
+                        </div>
                     </div>
 
                     <!-- Additional guest names — shown for any accommodation whose
@@ -1306,6 +1373,19 @@ require __DIR__ . '/includes/head.php';
                         $isActive   = in_array($bk['status'], ['pending', 'confirmed'], true);
                         $canModify  = $isActive && strtotime($bk['check_in']) >= strtotime($today);
 
+                        // Contact details saved with the booking; older bookings fall back to the profile.
+                        if (!empty($bk['guest_name'])) {
+                            $nameParts = preg_split('/\s+/', trim((string) $bk['guest_name']));
+                            $rowLast   = count($nameParts) > 1 ? array_pop($nameParts) : '';
+                            $rowFirst  = implode(' ', $nameParts);
+                        } else {
+                            $rowFirst = (string) $guestProfile['first_name'];
+                            $rowLast  = (string) $guestProfile['last_name'];
+                        }
+                        $rowEmail   = !empty($bk['contact_email']) ? (string) $bk['contact_email'] : (string) $prefillEmail;
+                        $rowPhone   = !empty($bk['contact_phone']) ? (string) $bk['contact_phone'] : (string) $prefillPhone;
+                        $rowAddress = (string) ($bk['contact_address'] ?? '');
+
                         $companionNamesArr = [];
                         if (!empty($bk['companion_names'])) {
                             $decodedNames = json_decode((string) $bk['companion_names'], true);
@@ -1328,6 +1408,11 @@ require __DIR__ . '/includes/head.php';
                                  data-guests="<?php echo (int) $bk['guests_count']; ?>"
                                  data-notes="<?php echo htmlspecialchars((string) $bk['notes']); ?>"
                                  data-companion-names="<?php echo htmlspecialchars(json_encode($companionNamesArr, JSON_UNESCAPED_UNICODE)); ?>"
+                                 data-first-name="<?php echo htmlspecialchars($rowFirst); ?>"
+                                 data-last-name="<?php echo htmlspecialchars($rowLast); ?>"
+                                 data-email="<?php echo htmlspecialchars($rowEmail); ?>"
+                                 data-phone="<?php echo htmlspecialchars($rowPhone); ?>"
+                                 data-address="<?php echo htmlspecialchars($rowAddress); ?>"
                                  data-status="<?php echo htmlspecialchars($bk['status']); ?>"
                                  data-image="<?php echo htmlspecialchars((string) $bk['image_filename']); ?>">
                             <div class="bk-item__img">
@@ -1407,8 +1492,20 @@ require __DIR__ . '/includes/head.php';
                 <span class="bk-detail-row__value" id="bkDetailGuest">—</span>
             </div>
             <div class="bk-detail-row">
+                <span class="bk-detail-row__label">Email</span>
+                <span class="bk-detail-row__value" id="bkDetailEmail">—</span>
+            </div>
+            <div class="bk-detail-row">
                 <span class="bk-detail-row__label">Phone</span>
                 <span class="bk-detail-row__value" id="bkDetailPhone">—</span>
+            </div>
+            <div class="bk-detail-row" id="bkDetailAddressRow">
+                <span class="bk-detail-row__label">Address</span>
+                <span class="bk-detail-row__value" id="bkDetailAddress">—</span>
+            </div>
+            <div class="bk-detail-row">
+                <span class="bk-detail-row__label">Payment</span>
+                <span class="bk-detail-row__value">Cash on arrival</span>
             </div>
             <div class="bk-detail-divider"></div>
             <div class="bk-detail-row">
@@ -1503,7 +1600,7 @@ require __DIR__ . '/includes/head.php';
         </div>
 
         <div class="bk-modal__room">
-            <div class="bk-modal__room-img"><?php render_icon('bed-double'); ?></div>
+            <div class="bk-modal__room-img" id="editRoomImg"><?php render_icon('bed-double'); ?></div>
             <div>
                 <div class="bk-modal__room-name" id="editRoomName">Room</div>
                 <div class="bk-modal__room-type" id="editRoomType"></div>
@@ -1511,6 +1608,36 @@ require __DIR__ . '/includes/head.php';
         </div>
 
         <div class="guest-info-panel" style="padding:0 20px">
+            <!-- Change the booked accommodation (the server re-checks availability + re-prices) -->
+            <div class="guest-info-field">
+                <label for="editRoomSelect">Accommodation</label>
+                <select id="editRoomSelect" aria-describedby="editRoomHint"></select>
+                <span class="field-hint" id="editRoomHint"></span>
+            </div>
+
+            <div class="guest-info-grid">
+                <div class="guest-info-field">
+                    <label for="editFirstName">First Name <span class="req">*</span></label>
+                    <input type="text" id="editFirstName" maxlength="80" required autocomplete="given-name">
+                </div>
+                <div class="guest-info-field">
+                    <label for="editLastName">Last Name <span class="req">*</span></label>
+                    <input type="text" id="editLastName" maxlength="80" required autocomplete="family-name">
+                </div>
+                <div class="guest-info-field">
+                    <label for="editEmail">Email Address <span class="req">*</span></label>
+                    <input type="email" id="editEmail" maxlength="200" required inputmode="email" autocomplete="email">
+                </div>
+                <div class="guest-info-field">
+                    <label for="editPhone">Phone Number <span class="req">*</span></label>
+                    <input type="tel" id="editPhone" maxlength="30" required autocomplete="tel">
+                </div>
+                <div class="guest-info-field" style="grid-column:1/-1">
+                    <label for="editAddress">Home Address <span style="font-weight:400;color:var(--paper-faint)">(optional)</span></label>
+                    <input type="text" id="editAddress" maxlength="255" autocomplete="street-address">
+                </div>
+            </div>
+
             <div class="guest-info-grid">
                 <div class="guest-info-field">
                     <label for="editCheckIn">Check-in date</label>
@@ -1754,8 +1881,11 @@ require __DIR__ . '/includes/head.php';
   // Step 3
   var elStep3Error    = document.getElementById('step3Error');
   var elStep3ErrorTxt = document.getElementById('step3ErrorText');
-  var elGuestName     = document.getElementById('guestFullName');
+  var elGuestFirst    = document.getElementById('guestFirstName');
+  var elGuestLast     = document.getElementById('guestLastName');
+  var elGuestEmail    = document.getElementById('guestEmail');
   var elGuestPhone    = document.getElementById('guestPhone');
+  var elGuestAddress  = document.getElementById('guestAddress');
 
   // Additional guest names (Step 3) — capacity-based, any accommodation type
   var elCompanionsField = document.getElementById('s3CompanionsField');
@@ -2796,26 +2926,42 @@ require __DIR__ . '/includes/head.php';
   elOpenModal && elOpenModal.addEventListener('click', function () {
     if (!pendingBooking) return;
 
-    var fullName = elGuestName.value.trim();
-    var phone    = elGuestPhone.value.trim();
+    var contact = {
+      first_name: elGuestFirst.value.trim(),
+      last_name:  elGuestLast.value.trim(),
+      email:      elGuestEmail.value.trim(),
+      phone:      elGuestPhone.value.trim(),
+      address:    elGuestAddress.value.trim(),
+    };
 
     elStep3Error.style.display = 'none';
 
-    if (!fullName) {
-      elStep3ErrorTxt.textContent = 'Please enter your full name.';
+    var problem = validateContact(contact);
+    if (problem) {
+      elStep3ErrorTxt.textContent = problem.message;
       elStep3Error.style.display  = 'flex';
-      elGuestName.focus();
-      return;
-    }
-    if (!phone) {
-      elStep3ErrorTxt.textContent = 'Please enter your phone number.';
-      elStep3Error.style.display  = 'flex';
-      elGuestPhone.focus();
+      var focusEl = { first_name: elGuestFirst, last_name: elGuestLast, email: elGuestEmail, phone: elGuestPhone }[problem.field];
+      if (focusEl) focusEl.focus();
       return;
     }
 
-    openBookingModal(fullName, phone);
+    pendingBooking.contact = contact;
+    openBookingModal(contact);
   });
+
+  // Same rules the server applies (mirrors the walk-in guest-booking form).
+  // Returns null when valid, else { field, message }.
+  function validateContact(c) {
+    if (!c.first_name || c.first_name.length > 80)
+      return { field: 'first_name', message: 'Please enter your first name.' };
+    if (!c.last_name || c.last_name.length > 80)
+      return { field: 'last_name', message: 'Please enter your last name.' };
+    if (!c.email || c.email.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.email))
+      return { field: 'email', message: 'Please enter a valid email address.' };
+    if (!c.phone || c.phone.length < 7 || c.phone.length > 30)
+      return { field: 'phone', message: 'Please enter a valid phone number.' };
+    return null;
+  }
 
   /* ---- Additional guest names — any accommodation, capped by capacity ---- */
   function addCompanionRow(value) {
@@ -2893,13 +3039,16 @@ require __DIR__ . '/includes/head.php';
   }
 
   /* ---- Booking confirmation modal ---- */
-  function openBookingModal(fullName, phone) {
+  function openBookingModal(contact) {
     var room = pendingBooking.room;
 
     document.getElementById('bkModalRoomName').textContent  = room.name;
     document.getElementById('bkModalRoomType').textContent  = room.type;
-    document.getElementById('bkDetailGuest').textContent    = fullName;
-    document.getElementById('bkDetailPhone').textContent    = phone;
+    document.getElementById('bkDetailGuest').textContent    = contact.first_name + ' ' + contact.last_name;
+    document.getElementById('bkDetailEmail').textContent    = contact.email;
+    document.getElementById('bkDetailPhone').textContent    = contact.phone;
+    document.getElementById('bkDetailAddress').textContent  = contact.address;
+    document.getElementById('bkDetailAddressRow').style.display = contact.address ? '' : 'none';
     document.getElementById('bkDetailCheckIn').textContent  = formatDate(currentCheckIn);
     document.getElementById('bkDetailCheckOut').textContent = formatDate(currentCheckOut);
     document.getElementById('bkDetailNights').textContent   = pendingBooking.nights + ' night' + (pendingBooking.nights === 1 ? '' : 's');
@@ -2990,6 +3139,12 @@ require __DIR__ . '/includes/head.php';
         guests_count:     pendingBooking.guests,
         notes:            notes,
         companion_names:  companionNames,
+        first_name:       pendingBooking.contact.first_name,
+        last_name:        pendingBooking.contact.last_name,
+        email:            pendingBooking.contact.email,
+        phone:            pendingBooking.contact.phone,
+        address:          pendingBooking.contact.address,
+        payment_method:   'cash',
         csrf_token:       csrf,
       }),
     })
@@ -3078,6 +3233,12 @@ require __DIR__ . '/includes/head.php';
     art.setAttribute('data-guests', guests);
     art.setAttribute('data-notes', notes || '');
     art.setAttribute('data-companion-names', JSON.stringify(companionNames || []));
+    var ct = (pendingBooking && pendingBooking.contact) || {};
+    art.setAttribute('data-first-name', ct.first_name || '');
+    art.setAttribute('data-last-name', ct.last_name || '');
+    art.setAttribute('data-email', ct.email || '');
+    art.setAttribute('data-phone', ct.phone || '');
+    art.setAttribute('data-address', ct.address || '');
     art.setAttribute('data-status', 'confirmed');
     art.setAttribute('data-image', (room && room.image_filename) ? room.image_filename : '');
 
@@ -3175,9 +3336,20 @@ require __DIR__ . '/includes/head.php';
   var editCompanionsHint   = document.getElementById('editCompanionsHint');
   var editNotesEl          = document.getElementById('editNotes');
   var editTotalPreviewEl   = document.getElementById('editTotalPreview');
+  var editRoomImgEl        = document.getElementById('editRoomImg');
+  var editRoomSelectEl     = document.getElementById('editRoomSelect');
+  var editRoomHintEl       = document.getElementById('editRoomHint');
+  var editFirstNameEl      = document.getElementById('editFirstName');
+  var editLastNameEl       = document.getElementById('editLastName');
+  var editEmailEl          = document.getElementById('editEmail');
+  var editPhoneEl          = document.getElementById('editPhone');
+  var editAddressEl        = document.getElementById('editAddress');
+  var editRoomsById        = {};   // id -> accommodation info, for the dropdown
 
   var editState = {
     bookingId:     null,
+    roomId:        null,
+    originalRoomId: null,
     isPool:        false,
     capacity:      1,
     price:         0,
@@ -3327,19 +3499,126 @@ require __DIR__ . '/includes/head.php';
   });
   editCheckOutEl.addEventListener('change', editRefreshTotalPreview);
 
+  /* ---- Accommodation picker ---- */
+  function editRoomOptionLabel(r) {
+    return r.name + ' — ' + r.price_formatted + '/' + (r.is_pool ? 'person' : 'night') +
+      ' · up to ' + r.capacity + ' guest' + (r.capacity === 1 ? '' : 's');
+  }
+
+  function editSetHeaderRoom(r) {
+    editRoomNameEl.textContent = r.name || '';
+    editRoomTypeEl.textContent = r.type || '';
+    editRoomImgEl.innerHTML = r.image_filename
+      ? '<img src="' + imgBase + encodeURIComponent(r.image_filename) + '" alt="' + escHtml(r.name) + '">'
+      : bedIconLarge();
+  }
+
+  // (Re)builds the dropdown from the catalog list; always keeps the booking's own room selectable.
+  function editBuildRoomSelect(currentRoom) {
+    editRoomsById = {};
+    var list = catalogRooms.slice();
+    if (!list.some(function (r) { return r.id === currentRoom.id; })) list.unshift(currentRoom);
+
+    var groups = {};
+    list.forEach(function (r) {
+      editRoomsById[r.id] = r;
+      var c = categoryOf(r.type);
+      (groups[c] = groups[c] || []).push(r);
+    });
+
+    var html = '';
+    TYPE_ORDER.forEach(function (key) {
+      if (!groups[key]) return;
+      html += '<optgroup label="' + escHtml(TYPE_LABELS[key]) + '">';
+      groups[key].forEach(function (r) {
+        var blocked  = !!r.status_label && r.id !== currentRoom.id;
+        var label    = editRoomOptionLabel(r) + (blocked ? ' (' + r.status_label + ')' : '');
+        html += '<option value="' + r.id + '"' + (blocked ? ' disabled' : '') + '>' + escHtml(label) + '</option>';
+      });
+      html += '</optgroup>';
+    });
+    editRoomSelectEl.innerHTML = html;
+    editRoomSelectEl.value = String(editState.roomId);
+  }
+
+  // Applies a newly chosen accommodation to the modal's state and fields.
+  function editApplyRoom(r, announce) {
+    var prevGuests = editState.guests;
+    var names      = editCollectCompanionNames();
+
+    editState.roomId   = r.id;
+    editState.isPool   = !!r.is_pool;
+    editState.capacity = parseInt(r.capacity, 10) || 1;
+    editState.price    = parseFloat(r.price) || 0;
+    editState.guests   = Math.min(editState.guests, editState.capacity);
+    editGuestsDisplayEl.textContent = editState.guests;
+
+    editSetHeaderRoom(r);
+    editSetupCompanionFields(names);
+
+    var notes = [];
+    if (announce && r.id !== editState.originalRoomId) {
+      notes.push('Moving to ' + r.name + '. Availability for your dates is confirmed when you save.');
+    }
+    if (editState.guests < prevGuests) {
+      notes.push('Guest count lowered to ' + editState.guests + ' to fit this accommodation.');
+    }
+    editRoomHintEl.textContent = notes.join(' ');
+
+    editRefreshTotalPreview();
+  }
+
+  editRoomSelectEl.addEventListener('change', function () {
+    var r = editRoomsById[parseInt(editRoomSelectEl.value, 10)];
+    if (r) editApplyRoom(r, true);
+  });
+
   /* ---- Open the modal, pre-filled from a booking row's data-* ---- */
   function editOpenForBooking(item) {
     var d = item.dataset;
 
     editState.bookingId    = parseInt(d.bookingId, 10);
+    editState.roomId       = parseInt(d.accommodationId, 10) || null;
+    editState.originalRoomId = editState.roomId;
     editState.isPool       = d.isPool === '1';
     editState.capacity     = parseInt(d.capacity, 10) || 1;
     editState.price        = parseFloat(d.price) || 0;
     editState.guests       = parseInt(d.guests, 10) || 1;
     editState.isSubmitting = false;
 
-    editRoomNameEl.textContent = d.roomName || '';
-    editRoomTypeEl.textContent = d.roomType || '';
+    // The booking's own room, built from the row's data-* (always selectable).
+    var currentRoom = {
+      id:              editState.roomId,
+      name:            d.roomName || '',
+      type:            d.roomType || '',
+      capacity:        editState.capacity,
+      price:           editState.price,
+      price_formatted: '₱' + formatNumber(editState.price),
+      is_pool:         editState.isPool,
+      image_filename:  d.image || null,
+      status_label:    '',
+    };
+    editSetHeaderRoom(currentRoom);
+    editRoomHintEl.textContent = '';
+    editBuildRoomSelect(currentRoom);
+
+    // If the accommodation list hasn't loaded yet, fetch it and refill the dropdown.
+    if (!catalogRooms.length) {
+      fetch('api/bookings.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'catalog', csrf_token: csrf }),
+      })
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.success && data.rooms) {
+          catalogRooms = data.rooms;
+          renderCatalog();
+          if (editState.bookingId === parseInt(d.bookingId, 10)) editBuildRoomSelect(currentRoom);
+        }
+      })
+      .catch(function () { /* dropdown just keeps the current room */ });
+    }
 
     editModalErrorEl.textContent = '';
     editModalSaveBtn.disabled = false;
@@ -3358,6 +3637,12 @@ require __DIR__ . '/includes/head.php';
 
     editNotesEl.value = d.notes || '';
 
+    editFirstNameEl.value = d.firstName || '';
+    editLastNameEl.value  = d.lastName  || '';
+    editEmailEl.value     = d.email     || '';
+    editPhoneEl.value     = d.phone     || '';
+    editAddressEl.value   = d.address   || '';
+
     editRefreshTotalPreview();
     editOpenModal();
   }
@@ -3370,6 +3655,19 @@ require __DIR__ . '/includes/head.php';
     var checkOut = editCheckOutEl.value;
 
     editModalErrorEl.textContent = '';
+
+    var editContact = {
+      first_name: editFirstNameEl.value.trim(),
+      last_name:  editLastNameEl.value.trim(),
+      email:      editEmailEl.value.trim(),
+      phone:      editPhoneEl.value.trim(),
+      address:    editAddressEl.value.trim(),
+    };
+    var contactProblem = validateContact(editContact);
+    if (contactProblem) {
+      editModalErrorEl.textContent = contactProblem.message;
+      return;
+    }
 
     if (!checkIn || !checkOut) {
       editModalErrorEl.textContent = 'Please select both check-in and check-out dates.';
@@ -3390,6 +3688,12 @@ require __DIR__ . '/includes/head.php';
       body: JSON.stringify({
         action:           'update',
         booking_id:       editState.bookingId,
+        accommodation_id: editState.roomId,
+        first_name:       editContact.first_name,
+        last_name:        editContact.last_name,
+        email:            editContact.email,
+        phone:            editContact.phone,
+        address:          editContact.address,
         check_in:         checkIn,
         check_out:        checkOut,
         guests_count:     editState.guests,
@@ -3426,6 +3730,37 @@ require __DIR__ . '/includes/head.php';
     if (!item) return;
 
     var nights = data.nights || 1;
+
+    // Accommodation may have changed — refresh everything the row (and the next edit) reads from it.
+    if (data.accommodation_id) {
+      item.setAttribute('data-accommodation-id', data.accommodation_id);
+      item.setAttribute('data-room-name', data.room_name || '');
+      item.setAttribute('data-room-type', data.room_type || '');
+      item.setAttribute('data-is-pool', data.is_pool ? '1' : '0');
+      item.setAttribute('data-capacity', data.room_capacity || data.guests_count);
+      item.setAttribute('data-price', data.room_price || 0);
+      item.setAttribute('data-image', data.room_image || '');
+
+      var roomEl = item.querySelector('.bk-item__room');
+      if (roomEl) roomEl.textContent = data.room_name || '';
+
+      var imgBox = item.querySelector('.bk-item__img');
+      if (imgBox) {
+        imgBox.innerHTML = data.room_image
+          ? '<img src="' + imgBase + encodeURIComponent(data.room_image) + '" alt="' + escHtml(data.room_name) + '" loading="lazy">'
+          : bedIconLarge();
+      }
+    }
+
+    if (data.contact) {
+      var cparts = (data.contact.guest_name || '').split(' ');
+      var clast  = cparts.length > 1 ? cparts.pop() : '';
+      item.setAttribute('data-first-name', cparts.join(' '));
+      item.setAttribute('data-last-name', clast);
+      item.setAttribute('data-email', data.contact.email || '');
+      item.setAttribute('data-phone', data.contact.phone || '');
+      item.setAttribute('data-address', data.contact.address || '');
+    }
 
     item.setAttribute('data-check-in', data.check_in);
     item.setAttribute('data-check-out', data.check_out);

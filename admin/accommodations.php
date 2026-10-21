@@ -17,7 +17,7 @@ try {
     $pdo = bienmarko_db();
     $accommodations = $pdo->query(
         'SELECT `id`, `name`, `type`, `room_number`, `capacity`, `price`, `status`, `description`, `amenities`,
-                `image_filename`, `is_featured`, `tour_filename`,
+                `image_filename`, `tour_filename`,
                 (SELECT COUNT(*) FROM `accommodation_photos` WHERE `accommodation_id` = `accommodations`.`id`) AS `photo_count`
          FROM `accommodations`
          ORDER BY `name` ASC'
@@ -117,11 +117,6 @@ require_once __DIR__ . '/includes/ui.php';
 }
 .acc-card:hover { border-color: var(--border-strong); }
 
-/* Featured card gets a subtle gold ring */
-.acc-card[data-acc-featured="1"] {
-  border-color: var(--gold-500);
-}
-
 .acc-card-media {
   position: relative;
   aspect-ratio: 16 / 10;
@@ -145,19 +140,6 @@ require_once __DIR__ . '/includes/ui.php';
 }
 .acc-card-price small { font-family: var(--font-body); font-weight: 500; color: var(--text-tertiary); font-size: 0.7rem; }
 
-/* Featured star badge — top-left corner of the photo */
-.acc-featured-badge {
-  position: absolute; left: 10px; top: 10px;
-  display: flex; align-items: center; gap: 4px;
-  background: rgba(198, 154, 84, 0.92);
-  color: #0a0a0b;
-  font-size: 0.68rem; font-weight: 800; letter-spacing: 0.07em; text-transform: uppercase;
-  padding: 4px 8px;
-  border-radius: var(--r-full);
-  pointer-events: none;
-}
-.acc-featured-badge svg { width: 11px; height: 11px; fill: #0a0a0b; stroke: none; }
-
 .acc-card-body { padding: 16px; display: flex; flex-direction: column; gap: 12px; flex: 1; }
 .acc-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
 .acc-card-name { font-size: 1rem; font-weight: 700; line-height: 1.3; }
@@ -177,15 +159,6 @@ require_once __DIR__ . '/includes/ui.php';
 .acc-card-actions { display: flex; gap: 8px; margin-top: auto; padding-top: 4px; }
 .acc-card-actions .icon-btn { width: 34px; height: 34px; }
 .acc-card-actions .icon-btn--danger:hover { background: var(--red-bg-strong); color: var(--red); border-color: var(--red-bg-strong); }
-
-/* Featured toggle button — gold when active */
-.acc-card-actions .icon-btn--featured { transition: color var(--transition), background var(--transition), border-color var(--transition); }
-.acc-card-actions .icon-btn--featured.is-featured {
-  color: var(--gold-400);
-  background: var(--amber-bg);
-  border-color: var(--gold-600);
-}
-.acc-card-actions .icon-btn--featured.is-featured svg { fill: var(--gold-400); }
 
 .status-select {
   appearance: none; -webkit-appearance: none; -moz-appearance: none;
@@ -250,6 +223,7 @@ require_once __DIR__ . '/includes/ui.php';
 }
 
 .acc-field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.acc-field-row--single { grid-template-columns: 1fr; }
 
 .field select,
 .field textarea,
@@ -290,25 +264,10 @@ require_once __DIR__ . '/includes/ui.php';
 .acc-image-hint { color: var(--text-tertiary); font-size: 0.75rem; }
 .acc-remove-image-row { display: flex; align-items: center; gap: 6px; font-size: 0.8rem; color: var(--text-secondary); cursor: pointer; }
 
-/* Featured toggle row inside the modal form */
-.acc-featured-row {
-  display: flex; align-items: flex-start; gap: 10px;
-  padding: 12px 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--panel-alt);
-  cursor: pointer;
-  transition: border-color var(--transition);
-}
-.acc-featured-row:hover { border-color: var(--gold-500); }
-.acc-featured-row input[type="checkbox"] { margin-top: 2px; accent-color: var(--gold-500); flex-shrink: 0; }
-.acc-featured-row-text strong { display: block; font-size: 0.875rem; font-weight: 700; color: var(--text); }
-.acc-featured-row-text span { font-size: 0.78rem; color: var(--text-secondary); line-height: 1.4; }
-
 .btn-danger { background: var(--red-bg-strong); color: var(--red); }
 .btn-danger:hover { background: var(--red-bg); }
 
-/* 360° tour badge — top-right corner of the photo, opposite the Featured badge */
+/* 360° tour badge — top-right corner of the photo */
 .acc-tour-badge {
   position: absolute; right: 10px; top: 10px;
   display: flex; align-items: center; gap: 4px;
@@ -437,7 +396,6 @@ require_once __DIR__ . '/includes/ui.php';
         <?php foreach (ACC_STATUSES as $s): ?>
           <button type="button" data-acc-filter="<?php echo htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars(acc_status_label($s), ENT_QUOTES, 'UTF-8'); ?></button>
         <?php endforeach; ?>
-        <button type="button" data-acc-filter="featured">Featured</button>
       </div>
     </div>
 
@@ -445,7 +403,6 @@ require_once __DIR__ . '/includes/ui.php';
       <?php foreach ($accommodations as $row): ?>
         <?php
           $amenities = acc_decode_amenities($row['amenities']);
-          $isFeatured = (int) $row['is_featured'];
           $hasTour = !empty($row['tour_filename']);
           $photoCount = (int) $row['photo_count'];
           $editPayload = [
@@ -459,7 +416,6 @@ require_once __DIR__ . '/includes/ui.php';
               'description'    => $row['description'],
               'amenities'      => $amenities,
               'image_filename' => $row['image_filename'],
-              'is_featured'    => $isFeatured,
               'tour_filename'  => $row['tour_filename'],
               'photo_count'    => $photoCount,
           ];
@@ -468,8 +424,7 @@ require_once __DIR__ . '/includes/ui.php';
         <div class="acc-card" data-acc-card
              data-acc-id="<?php echo (int) $row['id']; ?>"
              data-acc-status="<?php echo htmlspecialchars($row['status'], ENT_QUOTES, 'UTF-8'); ?>"
-             data-acc-search-text="<?php echo htmlspecialchars($searchText, ENT_QUOTES, 'UTF-8'); ?>"
-             data-acc-featured="<?php echo $isFeatured; ?>">
+             data-acc-search-text="<?php echo htmlspecialchars($searchText, ENT_QUOTES, 'UTF-8'); ?>">
 
           <div class="acc-card-media" data-acc-cover-media>
             <?php if ($row['image_filename']): ?>
@@ -478,12 +433,6 @@ require_once __DIR__ . '/includes/ui.php';
               <?php echo icon('bed', 'icon-lg'); ?>
             <?php endif; ?>
             <span class="acc-card-price">&#8369;<?php echo number_format((float) $row['price'], 2); ?><small><?php echo (strcasecmp(trim((string) $row['type']), 'Swimming Pool') === 0) ? '/person' : '/night'; ?></small></span>
-            <?php if ($isFeatured): ?>
-              <span class="acc-featured-badge">
-                <svg viewBox="0 0 24 24" aria-hidden="true"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
-                Featured
-              </span>
-            <?php endif; ?>
             <?php if ($hasTour): ?>
               <span class="acc-tour-badge" data-acc-tour-badge title="360&deg; virtual tour uploaded">
                 <?php echo acc_icon('globe', 'icon-sm'); ?> 360&deg;
@@ -528,15 +477,6 @@ require_once __DIR__ . '/includes/ui.php';
             <?php endif; ?>
 
             <div class="acc-card-actions">
-              <!-- Featured toggle -->
-              <button type="button"
-                      class="icon-btn icon-btn--featured <?php echo $isFeatured ? 'is-featured' : ''; ?>"
-                      data-acc-featured-toggle="<?php echo (int) $row['id']; ?>"
-                      data-acc-featured-current="<?php echo $isFeatured; ?>"
-                      aria-label="<?php echo $isFeatured ? 'Remove from featured' : 'Mark as featured'; ?>"
-                      title="<?php echo $isFeatured ? 'Remove from featured' : 'Mark as featured'; ?>">
-                <?php echo acc_icon('star', 'icon-sm'); ?>
-              </button>
               <!-- Manage Photos -->
               <button type="button" class="icon-btn"
                       data-acc-photos-toggle="<?php echo (int) $row['id']; ?>"
@@ -634,13 +574,14 @@ require_once __DIR__ . '/includes/ui.php';
           </div>
         </div>
 
-        <div class="acc-field-row">
+        <div class="acc-field-row" id="accPriceStatusRow">
           <div class="field">
             <label class="field-label" for="accPrice" id="accPriceLabel">Price per Night (&#8369;)</label>
             <input type="number" id="accPrice" name="price" min="0" max="999999" step="0.01" placeholder="0.00" required>
           </div>
 
-          <div class="field">
+          <!-- Status is only shown when editing; new accommodations always start as Available -->
+          <div class="field" id="accStatusField" style="display:none;">
             <label class="field-label" for="accStatus">Status</label>
             <select id="accStatus" name="status">
               <?php foreach (ACC_STATUSES as $s): ?>
@@ -659,16 +600,6 @@ require_once __DIR__ . '/includes/ui.php';
           <label class="field-label" for="accDescription">Description</label>
           <textarea id="accDescription" name="description" maxlength="2000" rows="3" placeholder="Short description guests will see"></textarea>
         </div>
-
-        <!-- Featured toggle -->
-        <label class="acc-featured-row">
-          <input type="checkbox" name="is_featured" value="1" id="accFeatured">
-          <div class="acc-featured-row-text">
-            <strong>Show on Landing Page</strong>
-            <span>Featured items appear in the &ldquo;Featured&rdquo; section of the public landing page.</span>
-          </div>
-        </label>
-
         <div class="field">
           <label class="field-label">Photo</label>
           <div class="acc-image-field">

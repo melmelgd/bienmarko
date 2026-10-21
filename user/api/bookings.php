@@ -599,6 +599,50 @@ function bk_action_availability(PDO $pdo, array $input): never
     ]);
 }
 
+// ---- Contact details (same rules as the walk-in guest-booking form) --------
+/**
+ * Validates the contact block submitted with a registered-account booking,
+ * using the same rules as api/guest-book.php:
+ *   first name* (<=80), last name* (<=80), email* (valid, <=200),
+ *   phone* (7-30 chars), address (optional, <=255), payment: cash only.
+ *
+ * Returns [array $clean, ?string $error]. $clean keys: guest_name, email,
+ * phone, address (string|null), payment_method.
+ */
+function bk_validate_contact(array $input): array
+{
+    $first   = trim((string) ($input['first_name'] ?? ''));
+    $last    = trim((string) ($input['last_name']  ?? ''));
+    $email   = trim((string) ($input['email']      ?? ''));
+    $phone   = trim((string) ($input['phone']      ?? ''));
+    $address = trim((string) ($input['address']    ?? ''));
+
+    if ($first === '' || mb_strlen($first) > 80) {
+        return [[], 'First name is required (max 80 characters).'];
+    }
+    if ($last === '' || mb_strlen($last) > 80) {
+        return [[], 'Last name is required (max 80 characters).'];
+    }
+    if ($email === '' || mb_strlen($email) > 200 || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return [[], 'Please enter a valid email address.'];
+    }
+    if ($phone === '' || mb_strlen($phone) < 7 || mb_strlen($phone) > 30) {
+        return [[], 'Please enter a valid phone number.'];
+    }
+    if (mb_strlen($address) > 255) {
+        $address = mb_substr($address, 0, 255);
+    }
+
+    return [[
+        'guest_name'     => $first . ' ' . $last,
+        'email'          => $email,
+        'phone'          => $phone,
+        'address'        => $address !== '' ? $address : null,
+        // The resort accepts cash only; anything else falls back to cash.
+        'payment_method' => 'cash',
+    ], null];
+}
+
 // ---- Action: catalog --------------------------------------------------------
 // Date-free listing of every accommodation (photos, amenities, description,
 // capacity, price). Lets the booking page show what each stay includes BEFORE
@@ -769,6 +813,11 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
         bk_fail(400, 'Notes are too long (max 1000 characters).');
     }
 
+    [$contact, $contactError] = bk_validate_contact($input);
+    if ($contactError !== null) {
+        bk_fail(400, $contactError);
+    }
+
     $accStmt = $pdo->prepare(
         "SELECT id, name, type, price, status, capacity
          FROM accommodations
@@ -828,10 +877,12 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
         $stmt = $pdo->prepare(
             "INSERT INTO bookings
                 (reference, guest_id, accommodation_id, check_in, check_out,
-                 guests_count, notes, status, total_amount, booking_type, companion_names)
+                 guests_count, notes, status, total_amount, booking_type, companion_names,
+                 guest_name, email, phone, address, payment_method)
              VALUES
                 (:reference, :guest_id, :accommodation_id, :check_in, :check_out,
-                 :guests_count, :notes, 'confirmed', :total_amount, 'registered', :companion_names)"
+                 :guests_count, :notes, 'confirmed', :total_amount, 'registered', :companion_names,
+                 :guest_name, :email, :phone, :address, :payment_method)"
         );
 
         $stmt->execute([
@@ -844,6 +895,11 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
             'notes'            => $notes !== '' ? $notes : null,
             'total_amount'     => $totalAmount,
             'companion_names'  => $companionNames,
+            'guest_name'       => $contact['guest_name'],
+            'email'            => $contact['email'],
+            'phone'            => $contact['phone'],
+            'address'          => $contact['address'],
+            'payment_method'   => $contact['payment_method'],
         ]);
 
         $bookingId = (int) $pdo->lastInsertId();
@@ -858,14 +914,14 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
     }
 
     // Admin notification (outside transaction — non-fatal)
-    $guestName = 'Guest';
+    $guestName = $contact['guest_name'] !== '' ? $contact['guest_name'] : 'Guest';
     try {
         $gStmt = $pdo->prepare(
             "SELECT CONCAT(first_name, ' ', last_name) AS full_name FROM guests WHERE id = :id LIMIT 1"
         );
         $gStmt->execute(['id' => $guestId]);
         $gRow = $gStmt->fetch();
-        if ($gRow && !empty($gRow['full_name'])) {
+        if ($guestName === 'Guest' && $gRow && !empty($gRow['full_name'])) {
             $guestName = trim($gRow['full_name']);
         }
     } catch (Throwable $e) {
@@ -896,11 +952,16 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
 // ---- Action: update (self-service edit) --------------------------------------
 
 /**
- * Lets a registered user modify the dates, guest count, notes, and
- * companion names of their own pending/confirmed booking, any time up
- * until check-in (see bk_can_self_manage()). Once check-in has passed,
- * changes must go through management. The accommodation itself is not
- * changed; only its dates/guests/notes.
+ * Lets a registered user modify the accommodation, dates, guest count,
+ * notes, and companion names of their own pending/confirmed booking,
+ * any time up until check-in (see bk_can_self_manage()). Once check-in
+ * has passed, changes must go through management.
+ *
+ * `accommodation_id` is optional: omit it (or send the current id) to
+ * keep the same room; send a different id to move the booking to that
+ * accommodation. The target is validated exactly like a new booking
+ * (exists, not blocked by admin, capacity, no date conflict / pool
+ * slots) and the total is re-priced from the NEW accommodation.
  */
 function bk_action_update(PDO $pdo, array $input, int $guestId): never
 {
@@ -912,7 +973,7 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
     $stmt = $pdo->prepare(
         "SELECT b.id, b.reference, b.status, b.check_in AS old_check_in,
                 b.accommodation_id, a.name AS room_name, a.type AS room_type,
-                a.price, a.capacity, a.status AS room_status
+                a.price, a.capacity, a.status AS room_status, a.image_filename
          FROM bookings b
          JOIN accommodations a ON a.id = b.accommodation_id
          WHERE b.id = :id AND b.guest_id = :guest_id
@@ -956,17 +1017,70 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
         bk_fail(400, 'Notes are too long (max 1000 characters).');
     }
 
-    if (in_array($booking['room_status'], ['unavailable', 'maintenance'], true)) {
-        $label = $booking['room_status'] === 'maintenance' ? 'under maintenance' : 'unavailable';
-        bk_fail(409, "This room is currently {$label} and can no longer be modified online. Please contact the resort directly.");
+    // Contact details are optional on update (older clients omit them → left unchanged).
+    $contactSent = array_key_exists('first_name', $input) || array_key_exists('email', $input);
+    $contact     = [];
+    if ($contactSent) {
+        [$contact, $contactError] = bk_validate_contact($input);
+        if ($contactError !== null) {
+            bk_fail(400, $contactError);
+        }
     }
 
-    if ((int) $guestsCount > (int) $booking['capacity']) {
-        bk_fail(400, "This room holds up to {$booking['capacity']} guest(s). Please reduce your guest count.");
+    // Which accommodation will this booking end up on? Default: the current one.
+    $currentAccId    = (int) $booking['accommodation_id'];
+    $accommodationId = $currentAccId;
+    if (isset($input['accommodation_id']) && $input['accommodation_id'] !== '' && $input['accommodation_id'] !== null) {
+        $requestedAccId = filter_var($input['accommodation_id'], FILTER_VALIDATE_INT);
+        if (!$requestedAccId || $requestedAccId < 1) {
+            bk_fail(400, 'Invalid accommodation selected.');
+        }
+        $accommodationId = (int) $requestedAccId;
+    }
+    $roomChanged = $accommodationId !== $currentAccId;
+
+    // $room = the accommodation the booking will be on after this edit.
+    if ($roomChanged) {
+        $roomStmt = $pdo->prepare(
+            "SELECT id, name, type, price, capacity, status, image_filename
+             FROM accommodations
+             WHERE id = :id
+             LIMIT 1"
+        );
+        $roomStmt->execute(['id' => $accommodationId]);
+        $room = $roomStmt->fetch();
+
+        if (!$room) {
+            bk_fail(404, 'The selected accommodation no longer exists. Please refresh and try again.');
+        }
+
+        if (in_array($room['status'], ['unavailable', 'maintenance'], true)) {
+            $label = $room['status'] === 'maintenance' ? 'under maintenance' : 'unavailable';
+            bk_fail(409, "{$room['name']} is currently {$label} and cannot be booked. Please choose another accommodation.");
+        }
+    } else {
+        $room = [
+            'id'             => $currentAccId,
+            'name'           => $booking['room_name'],
+            'type'           => $booking['room_type'],
+            'price'          => $booking['price'],
+            'capacity'       => $booking['capacity'],
+            'status'         => $booking['room_status'],
+            'image_filename' => $booking['image_filename'] ?? null,
+        ];
+
+        // Staying on the same room: if admin has since blocked it, online edits are closed.
+        if (in_array($room['status'], ['unavailable', 'maintenance'], true)) {
+            $label = $room['status'] === 'maintenance' ? 'under maintenance' : 'unavailable';
+            bk_fail(409, "This room is currently {$label} and can no longer be modified online. Please contact the resort directly, or switch to another accommodation.");
+        }
     }
 
-    $accommodationId = (int) $booking['accommodation_id'];
-    $isPool          = bk_is_pool_type((string) $booking['room_type']);
+    if ((int) $guestsCount > (int) $room['capacity']) {
+        bk_fail(400, "{$room['name']} holds up to {$room['capacity']} guest(s). Please reduce your guest count" . ($roomChanged ? ' or choose a larger accommodation.' : '.'));
+    }
+
+    $isPool = bk_is_pool_type((string) $room['type']);
 
     $pdo->beginTransaction();
 
@@ -975,43 +1089,61 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
             // Exclude this booking's own current guests from the tally so
             // editing (e.g. just changing notes) doesn't double-count them.
             $bookedGuests = bk_pool_booked_guests($pdo, $accommodationId, $checkIn, $checkOut, $bookingId);
-            if ($bookedGuests + (int) $guestsCount > (int) $booking['capacity']) {
+            if ($bookedGuests + (int) $guestsCount > (int) $room['capacity']) {
                 $pdo->rollBack();
-                $remaining = max(0, (int) $booking['capacity'] - $bookedGuests);
+                $remaining = max(0, (int) $room['capacity'] - $bookedGuests);
                 bk_fail(409, $remaining > 0
                     ? "Sorry — only {$remaining} pool slot" . ($remaining === 1 ? '' : 's') . " left for those dates. Please reduce your guest count or choose different dates."
                     : 'Sorry — the swimming pool is fully booked for those dates. Please choose different dates.');
             }
         } elseif (bk_has_conflict($pdo, $accommodationId, $checkIn, $checkOut, $bookingId)) {
             $pdo->rollBack();
-            bk_fail(409, 'Sorry — this room is not available for those dates. Please pick different dates.');
+            bk_fail(409, $roomChanged
+                ? "Sorry — {$room['name']} is not available for those dates. Please pick different dates or another accommodation."
+                : 'Sorry — this room is not available for those dates. Please pick different dates.');
         }
 
         $nights = (int) round((strtotime($checkOut) - strtotime($checkIn)) / 86400);
         $totalAmount = $isPool
-            ? (float) $booking['price'] * (int) $guestsCount
-            : (float) $booking['price'] * $nights;
+            ? (float) $room['price'] * (int) $guestsCount
+            : (float) $room['price'] * $nights;
+
+        $contactSql = $contactSent
+            ? ", guest_name = :guest_name, email = :email, phone = :phone,
+                 address = :address, payment_method = :payment_method"
+            : '';
 
         $upd = $pdo->prepare(
             "UPDATE bookings SET
+                accommodation_id = :accommodation_id,
                 check_in         = :check_in,
                 check_out        = :check_out,
                 guests_count     = :guests_count,
                 notes            = :notes,
                 total_amount     = :total_amount,
                 companion_names  = :companion_names
+                {$contactSql}
              WHERE id = :id AND guest_id = :guest_id"
         );
-        $upd->execute([
-            'check_in'        => $checkIn,
-            'check_out'       => $checkOut,
-            'guests_count'    => $guestsCount,
-            'notes'           => $notes !== '' ? $notes : null,
-            'total_amount'    => $totalAmount,
-            'companion_names' => $companionNames,
-            'id'              => $bookingId,
-            'guest_id'        => $guestId,
-        ]);
+        $updParams = [
+            'accommodation_id' => $accommodationId,
+            'check_in'         => $checkIn,
+            'check_out'        => $checkOut,
+            'guests_count'     => $guestsCount,
+            'notes'            => $notes !== '' ? $notes : null,
+            'total_amount'     => $totalAmount,
+            'companion_names'  => $companionNames,
+            'id'               => $bookingId,
+            'guest_id'         => $guestId,
+        ];
+        if ($contactSent) {
+            $updParams['guest_name']     = $contact['guest_name'];
+            $updParams['email']          = $contact['email'];
+            $updParams['phone']          = $contact['phone'];
+            $updParams['address']        = $contact['address'];
+            $updParams['payment_method'] = $contact['payment_method'];
+        }
+        $upd->execute($updParams);
 
         $pdo->commit();
     } catch (Throwable $e) {
@@ -1026,7 +1158,9 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
         $pdo,
         $bookingId,
         'modification',
-        "Booking {$booking['reference']} for {$booking['room_name']} was modified by the guest."
+        $roomChanged
+            ? "Booking {$booking['reference']} was moved from {$booking['room_name']} to {$room['name']} (and modified) by the guest."
+            : "Booking {$booking['reference']} for {$booking['room_name']} was modified by the guest."
     );
 
     // Email the guest (sent after the response; never blocks or breaks the booking).
@@ -1037,7 +1171,19 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
     bk_ok([
         'booking_id'      => $bookingId,
         'reference'       => $booking['reference'],
-        'room_name'       => $booking['room_name'],
+        'accommodation_id' => $accommodationId,
+        'room_name'       => $room['name'],
+        'room_type'       => $room['type'],
+        'room_capacity'   => (int) $room['capacity'],
+        'room_price'      => (float) $room['price'],
+        'room_image'      => $room['image_filename'] ?? null,
+        'room_changed'    => $roomChanged,
+        'contact'         => $contactSent ? [
+            'guest_name' => $contact['guest_name'],
+            'email'      => $contact['email'],
+            'phone'      => $contact['phone'],
+            'address'    => $contact['address'] ?? '',
+        ] : null,
         'check_in'        => $checkIn,
         'check_out'       => $checkOut,
         'nights'          => $nights,

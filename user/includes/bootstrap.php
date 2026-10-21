@@ -55,12 +55,31 @@ $pdo->exec(
 );
 
 
+/* ------------------------------------------------------------------
+   Feedback reminders: for this guest's completed bookings that have no
+   feedback yet, create the bell notification and send the email (once
+   per booking). Also exposes $feedbackPendingStays for the dashboard
+   banner. Never allowed to break a page.
+------------------------------------------------------------------ */
+require_once __DIR__ . '/feedback-reminders.php';
+$feedbackPendingStays = [];
+if (!empty($_SESSION['auth_user_id'])) {
+    try {
+        $feedbackGuestId = (int) $_SESSION['auth_user_id'];
+        bm_fb_sync_reminders($pdo, $feedbackGuestId, true, true);
+        $feedbackPendingStays = bm_fb_unreviewed_stays($pdo, $feedbackGuestId);
+    } catch (Throwable $e) {
+        error_log('[feedback-reminder] ' . $e->getMessage());
+        $feedbackPendingStays = [];
+    }
+}
+
 $notifications    = [];
 $notifUnreadCount = 0;
 
 if (!empty($_SESSION['auth_user_id'])) {
     $notifStmt = $pdo->prepare(
-        "SELECT id, message, is_read, created_at
+        "SELECT id, booking_id, type, message, is_read, created_at
          FROM guest_notifications
          WHERE guest_id = :gid
          ORDER BY created_at DESC
@@ -72,6 +91,9 @@ if (!empty($_SESSION['auth_user_id'])) {
     foreach ($notifRows as $n) {
         $notifications[] = [
             'id'      => (int) $n['id'],
+            'href'    => ($n['type'] === 'feedback_reminder' && $n['booking_id'])
+                ? 'feedback.php?booking=' . (int) $n['booking_id']
+                : null,
             'message' => $n['message'],
             'is_read' => (bool) $n['is_read'],
             'time'    => bm_relative_time($n['created_at']),

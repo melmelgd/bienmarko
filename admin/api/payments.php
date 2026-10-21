@@ -3,6 +3,9 @@
  * admin/api/payments.php
  * -----------------------------------------------------------------------
  * JSON API for admin payment/billing operations.
+ * The discount is received as a percentage (discount_percent, 0-100) of
+ * the subtotal; the peso amount is calculated here and stored in
+ * `discount`, so the client can't send a mismatched amount.
  *   POST { action: "save_payment", ... } — upsert a payment record
  * -----------------------------------------------------------------------
  */
@@ -26,6 +29,13 @@ if (empty($body['csrf_token']) || !bienmarko_csrf_valid($body['csrf_token'])) {
 }
 
 $action = trim($body['action'] ?? '');
+
+/* Discount is now entered as a percentage of the subtotal. The peso amount
+   stays in `discount` (so reports keep working); the percentage is kept in
+   `discount_percent` so it can be shown and edited again. */
+if (!$pdo->query("SHOW COLUMNS FROM `payments` LIKE 'discount_percent'")->fetch()) {
+    $pdo->exec("ALTER TABLE `payments` ADD COLUMN `discount_percent` DECIMAL(5,2) NULL DEFAULT NULL AFTER `discount`");
+}
 
 /* ------------------------------------------------------------------
    Ensure guest_notifications table exists (additive, self-guarding —
@@ -86,7 +96,7 @@ if ($action === 'save_payment') {
     $roomFee       = (float) ($body['room_fee']         ?? 0);
     $extraGuestFee = (float) ($body['extra_guest_fee']  ?? 0);
     $otherCharges  = (float) ($body['other_charges']    ?? 0);
-    $discount      = (float) ($body['discount']         ?? 0);
+    $discountPct   = min(100.0, max(0.0, round((float) ($body['discount_percent'] ?? 0), 2)));
     $discountReason= trim($body['discount_reason']     ?? '');
     $totalPaid     = (float) ($body['total_paid']       ?? 0);
     $paymentMethod = in_array($body['payment_method'] ?? '', ['cash','gcash']) ? $body['payment_method'] : 'cash';
@@ -108,8 +118,12 @@ if ($action === 'save_payment') {
         exit;
     }
 
+    /* Discount: percentage of the subtotal, converted to pesos here */
+    $subtotal   = $roomFee + $extraGuestFee + $otherCharges;
+    $discount   = round($subtotal * $discountPct / 100, 2);
+
     /* Compute final total */
-    $finalTotal = max(0.0, $roomFee + $extraGuestFee + $otherCharges - $discount);
+    $finalTotal = max(0.0, $subtotal - $discount);
 
     $paidAt = ($paymentStatus === 'paid') ? date('Y-m-d H:i:s') : null;
 
@@ -128,6 +142,7 @@ if ($action === 'save_payment') {
                     extra_guest_fee = :eg,
                     other_charges   = :oc,
                     discount        = :disc,
+                    discount_percent = :dp,
                     discount_reason = :dr,
                     total_paid      = :tp,
                     payment_method  = :pm,
@@ -142,6 +157,7 @@ if ($action === 'save_payment') {
                 'eg'      => $extraGuestFee,
                 'oc'      => $otherCharges,
                 'disc'    => $discount,
+                'dp'      => $discountPct,
                 'dr'      => $discountReason,
                 'tp'      => $totalPaid,
                 'pm'      => $paymentMethod,
@@ -155,11 +171,11 @@ if ($action === 'save_payment') {
             $ins = $pdo->prepare(
                 "INSERT INTO payments
                     (booking_id, room_fee, extra_guest_fee, other_charges,
-                     discount, discount_reason, total_paid, payment_method,
+                     discount, discount_percent, discount_reason, total_paid, payment_method,
                      payment_status, notes, paid_at)
                  VALUES
                     (:bid, :rf, :eg, :oc,
-                     :disc, :dr, :tp, :pm,
+                     :disc, :dp, :dr, :tp, :pm,
                      :ps, :notes, :paid_at)"
             );
             $ins->execute([
@@ -168,6 +184,7 @@ if ($action === 'save_payment') {
                 'eg'      => $extraGuestFee,
                 'oc'      => $otherCharges,
                 'disc'    => $discount,
+                'dp'      => $discountPct,
                 'dr'      => $discountReason,
                 'tp'      => $totalPaid,
                 'pm'      => $paymentMethod,

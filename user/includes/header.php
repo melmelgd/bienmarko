@@ -35,7 +35,11 @@ $notifUnreadCount = $notifUnreadCount ?? 0;
                     <ul class="topbar__notif-list">
                         <?php foreach ($notifications as $notif): ?>
                             <li class="<?php echo empty($notif['is_read']) ? 'is-unread' : ''; ?>">
-                                <span><?php echo htmlspecialchars($notif['message']); ?></span>
+                                <?php if (!empty($notif['href'])): ?>
+                                    <a href="<?php echo htmlspecialchars($notif['href']); ?>" style="color:inherit;text-decoration:underline"><?php echo htmlspecialchars($notif['message']); ?></a>
+                                <?php else: ?>
+                                    <span><?php echo htmlspecialchars($notif['message']); ?></span>
+                                <?php endif; ?>
                                 <span class="topbar__notif-time"><?php echo htmlspecialchars($notif['time']); ?></span>
                             </li>
                         <?php endforeach; ?>

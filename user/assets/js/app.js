@@ -234,6 +234,13 @@ function initFeedbackForm() {
       return;
     }
 
+    var bookingSelect = document.getElementById('bookingId');
+    var bookingId = Number((bookingSelect && bookingSelect.value) || 0);
+    if (!bookingId) {
+      showFormStatus(status, 'Please choose the stay you want to review.', true);
+      return;
+    }
+
     var rating = Number((ratingInput && ratingInput.value) || 0);
     if (!rating) {
       showFormStatus(status, 'Please choose a star rating.', true);
@@ -248,6 +255,7 @@ function initFeedbackForm() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         action: 'submit',
+        booking_id: bookingId,
         rating: rating,
         category: (document.getElementById('category') || {}).value || 'general',
         message: (document.getElementById('message') || {}).value || '',
@@ -261,10 +269,10 @@ function initFeedbackForm() {
         if (!result.ok || !result.data.success) {
           throw new Error((result.data && result.data.message) || 'Could not send your feedback. Please try again.');
         }
-        prependFeedbackHistoryItem(result.data.feedback);
-        form.reset();
-        resetStarRating();
         showFormStatus(status, 'Feedback sent — thank you!', false);
+        // Reload so the reviewed stay disappears from the picker (or the form
+        // locks again if there is nothing left to review) and history updates.
+        window.setTimeout(function () { window.location.reload(); }, 900);
       })
       .catch(function (err) {
         showFormStatus(status, err.message, true);

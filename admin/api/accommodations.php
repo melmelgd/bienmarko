@@ -11,7 +11,6 @@
  *   action=update        - update an existing one by id
  *   action=delete        - delete one by id (and its photo file, if any)
  *   action=set_status    - update only the status column (quick action)
- *   action=set_featured  - toggle the is_featured flag (star button on card)
  *   action=list_photos   - list gallery photos for one room (Manage Photos modal)
  *   action=upload_photos - add one or more gallery photos (multipart; photos[])
  *   action=delete_photo  - remove one gallery photo
@@ -133,9 +132,6 @@ function acc_validate_fields(array $post): array
         $errors[] = 'Amenities list is too long.';
     }
 
-    // is_featured: checkbox sends "1" when checked, absent when unchecked
-    $isFeatured = !empty($post['is_featured']) ? 1 : 0;
-
     return [
         $errors,
         [
@@ -147,7 +143,6 @@ function acc_validate_fields(array $post): array
             'status'      => $status,
             'description' => $description,
             'amenities'   => acc_parse_amenities($amenitiesRaw),
-            'is_featured' => $isFeatured,
         ],
     ];
 }
@@ -381,9 +376,9 @@ function acc_action_create(PDO $pdo): never
 
     $stmt = $pdo->prepare(
         'INSERT INTO `accommodations`
-            (`name`, `type`, `room_number`, `capacity`, `price`, `status`, `description`, `amenities`, `image_filename`, `is_featured`)
+            (`name`, `type`, `room_number`, `capacity`, `price`, `status`, `description`, `amenities`, `image_filename`)
          VALUES
-            (:name, :type, :room_number, :capacity, :price, :status, :description, :amenities, :image_filename, :is_featured)'
+            (:name, :type, :room_number, :capacity, :price, :status, :description, :amenities, :image_filename)'
     );
     $stmt->execute([
         'name'           => $data['name'],
@@ -391,11 +386,10 @@ function acc_action_create(PDO $pdo): never
         'room_number'    => $data['room_number'],
         'capacity'       => $data['capacity'],
         'price'          => $data['price'],
-        'status'         => $data['status'],
+        'status'         => 'available', // new accommodations always start as Available
         'description'    => $data['description'] !== '' ? $data['description'] : null,
         'amenities'      => acc_encode_amenities($data['amenities']),
         'image_filename' => $imageFilename,
-        'is_featured'    => $data['is_featured'],
     ]);
 
     acc_json_ok(['id' => (int) $pdo->lastInsertId()]);
@@ -438,7 +432,7 @@ function acc_action_update(PDO $pdo): never
         'UPDATE `accommodations` SET
             `name` = :name, `type` = :type, `room_number` = :room_number, `capacity` = :capacity, `price` = :price,
             `status` = :status, `description` = :description, `amenities` = :amenities,
-            `image_filename` = :image_filename, `is_featured` = :is_featured
+            `image_filename` = :image_filename
          WHERE `id` = :id'
     );
     $stmt->execute([
@@ -451,7 +445,6 @@ function acc_action_update(PDO $pdo): never
         'description'    => $data['description'] !== '' ? $data['description'] : null,
         'amenities'      => acc_encode_amenities($data['amenities']),
         'image_filename' => $finalImageFilename,
-        'is_featured'    => $data['is_featured'],
         'id'             => $id,
     ]);
 
@@ -510,34 +503,6 @@ function acc_action_set_status(PDO $pdo): never
     $stmt->execute(['status' => $status, 'id' => $id]);
 
     acc_json_ok(['status' => $status]);
-}
-
-/**
- * Toggles (or explicitly sets) the is_featured flag on one accommodation.
- * POST fields: id (int), featured (0|1)
- */
-function acc_action_set_featured(PDO $pdo): never
-{
-    $id = filter_var($_POST['id'] ?? null, FILTER_VALIDATE_INT);
-    if (!$id) {
-        acc_json_fail(400, 'Missing or invalid accommodation id.');
-    }
-
-    $featured = filter_var($_POST['featured'] ?? null, FILTER_VALIDATE_INT);
-    if ($featured === false || ($featured !== 0 && $featured !== 1)) {
-        acc_json_fail(400, 'featured must be 0 or 1.');
-    }
-
-    $existsStmt = $pdo->prepare('SELECT `id` FROM `accommodations` WHERE `id` = :id LIMIT 1');
-    $existsStmt->execute(['id' => $id]);
-    if ($existsStmt->fetch() === false) {
-        acc_json_fail(404, 'Accommodation not found.');
-    }
-
-    $stmt = $pdo->prepare('UPDATE `accommodations` SET `is_featured` = :featured WHERE `id` = :id');
-    $stmt->execute(['featured' => $featured, 'id' => $id]);
-
-    acc_json_ok(['is_featured' => $featured]);
 }
 
 /** Shared existence check, used by every photos/tour action below. */
@@ -746,8 +711,6 @@ switch ($action) {
     case 'set_status':
         acc_action_set_status($pdo);
         break;
-    case 'set_featured':
-        acc_action_set_featured($pdo);
         break;
     case 'list_photos':
         acc_action_list_photos($pdo);

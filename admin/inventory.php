@@ -4,8 +4,9 @@
  * -----------------------------------------------------------------------
  * Full live inventory management page. Tracks linens, toiletries, and
  * other resort supplies: stock levels, minimum-stock alerts, per-unit
- * cost, and expiration dates. Admins can add, view, edit, and delete
- * items. Stock status (In Stock / Low Stock / Out of Stock) is computed
+ * cost, and expiration dates. Admins can add, view, and edit items
+ * (deleting is disabled). Adding stock can be recorded automatically
+ * as a 'Supplies' expense — see includes/expense-link.php. Stock status (In Stock / Low Stock / Out of Stock) is computed
  * from quantity vs. minimum stock level rather than stored, so it's
  * always correct after any edit.
  * -----------------------------------------------------------------------
@@ -17,6 +18,7 @@ bienmarko_require_role('admin');
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/expense-link.php';
 
 $active_page        = 'inventory';
 $page_title          = 'Inventory';
@@ -55,6 +57,20 @@ $pdo->exec("
         CONSTRAINT `fk_inv_log_item` FOREIGN KEY (`item_id`) REFERENCES `inventory_items`(`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ");
+
+/* Expenses table + link columns so stock purchases can be logged as expenses */
+$pdo->exec("
+    CREATE TABLE IF NOT EXISTS `expenses` (
+        `id`            INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        `expense_date`  DATE NOT NULL,
+        `category`      VARCHAR(40) NOT NULL DEFAULT 'Others',
+        `amount`        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        `notes`         VARCHAR(255) NOT NULL DEFAULT '',
+        `created_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        `updated_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+");
+expense_link_ensure_columns($pdo);
 
 const INV_CATEGORIES = ['Linens', 'Toiletries', 'Cleaning Supplies', 'Kitchen & Dining', 'Beverages', 'Maintenance Supplies', 'Amenities', 'Others'];
 
@@ -96,7 +112,6 @@ function inv_icon(string $name, string $class = 'icon'): string
 {
     $extra = [
         'eye'   => '<path d="M1 12s4-7.5 11-7.5S23 12 23 12s-4 7.5-11 7.5S1 12 1 12Z"></path><circle cx="12" cy="12" r="3"></circle>',
-        'trash' => '<polyline points="4 7 20 7"></polyline><path d="M6 7V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v2"></path><path d="M19 7l-1 13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 7"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
         'search'=> '<circle cx="11" cy="11" r="7"></circle><line x1="21" y1="21" x2="16.2" y2="16.2"></line>',
     ];
     if (isset($extra[$name])) {
@@ -144,6 +159,14 @@ $usageStmt  = $pdo->prepare(
 );
 $usageStmt->execute(['m' => $monthStart]);
 $statMonthlyUsage = (int) $usageStmt->fetchColumn();
+
+/* Money spent restocking this month — read from the linked Expenses records */
+$spendStmt = $pdo->prepare(
+    "SELECT COALESCE(SUM(amount), 0) FROM expenses
+     WHERE source = 'inventory' AND expense_date BETWEEN :s AND :e"
+);
+$spendStmt->execute(['s' => date('Y-m-01'), 'e' => date('Y-m-t')]);
+$statRestockSpend = (float) $spendStmt->fetchColumn();
 
 /* ------------------------------------------------------------------
    Main list query
@@ -238,8 +261,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .icon-btn-sm--view:hover   { background: var(--amber-bg); border-color: var(--gold-600); }
 .icon-btn-sm--edit   { color: var(--blue); }
 .icon-btn-sm--edit:hover   { background: var(--blue-bg); border-color: var(--blue); }
-.icon-btn-sm--danger { color: var(--red); }
-.icon-btn-sm--danger:hover { background: var(--red-bg); border-color: var(--red); }
 
 /* Status badges */
 .sb { display: inline-flex; align-items: center; padding: 3px 9px; border-radius: var(--r-full); font-size: 11px; font-weight: 700; }
@@ -248,7 +269,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .sb--red   { background: var(--red-bg);     color: var(--red); }
 .sb--grey  { background: var(--panel-alt);  color: var(--text-secondary); }
 
-/* Modal shell — shared shape across View / Add-Edit / Delete-confirm */
+/* Modal shell — shared shape across View / Add-Edit */
 .modal-overlay {
     position: fixed; inset: 0; background: rgba(0,0,0,.6);
     display: flex; align-items: center; justify-content: center;
@@ -263,7 +284,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
     transform: translateY(12px); transition: transform .2s;
 }
 .modal-overlay.is-open .modal { transform: translateY(0); }
-.modal-confirm { max-width: 420px; }
 .modal-header {
     padding: 20px 24px 16px;
     display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
@@ -312,9 +332,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
     border-radius: var(--r-md); padding: 10px 14px; font-size: 13px; margin-bottom: 16px;
 }
 
-.btn-danger { background: var(--red-bg); color: var(--red); border-color: var(--red); }
-.btn-danger:hover { background: var(--red); color: #fff; }
-
 /* Toast */
 .toast-wrap { position: fixed; bottom: 28px; right: 28px; z-index: 900; display: flex; flex-direction: column; gap: 10px; }
 .toast { padding: 12px 18px; border-radius: var(--r-md); font-size: 13.5px; font-weight: 500; box-shadow: 0 8px 30px rgba(0,0,0,.5); transform: translateX(120%); opacity: 0; transition: transform .3s, opacity .3s; }
@@ -328,12 +345,13 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 <div class="stack">
 
     <!-- ===== Stat cards ===== -->
-    <div class="stat-grid">
+    <div class="stat-grid stat-grid--5">
         <?php
             render_stat_card('Total Items', (string) $statTotal, 'boxes', 'blue');
             render_stat_card('Low Stock Items', (string) $statLowStock, 'alert-triangle', 'amber');
             render_stat_card('Inventory Value', '₱' . number_format($statValue, 2), 'wallet', 'emerald');
             render_stat_card('Monthly Usage', (string) $statMonthlyUsage, 'pie-chart', 'fuchsia');
+            render_stat_card('Restock Spend (Month)', '₱' . number_format($statRestockSpend, 2), 'trend-down', 'red');
         ?>
     </div>
 
@@ -412,10 +430,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                         <button class="icon-btn-sm icon-btn-sm--edit" onclick="openEdit(<?php echo (int) $row['id']; ?>)"
                                                 title="Edit" aria-label="Edit <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>">
                                             <?php echo icon('edit', 'icon-sm'); ?>
-                                        </button>
-                                        <button class="icon-btn-sm icon-btn-sm--danger" onclick="openDeleteConfirm(<?php echo (int) $row['id']; ?>)"
-                                                title="Delete" aria-label="Delete <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>">
-                                            <?php echo inv_icon('trash', 'icon-sm'); ?>
                                         </button>
                                     </div>
                                 </td>
@@ -515,6 +529,15 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         <label class="form-label" for="fExpiry">Expiration Date <span style="color:var(--red)">*</span></label>
                         <input class="form-input" type="date" id="fExpiry" required>
                     </div>
+                    <div class="form-group full">
+                        <label style="display:flex;align-items:flex-start;gap:10px;cursor:pointer;">
+                            <input type="checkbox" id="fRecordExpense" checked style="margin-top:3px;">
+                            <span>
+                                <span class="form-label" style="display:block;">Record purchase as an expense</span>
+                                <span class="form-hint" id="expenseHint">Adds a Supplies expense for the units added (units &times; cost per unit).</span>
+                            </span>
+                        </label>
+                    </div>
                 </div>
             </form>
         </div>
@@ -522,25 +545,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
             <button class="btn btn-secondary" onclick="closeItemForm()">Cancel</button>
             <button class="btn btn-primary" id="formSubmitBtn" onclick="submitItemForm(event)">
                 <?php echo icon('plus', 'icon-sm'); ?> Add Item
-            </button>
-        </div>
-    </div>
-</div>
-
-<!-- ===== Delete Confirmation Modal ===== -->
-<div class="modal-overlay" id="deleteModal" aria-modal="true" role="dialog">
-    <div class="modal modal-confirm">
-        <div class="modal-header">
-            <div class="modal-title">Delete Item</div>
-            <button class="modal-close" onclick="closeDeleteConfirm()" aria-label="Close"><?php echo icon('close'); ?></button>
-        </div>
-        <div class="modal-body">
-            <p id="deleteText" style="font-size:14px;color:var(--text-secondary);">Delete this item? This can&rsquo;t be undone.</p>
-        </div>
-        <div class="modal-actions">
-            <button class="btn btn-secondary" onclick="closeDeleteConfirm()">Cancel</button>
-            <button class="btn btn-danger" id="deleteConfirmBtn" onclick="confirmDelete()">
-                <?php echo inv_icon('trash', 'icon-sm'); ?> Delete
             </button>
         </div>
     </div>
@@ -560,7 +564,6 @@ ROWS.forEach(function (r) { rowMap[r.id] = r; });
 
 var editingId  = null; // set = edit mode, null = create mode
 var viewingId  = null;
-var deletingId = null;
 
 /* ---------- Filters ---------- */
 function applyFilter(key, val) {
@@ -620,9 +623,33 @@ function updateFromView() {
 }
 
 /* ---------- Add / Edit modal ---------- */
+function updateExpenseHint() {
+    var qty   = parseInt(document.getElementById('fQuantity').value, 10) || 0;
+    var cost  = parseFloat(document.getElementById('fCost').value) || 0;
+    var added = qty;
+    if (editingId && rowMap[editingId]) added = qty - rowMap[editingId].quantity;
+    var hint = document.getElementById('expenseHint');
+    var box  = document.getElementById('fRecordExpense');
+    if (added > 0 && cost > 0) {
+        hint.textContent = 'Will record a Supplies expense of \u20B1' + fmt(added * cost) +
+                           ' (' + added + ' unit' + (added === 1 ? '' : 's') + ' \u00D7 \u20B1' + fmt(cost) + ').';
+        box.disabled = false;
+    } else {
+        hint.textContent = editingId
+            ? 'Only recorded when the quantity is increased (a restock).'
+            : 'Only recorded when the starting quantity and cost are above zero.';
+        box.disabled = true;
+    }
+}
+['fQuantity', 'fCost'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', updateExpenseHint);
+});
+
 function openAdd() {
     editingId = null;
     document.getElementById('itemForm').reset();
+    document.getElementById('fRecordExpense').checked = true;
+    updateExpenseHint();
     document.getElementById('formTitle').textContent    = 'Add New Item';
     document.getElementById('formSubtitle').textContent = 'Add a new item to your inventory.';
     document.getElementById('formIconBox').innerHTML    = <?php echo json_encode(icon('plus', 'icon-sm')); ?>;
@@ -642,6 +669,8 @@ function openEdit(id) {
     document.getElementById('fMinStock').value = r.min_stock_level;
     document.getElementById('fCost').value     = r.cost_per_unit.toFixed(2);
     document.getElementById('fExpiry').value   = r.expiration_date || '';
+    document.getElementById('fRecordExpense').checked = true;
+    updateExpenseHint();
 
     document.getElementById('formTitle').textContent    = 'Edit Item';
     document.getElementById('formSubtitle').textContent = 'Update inventory item details.';
@@ -698,7 +727,8 @@ function submitItemForm(e) {
         quantity:         quantity,
         min_stock_level:  minStock,
         cost_per_unit:    cost,
-        expiration_date:  expiry
+        expiration_date:  expiry,
+        record_expense:   document.getElementById('fRecordExpense').checked
     };
     if (editingId) payload.id = editingId;
 
@@ -710,7 +740,9 @@ function submitItemForm(e) {
     .then(function (r) { return r.json(); })
     .then(function (data) {
         if (data.success) {
-            toast(editingId ? 'Item updated successfully!' : 'Item added successfully!', 'success');
+            var msg = editingId ? 'Item updated successfully!' : 'Item added successfully!';
+            if (data.expense_id) msg += ' Expense recorded.';
+            toast(msg, 'success');
             setTimeout(function () { window.location.reload(); }, 700);
         } else {
             showFormAlert(data.error || 'Something went wrong. Please try again.');
@@ -719,46 +751,6 @@ function submitItemForm(e) {
     })
     .catch(function () {
         showFormAlert('Network error. Please try again.');
-        btn.disabled = false;
-    });
-}
-
-/* ---------- Delete ---------- */
-function openDeleteConfirm(id) {
-    var r = rowMap[id];
-    if (!r) return;
-    deletingId = id;
-    document.getElementById('deleteText').textContent = 'Delete "' + r.name + '"? This can\'t be undone.';
-    document.getElementById('deleteModal').classList.add('is-open');
-}
-function closeDeleteConfirm() {
-    document.getElementById('deleteModal').classList.remove('is-open');
-    deletingId = null;
-}
-document.getElementById('deleteModal').addEventListener('click', function (e) { if (e.target === this) closeDeleteConfirm(); });
-
-function confirmDelete() {
-    if (!deletingId) return;
-    var btn = document.getElementById('deleteConfirmBtn');
-    btn.disabled = true;
-
-    fetch('api/inventory.php', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'delete', csrf_token: CSRF, id: deletingId })
-    })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-        if (data.success) {
-            toast('Item deleted.', 'success');
-            setTimeout(function () { window.location.reload(); }, 700);
-        } else {
-            toast(data.error || 'Failed to delete item.', 'error');
-            btn.disabled = false;
-        }
-    })
-    .catch(function () {
-        toast('Network error. Please try again.', 'error');
         btn.disabled = false;
     });
 }

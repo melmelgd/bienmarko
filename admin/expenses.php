@@ -16,6 +16,7 @@ bienmarko_require_role('admin');
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/expense-link.php';
 
 $active_page        = 'expenses';
 $page_title          = 'Expense Tracking';
@@ -41,6 +42,9 @@ $pdo->exec("
         `updated_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ");
+
+/* Link columns that connect an expense to an Inventory purchase */
+expense_link_ensure_columns($pdo);
 
 const EXP_CATEGORIES = ['Utilities', 'Maintenance', 'Supplies', 'Salaries', 'Others'];
 
@@ -93,6 +97,14 @@ $sumStmt = $pdo->prepare(
 $sumStmt->execute(['start' => $monthStart, 'end' => $monthEnd]);
 $statThisMonth = (float) $sumStmt->fetchColumn();
 
+/* Portion of this month's total that came from Inventory purchases */
+$invStmt = $pdo->prepare(
+    "SELECT COALESCE(SUM(amount), 0) FROM expenses
+     WHERE source = 'inventory' AND expense_date BETWEEN :start AND :end"
+);
+$invStmt->execute(['start' => $monthStart, 'end' => $monthEnd]);
+$statInventoryMonth = (float) $invStmt->fetchColumn();
+
 $statCategoryCount = count(EXP_CATEGORIES);
 $statAveragePerCat = $statCategoryCount > 0 ? ($statThisMonth / $statCategoryCount) : 0.0;
 
@@ -114,6 +126,7 @@ $rowsJson = json_encode(array_map(function ($r) {
         'category'      => $r['category'],
         'amount'        => (float) $r['amount'],
         'notes'         => $r['notes'],
+        'source'        => $r['source'] ?? 'manual',
     ];
 }, $rows));
 ?>
@@ -158,6 +171,10 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .cb--supplies    { background: var(--blue-bg);    color: var(--blue); }
 .cb--salaries    { background: var(--amber-bg);   color: var(--gold-400); }
 .cb--others      { background: var(--panel-alt);  color: var(--text-secondary); }
+
+.cb--inventory { background: var(--emerald-bg); color: var(--emerald); margin-left: 8px; padding: 2px 9px; font-size: 11px; }
+.cb--inventory:hover { text-decoration: underline; }
+.td-locked { font-size: 12px; color: var(--text-tertiary); white-space: nowrap; }
 
 /* Modal shell */
 .modal-overlay {
@@ -241,7 +258,7 @@ textarea.form-input { resize: vertical; min-height: 80px; }
                 <span class="stat-icon stat-icon--red"><?php echo icon('trend-down'); ?></span>
             </div>
             <span class="stat-value">₱<?php echo number_format($statThisMonth, 2); ?></span>
-            <span class="stat-sub">This Month</span>
+            <span class="stat-sub">This Month<?php if ($statInventoryMonth > 0): ?> &middot; ₱<?php echo number_format($statInventoryMonth, 2); ?> from Inventory<?php endif; ?></span>
         </div>
         <div class="stat-card">
             <div class="stat-card-top">
@@ -303,8 +320,17 @@ textarea.form-input { resize: vertical; min-height: 80px; }
                                 <td class="td-date"><?php echo htmlspecialchars(date('m-d-Y', strtotime($row['expense_date'])), ENT_QUOTES, 'UTF-8'); ?></td>
                                 <td><?php echo exp_category_badge($row['category']); ?></td>
                                 <td class="td-amount">₱<?php echo number_format((float) $row['amount'], 2); ?></td>
-                                <td class="td-notes"><?php echo htmlspecialchars($row['notes'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <?php $isInv = (($row['source'] ?? 'manual') === 'inventory'); ?>
+                                <td class="td-notes">
+                                    <?php echo htmlspecialchars($row['notes'], ENT_QUOTES, 'UTF-8'); ?>
+                                    <?php if ($isInv): ?>
+                                        <a class="cb cb--inventory" href="inventory.php" title="Created from an Inventory purchase">Inventory</a>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
+                                    <?php if ($isInv): ?>
+                                        <span class="td-locked" title="Managed from the Inventory page">Auto-recorded</span>
+                                    <?php else: ?>
                                     <div class="td-actions">
                                         <button class="icon-btn-sm icon-btn-sm--edit" onclick="openEdit(<?php echo (int) $row['id']; ?>)"
                                                 title="Edit" aria-label="Edit expense">
@@ -315,6 +341,7 @@ textarea.form-input { resize: vertical; min-height: 80px; }
                                             <?php echo exp_icon('trash', 'icon-sm'); ?>
                                         </button>
                                     </div>
+                                    <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>

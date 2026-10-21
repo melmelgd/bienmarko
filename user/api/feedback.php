@@ -62,6 +62,11 @@ function fb_ensure_table(PDO $pdo): void
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
     $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `is_published` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `is_read`");
+    $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `booking_id` INT UNSIGNED NULL DEFAULT NULL AFTER `guest_id`");
+    $pdo->exec("ALTER TABLE `feedback` ADD UNIQUE INDEX IF NOT EXISTS `uq_feedback_booking` (`booking_id`)");
+    $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_id` INT UNSIGNED NULL DEFAULT NULL AFTER `booking_id`");
+    $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_type` VARCHAR(100) NULL DEFAULT NULL AFTER `accommodation_id`");
+    $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_name` VARCHAR(150) NULL DEFAULT NULL AFTER `accommodation_type`");
 }
 
 $pdo = bienmarko_db();
@@ -76,6 +81,39 @@ $action = (string) ($input['action'] ?? '');
 
 if ($action !== 'submit') {
     fb_fail(400, 'Unknown action.');
+}
+
+/* ---- Only guests with a COMPLETED booking may leave feedback ---- */
+$bookingId = filter_var($input['booking_id'] ?? null, FILTER_VALIDATE_INT);
+if ($bookingId === false || $bookingId < 1) {
+    fb_fail(422, 'Please choose the stay you want to review.');
+}
+
+try {
+    $stmt = $pdo->prepare(
+        'SELECT b.id, b.status, b.accommodation_id,
+                a.name AS accommodation_name, a.type AS accommodation_type
+         FROM bookings b
+         LEFT JOIN accommodations a ON a.id = b.accommodation_id
+         WHERE b.id = :id AND b.guest_id = :gid LIMIT 1'
+    );
+    $stmt->execute(['id' => $bookingId, 'gid' => $guestId]);
+    $booking = $stmt->fetch();
+} catch (Throwable $e) {
+    $booking = false;
+}
+
+if (!$booking) {
+    fb_fail(403, 'We could not find that booking on your account.');
+}
+if ($booking['status'] !== 'completed') {
+    fb_fail(403, 'You can leave feedback once your stay is completed.');
+}
+
+$stmt = $pdo->prepare('SELECT COUNT(*) FROM feedback WHERE booking_id = :bid');
+$stmt->execute(['bid' => $bookingId]);
+if ((int) $stmt->fetchColumn() > 0) {
+    fb_fail(409, 'You have already sent feedback for this stay.');
 }
 
 /* ---- Validate ---- */
@@ -98,16 +136,40 @@ if (mb_strlen($message) > 2000) {
     fb_fail(422, 'Feedback is too long (max 2000 characters).');
 }
 
-$stmt = $pdo->prepare(
-    'INSERT INTO feedback (guest_id, rating, category, message)
-     VALUES (:guest_id, :rating, :category, :message)'
-);
-$stmt->execute([
-    'guest_id' => $guestId,
-    'rating'   => $rating,
-    'category' => $category,
-    'message'  => $message,
-]);
+try {
+    $stmt = $pdo->prepare(
+        'INSERT INTO feedback (guest_id, booking_id, accommodation_id, accommodation_type, accommodation_name,
+                               rating, category, message)
+         VALUES (:guest_id, :booking_id, :accommodation_id, :accommodation_type, :accommodation_name,
+                 :rating, :category, :message)'
+    );
+    $stmt->execute([
+        'guest_id'           => $guestId,
+        'booking_id'         => $bookingId,
+        'accommodation_id'   => $booking['accommodation_id'] ?: null,
+        'accommodation_type' => $booking['accommodation_type'] !== null ? mb_substr((string) $booking['accommodation_type'], 0, 100) : null,
+        'accommodation_name' => $booking['accommodation_name'] !== null ? mb_substr((string) $booking['accommodation_name'], 0, 150) : null,
+        'rating'     => $rating,
+        'category'   => $category,
+        'message'    => $message,
+    ]);
+} catch (PDOException $e) {
+    // Unique index on booking_id: a double-click / second tab already saved one.
+    if ($e->getCode() === '23000') {
+        fb_fail(409, 'You have already sent feedback for this stay.');
+    }
+    throw $e;
+}
+
+// The reminder has done its job — mark its bell notification as read.
+try {
+    $pdo->prepare(
+        "UPDATE guest_notifications SET is_read = 1
+         WHERE guest_id = :gid AND booking_id = :bid AND type = 'feedback_reminder'"
+    )->execute(['gid' => $guestId, 'bid' => $bookingId]);
+} catch (Throwable $e) {
+    // notifications are optional; never fail the submission over them
+}
 
 fb_ok([
     'feedback' => [

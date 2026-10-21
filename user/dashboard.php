@@ -288,6 +288,8 @@ require __DIR__ . '/includes/head.php';
         </div>
     </div>
 
+    <?php bm_fb_render_banner($feedbackPendingStays ?? []); ?>
+
     <!-- Stat cards -->
     <div class="stat-grid">
         <?php foreach ($statCards as $card): render_stat_card($card); endforeach; ?>

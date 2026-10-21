@@ -64,7 +64,7 @@ $faqs = [
     [
         'category' => 'Payments',
         'q' => 'How do I record a cash payment?',
-        'a' => 'Open the booking from the Bookings or Payments page and use the Record Payment action. Enter the amount and method (Cash) — the system computes the running balance automatically from the room rate, extra guests, and any charges or discounts you\'ve added.',
+        'a' => 'Open the booking from the Bookings or Payments page and use the Record Payment action. Enter the amount and method (Cash or GCash) — the system computes the running balance automatically from the room rate, extra guests, and any charges or discounts you\'ve added.',
     ],
     [
         'category' => 'Inventory',

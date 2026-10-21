@@ -20,6 +20,7 @@ bienmarko_start_session();
 bienmarko_require_role('admin');
 
 require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../includes/expense-link.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -48,6 +49,23 @@ $pdo->exec("
         `updated_at`    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ");
+
+/* Columns that link an expense to the inventory purchase that created it */
+expense_link_ensure_columns($pdo);
+
+/**
+ * Expenses created automatically from an inventory purchase are managed
+ * from Inventory, so they can't be edited or deleted here.
+ */
+function exp_block_if_inventory(PDO $pdo, int $expenseId): void
+{
+    $stmt = $pdo->prepare('SELECT source FROM expenses WHERE id = :id');
+    $stmt->execute(['id' => $expenseId]);
+    $row = $stmt->fetch();
+    if ($row && ($row['source'] ?? 'manual') === 'inventory') {
+        exp_fail('This expense was created from an Inventory purchase and cannot be changed here.');
+    }
+}
 
 const EXP_ALLOWED_CATEGORIES = ['Utilities', 'Maintenance', 'Supplies', 'Salaries', 'Others'];
 
@@ -140,6 +158,7 @@ if ($action === 'update') {
     if (!$existingStmt->fetch()) {
         exp_fail('Expense record not found.');
     }
+    exp_block_if_inventory($pdo, $expenseId);
 
     $data = exp_validate($body);
 
@@ -176,6 +195,7 @@ if ($action === 'delete') {
     if ($expenseId <= 0) {
         exp_fail('Invalid expense record.');
     }
+    exp_block_if_inventory($pdo, $expenseId);
 
     try {
         $del = $pdo->prepare('DELETE FROM expenses WHERE id = :id');

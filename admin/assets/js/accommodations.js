@@ -2,18 +2,15 @@
  * accommodations.js
  * -----------------------------------------------------------------------
  * Page-specific behaviour for admin/accommodations.php: the add/edit
- * modal, delete confirmation, quick status changes on each card, featured
- * toggle (star button + featured filter), image preview, and client-side
+ * modal, delete confirmation, quick status changes on each card,
+ * image preview, and client-side
  * search/filter over the already-rendered card grid.
  *
  * New in this revision:
- *   - Featured star button on each card calls action=set_featured
- *   - "Featured" filter tab in the toolbar works client-side
- *   - openModal() now reads/sets the is_featured checkbox
  *   - "Room Number" field appears (and becomes required) only when
  *     Accommodation Type is set to "Room" — toggleRoomNumberField()
  *
- * Every mutation (create/update/delete/status/featured change) reloads
+ * Every mutation (create/update/delete/status change) reloads
  * the page on success so the stat cards and grid always reflect the DB.
  * -----------------------------------------------------------------------
  */
@@ -28,7 +25,7 @@
 
   var searchInput = document.querySelector('[data-acc-search-input]');
   var filterButtons = Array.prototype.slice.call(document.querySelectorAll('[data-acc-filter]'));
-  var activeStatus = '';   // '' = all, 'featured' = featured-only, else status string
+  var activeStatus = '';   // '' = all, else status string
 
   var addTriggerBtn = document.querySelector('.btn-action'); /* "Add Accommodation" in topbar */
 
@@ -49,7 +46,6 @@
   var priceLabel = document.getElementById('accPriceLabel');
   var POOL_TYPE_VALUE = 'Swimming Pool'; /* mirrors the pool-pricing checks in the booking APIs */
 
-  var featuredCheckbox = modalForm ? modalForm.querySelector('[name="is_featured"]') : null;
 
   var imageInput = modalForm ? modalForm.querySelector('[name="image"]') : null;
   var imagePreview = document.querySelector('[data-acc-image-preview]');
@@ -73,6 +69,19 @@
     if (!modalForm) return;
     var field = modalForm.querySelector('[name="' + name + '"]');
     if (field) field.value = value;
+  }
+
+  /* Status is only editable when editing. When adding, the field is hidden
+     and disabled (so it isn't submitted) and the server defaults it to
+     'available'. */
+  function toggleStatusField(mode) {
+    var field = document.getElementById('accStatusField');
+    var row   = document.getElementById('accPriceStatusRow');
+    var sel   = document.getElementById('accStatus');
+    var show  = mode === 'edit';
+    if (field) field.style.display = show ? '' : 'none';
+    if (sel)   sel.disabled = !show;
+    if (row)   row.classList.toggle('acc-field-row--single', !show);
   }
 
   function showAlert(message) {
@@ -132,7 +141,6 @@
     if (typeOtherInput) typeOtherInput.style.display = 'none';
     if (imagePreview) imagePreview.innerHTML = '';
     if (removeImageCheckbox) removeImageCheckbox.checked = false;
-    if (featuredCheckbox) featuredCheckbox.checked = false;
 
     setField('action', mode === 'edit' ? 'update' : 'create');
     setField('id', mode === 'edit' && data && data.id ? data.id : '');
@@ -152,9 +160,6 @@
       setField('description', data.description || '');
       setField('amenities', Array.isArray(data.amenities) ? data.amenities.join(', ') : '');
       setField('room_number', data.room_number || '');
-
-      // Featured checkbox
-      if (featuredCheckbox) featuredCheckbox.checked = !!data.is_featured;
 
       if (typeSelect) {
         var knownValues = Array.prototype.map.call(typeSelect.options, function (o) { return o.value; });
@@ -179,6 +184,7 @@
       setField('capacity', 1);
     }
 
+    toggleStatusField(mode);
     toggleRoomNumberField();
     togglePriceLabel();
 
@@ -385,41 +391,7 @@
   });
 
   /* ---------------------------------------------------------------------
-     Featured star toggle — one click flips is_featured on the card
-     --------------------------------------------------------------------- */
-  document.querySelectorAll('[data-acc-featured-toggle]').forEach(function (btn) {
-    btn.addEventListener('click', function () {
-      var id = btn.getAttribute('data-acc-featured-toggle');
-      var current = parseInt(btn.getAttribute('data-acc-featured-current'), 10) || 0;
-      var next = current === 1 ? 0 : 1;
-
-      btn.disabled = true;
-
-      var formData = new FormData();
-      formData.set('action', 'set_featured');
-      formData.set('id', id);
-      formData.set('featured', next);
-      formData.set('csrf_token', csrfToken());
-
-      fetch(API_URL, { method: 'POST', body: formData })
-        .then(function (res) { return res.json(); })
-        .then(function (json) {
-          if (json && json.success) {
-            window.location.reload();
-            return;
-          }
-          btn.disabled = false;
-          window.alert((json && json.error) || 'Could not update featured status.');
-        })
-        .catch(function () {
-          btn.disabled = false;
-          window.alert('Network error. Please try again.');
-        });
-    });
-  });
-
-  /* ---------------------------------------------------------------------
-     Search + status/featured filter — client-side, over rendered cards
+     Search + status filter — client-side, over rendered cards
      --------------------------------------------------------------------- */
   function applyFilters() {
     var term = ((searchInput && searchInput.value) || '').trim().toLowerCase();
@@ -428,14 +400,11 @@
     cards.forEach(function (card) {
       var haystack = card.getAttribute('data-acc-search-text') || '';
       var cardStatus = card.getAttribute('data-acc-status') || '';
-      var cardFeatured = card.getAttribute('data-acc-featured') || '0';
 
       var matchesTerm = !term || haystack.indexOf(term) !== -1;
 
       var matchesFilter = true;
-      if (activeStatus === 'featured') {
-        matchesFilter = cardFeatured === '1';
-      } else if (activeStatus !== '') {
+      if (activeStatus !== '') {
         matchesFilter = cardStatus === activeStatus;
       }
 

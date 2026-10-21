@@ -351,7 +351,7 @@ function openReceipt(payId) {
     document.getElementById('rcPaid').textContent           = '₱' + rcFmt(r.total_paid);
     document.getElementById('rcMethod').textContent         = rcCap(r.payment_method);
     document.getElementById('rcBalance').textContent        = bal <= 0 ? 'Fully Paid' : '₱' + rcFmt(bal);
-    document.getElementById('rcPrintedAt').textContent      = 'Printed: ' + new Date().toLocaleString('en-PH');
+    document.getElementById('rcPrintedAt').textContent      = '' + new Date().toLocaleString('en-PH');
 
     var dRow = document.getElementById('rcDiscountRow');
     if (r.discount > 0) {
