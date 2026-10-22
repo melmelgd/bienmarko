@@ -19,6 +19,34 @@
 
   var API_URL = 'api/accommodations.php';
 
+  /**
+   * Reads an API response as JSON. If the server sent something else (a PHP
+   * error page, a login redirect, a host security page, ...) throw an error
+   * that says what actually happened instead of a vague "Network error".
+   * Only a fetch() that never got any response is a real network problem.
+   */
+  function parseApiResponse(res) {
+    return res.text().then(function (text) {
+      try {
+        return JSON.parse(text);
+      } catch (e) {
+        var err = new Error('The server returned an unexpected response (HTTP ' + res.status + ').');
+        err.serverReply = true;
+        err.httpStatus = res.status;
+        err.snippet = String(text || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 200);
+        if (window.console && console.error) console.error('Accommodations API bad response:', res.status, text);
+        throw err;
+      }
+    });
+  }
+
+  function apiErrorMessage(err) {
+    if (err && err.serverReply) {
+      return err.message + (err.snippet ? ' ' + err.snippet : '');
+    }
+    return 'Network error. Please check your connection and try again.';
+  }
+
   var grid = document.querySelector('[data-acc-grid]');
   var cards = grid ? Array.prototype.slice.call(grid.querySelectorAll('[data-acc-card]')) : [];
   var noResultsEl = document.querySelector('[data-acc-no-results]');
@@ -266,11 +294,7 @@
       var formData = new FormData(modalForm);
 
       fetch(API_URL, { method: 'POST', body: formData })
-        .then(function (res) {
-          return res.json().catch(function () {
-            throw new Error('Invalid response from server.');
-          });
-        })
+        .then(parseApiResponse)
         .then(function (json) {
           if (json && json.success) {
             window.location.reload();
@@ -282,8 +306,8 @@
             modalSubmitBtn.textContent = originalLabel;
           }
         })
-        .catch(function () {
-          showAlert('Network error. Please check your connection and try again.');
+        .catch(function (err) {
+          showAlert(apiErrorMessage(err));
           if (modalSubmitBtn) {
             modalSubmitBtn.disabled = false;
             modalSubmitBtn.textContent = originalLabel;
@@ -338,7 +362,7 @@
       formData.set('csrf_token', csrfToken());
 
       fetch(API_URL, { method: 'POST', body: formData })
-        .then(function (res) { return res.json(); })
+        .then(parseApiResponse)
         .then(function (json) {
           if (json && json.success) {
             window.location.reload();
@@ -347,9 +371,9 @@
           confirmYesBtn.disabled = false;
           window.alert((json && json.error) || 'Could not delete. Please try again.');
         })
-        .catch(function () {
+        .catch(function (err) {
           confirmYesBtn.disabled = false;
-          window.alert('Network error. Please try again.');
+          window.alert(apiErrorMessage(err));
         });
     });
   }
@@ -372,7 +396,7 @@
       select.disabled = true;
 
       fetch(API_URL, { method: 'POST', body: formData })
-        .then(function (res) { return res.json(); })
+        .then(parseApiResponse)
         .then(function (json) {
           if (json && json.success) {
             window.location.reload();
@@ -382,10 +406,10 @@
           select.disabled = false;
           window.alert((json && json.error) || 'Could not update status.');
         })
-        .catch(function () {
+        .catch(function (err) {
           select.value = original;
           select.disabled = false;
-          window.alert('Network error. Please try again.');
+          window.alert(apiErrorMessage(err));
         });
     });
   });
@@ -596,7 +620,7 @@
     formData.set('csrf_token', csrfToken());
 
     fetch(API_URL, { method: 'POST', body: formData })
-      .then(function (res) { return res.json(); })
+      .then(parseApiResponse)
       .then(function (json) {
         if (photosLoadingEl) photosLoadingEl.style.display = 'none';
         if (json && json.success) {
@@ -605,9 +629,9 @@
           showPhotosAlert((json && json.error) || 'Could not load photos.');
         }
       })
-      .catch(function () {
+      .catch(function (err) {
         if (photosLoadingEl) photosLoadingEl.style.display = 'none';
-        showPhotosAlert('Network error. Please try again.');
+        showPhotosAlert(apiErrorMessage(err));
       });
   }
 
@@ -669,7 +693,7 @@
       photosInput.disabled = true;
 
       fetch(API_URL, { method: 'POST', body: formData })
-        .then(function (res) { return res.json(); })
+        .then(parseApiResponse)
         .then(function (json) {
           photosInput.disabled = false;
           photosInput.value = '';
@@ -681,10 +705,10 @@
             showPhotosAlert((json && json.error) || 'Could not upload photos.');
           }
         })
-        .catch(function () {
+        .catch(function (err) {
           photosInput.disabled = false;
           photosInput.value = '';
-          showPhotosAlert('Network error. Please try again.');
+          showPhotosAlert(apiErrorMessage(err));
         });
     });
   }
@@ -705,7 +729,7 @@
         fd.set('csrf_token', csrfToken());
 
         fetch(API_URL, { method: 'POST', body: fd })
-          .then(function (res) { return res.json(); })
+          .then(parseApiResponse)
           .then(function (json) {
             if (json && json.success) {
               fetchPhotos(currentPhotosAccId);
@@ -715,9 +739,9 @@
               showPhotosAlert((json && json.error) || 'Could not set cover photo.');
             }
           })
-          .catch(function () {
+          .catch(function (err) {
             setCoverBtn.disabled = false;
-            showPhotosAlert('Network error. Please try again.');
+            showPhotosAlert(apiErrorMessage(err));
           });
         return;
       }
@@ -734,7 +758,7 @@
         fd2.set('csrf_token', csrfToken());
 
         fetch(API_URL, { method: 'POST', body: fd2 })
-          .then(function (res) { return res.json(); })
+          .then(parseApiResponse)
           .then(function (json) {
             if (json && json.success) {
               renderPhotosGrid(json.photos || [], json.cover);
@@ -744,9 +768,9 @@
               showPhotosAlert((json && json.error) || 'Could not delete photo.');
             }
           })
-          .catch(function () {
+          .catch(function (err) {
             deleteBtn.disabled = false;
-            showPhotosAlert('Network error. Please try again.');
+            showPhotosAlert(apiErrorMessage(err));
           });
       }
     });
@@ -788,7 +812,7 @@
     formData.set('csrf_token', csrfToken());
 
     fetch(API_URL, { method: 'POST', body: formData })
-      .then(function (res) { return res.json(); })
+      .then(parseApiResponse)
       .then(function (json) {
         if (json && json.success) {
           renderTourStatus(null);
@@ -797,8 +821,8 @@
           showTourAlert((json && json.error) || 'Could not remove tour file.');
         }
       })
-      .catch(function () {
-        showTourAlert('Network error. Please try again.');
+      .catch(function (err) {
+        showTourAlert(apiErrorMessage(err));
       });
   }
 
@@ -919,7 +943,7 @@
       tourInput.disabled = true;
 
       fetch(API_URL, { method: 'POST', body: formData })
-        .then(function (res) { return res.json(); })
+        .then(parseApiResponse)
         .then(function (json) {
           tourInput.disabled = false;
           tourInput.value = '';
@@ -930,10 +954,10 @@
             showTourAlert((json && json.error) || 'Could not upload tour file.');
           }
         })
-        .catch(function () {
+        .catch(function (err) {
           tourInput.disabled = false;
           tourInput.value = '';
-          showTourAlert('Network error. Please try again.');
+          showTourAlert(apiErrorMessage(err));
         });
     });
   }

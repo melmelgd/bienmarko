@@ -209,15 +209,20 @@ function acc_ensure_photos_table(): void
 function acc_lockdown_upload_dir(string $dir): void
 {
     if (!is_dir($dir)) {
-        mkdir($dir, 0755, true);
+        @mkdir($dir, 0755, true);
     }
 
+    // NOTE: a bare `php_flag` line makes Apache return HTTP 500 for EVERY file
+    // in the folder on hosts that run PHP as CGI/FPM (e.g. InfinityFree), which
+    // shows up as broken images. Wrapping it in <IfModule> keeps it harmless there.
     $htaccess = $dir . '/.htaccess';
     if (!file_exists($htaccess)) {
-        file_put_contents(
+        @file_put_contents(
             $htaccess,
-            "# Uploaded files only — never execute scripts from this folder.\n"
-            . "php_flag engine off\n"
+            "# Uploaded files only - never execute scripts from this folder.\n"
+            . "<IfModule mod_php.c>\n  php_flag engine off\n</IfModule>\n"
+            . "<IfModule mod_php7.c>\n  php_flag engine off\n</IfModule>\n"
+            . "<IfModule mod_php8.c>\n  php_flag engine off\n</IfModule>\n"
             . "<FilesMatch \"\\.(php|phtml|php\\d|phar)$\">\n"
             . "  Require all denied\n"
             . "</FilesMatch>\n"
@@ -226,7 +231,7 @@ function acc_lockdown_upload_dir(string $dir): void
 
     $indexGuard = $dir . '/index.html';
     if (!file_exists($indexGuard)) {
-        file_put_contents($indexGuard, '');
+        @file_put_contents($indexGuard, '');
     }
 }
 

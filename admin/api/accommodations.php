@@ -25,6 +25,55 @@
  * -----------------------------------------------------------------------
  */
 
+/*
+ * Always answer with clean JSON. Some hosts (e.g. free shared hosting) print
+ * PHP warnings/notices into the response, or return an HTML error page on a
+ * fatal error. Either one makes the browser's res.json() fail, which the page
+ * then reports as a misleading "Network error". So:
+ *   - buffer all output and throw away anything that isn't our JSON,
+ *   - turn uncaught exceptions and fatal errors into a JSON error response.
+ */
+ob_start();
+ini_set('display_errors', '0');
+
+function acc_send_json(int $httpCode, array $payload): never
+{
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    if (!headers_sent()) {
+        http_response_code($httpCode);
+        header('Content-Type: application/json; charset=utf-8');
+        header('Cache-Control: no-store');
+    }
+    echo json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_INVALID_UTF8_SUBSTITUTE);
+    exit;
+}
+
+set_exception_handler(static function (Throwable $e): void {
+    error_log('[accommodations api] ' . get_class($e) . ': ' . $e->getMessage()
+        . ' in ' . $e->getFile() . ':' . $e->getLine());
+    acc_send_json(500, [
+        'success' => false,
+        'error'   => 'Server error: ' . $e->getMessage(),
+    ]);
+});
+
+register_shutdown_function(static function (): void {
+    $err = error_get_last();
+    if ($err && in_array($err['type'], [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_RECOVERABLE_ERROR], true)) {
+        error_log('[accommodations api] fatal: ' . $err['message'] . ' in ' . $err['file'] . ':' . $err['line']);
+        while (ob_get_level() > 0) {
+            ob_end_clean();
+        }
+        if (!headers_sent()) {
+            http_response_code(500);
+            header('Content-Type: application/json; charset=utf-8');
+        }
+        echo json_encode(['success' => false, 'error' => 'Server error: ' . $err['message']]);
+    }
+});
+
 require_once __DIR__ . '/../../includes/auth-common.php';
 
 bienmarko_start_session();
@@ -33,19 +82,14 @@ bienmarko_require_role('admin');
 require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../includes/accommodations-data.php';
 
-header('Content-Type: application/json');
-
 function acc_json_fail(int $httpCode, string $message): never
 {
-    http_response_code($httpCode);
-    echo json_encode(['success' => false, 'error' => $message]);
-    exit;
+    acc_send_json($httpCode, ['success' => false, 'error' => $message]);
 }
 
 function acc_json_ok(array $data = []): never
 {
-    echo json_encode(['success' => true] + $data);
-    exit;
+    acc_send_json(200, ['success' => true] + $data);
 }
 
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
@@ -59,9 +103,16 @@ if (!bienmarko_csrf_valid($_POST['csrf_token'] ?? null)) {
 }
 
 acc_ensure_table();
-acc_ensure_upload_dir();
 acc_ensure_photos_table();
-acc_ensure_tour_upload_dir();
+
+// Folder prep is only needed when a file is being uploaded. If the host won't
+// let PHP create/lock a folder, that must not stop a plain "Add Accommodation".
+try {
+    acc_ensure_upload_dir();
+    acc_ensure_tour_upload_dir();
+} catch (Throwable $e) {
+    error_log('[accommodations api] upload dir setup failed: ' . $e->getMessage());
+}
 
 $pdo = bienmarko_db();
 
@@ -710,7 +761,6 @@ switch ($action) {
         break;
     case 'set_status':
         acc_action_set_status($pdo);
-        break;
         break;
     case 'list_photos':
         acc_action_list_photos($pdo);
