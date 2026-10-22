@@ -7,6 +7,7 @@
  */
 
 document.addEventListener('DOMContentLoaded', function () {
+  initMobileNav();
   initNotifications();
   initLogoutConfirm();
   initSupportModal();
@@ -71,14 +72,81 @@ function initNotifications() {
 }
 
 function initLogoutConfirm() {
-  var link = document.getElementById('logoutLink');
-  if (!link) return;
-  link.addEventListener('click', function (e) {
-    var confirmed = window.confirm('Log out of BienMarko?');
-    if (!confirmed) {
-      e.preventDefault();
+  var links = document.querySelectorAll('[data-logout]');
+  if (!links.length) return;
+  for (var i = 0; i < links.length; i++) {
+    links[i].addEventListener('click', function (e) {
+      var confirmed = window.confirm('Log out of BienMarko?');
+      if (!confirmed) {
+        e.preventDefault();
+      }
+    });
+  }
+}
+
+/**
+ * Website navbar: on tablet/mobile the primary links live in a dropdown
+ * menu behind the hamburger button. Closes on outside tap, Escape, link
+ * tap, or when the window grows back to the desktop layout.
+ */
+function initMobileNav() {
+  var burger = document.getElementById('navToggle');
+  var nav = document.getElementById('primaryNav');
+  if (!burger || !nav) return;
+  var DESKTOP_MIN = 1025;
+
+  function setOpen(open) {
+    nav.classList.toggle('is-open', open);
+    burger.setAttribute('aria-expanded', String(open));
+    burger.setAttribute('aria-label', open ? 'Close menu' : 'Open menu');
+    if (open) {
+      // Never show the notifications sheet and the menu at the same time.
+      var notifPanel = document.getElementById('notifPanel');
+      var notifToggle = document.getElementById('notifToggle');
+      if (notifPanel && !notifPanel.hidden) {
+        notifPanel.hidden = true;
+        if (notifToggle) notifToggle.setAttribute('aria-expanded', 'false');
+      }
+    }
+  }
+
+  burger.addEventListener('click', function (e) {
+    e.stopPropagation();
+    setOpen(!nav.classList.contains('is-open'));
+  });
+
+  nav.addEventListener('click', function (e) {
+    var el = e.target;
+    while (el && el !== nav) {
+      if (el.tagName === 'A') { setOpen(false); return; }
+      el = el.parentNode;
     }
   });
+
+  document.addEventListener('click', function (e) {
+    if (!nav.classList.contains('is-open')) return;
+    if (nav.contains(e.target) || burger.contains(e.target)) return;
+    setOpen(false);
+  });
+
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && nav.classList.contains('is-open')) {
+      setOpen(false);
+      burger.focus();
+    }
+  });
+
+  window.addEventListener('resize', function () {
+    if (window.innerWidth >= DESKTOP_MIN && nav.classList.contains('is-open')) {
+      setOpen(false);
+    }
+  });
+
+  // Opening the bell closes the menu (the bell handler lives in initNotifications).
+  var bell = document.getElementById('notifToggle');
+  if (bell) {
+    bell.addEventListener('click', function () { setOpen(false); });
+  }
 }
 
 function initSupportModal() {

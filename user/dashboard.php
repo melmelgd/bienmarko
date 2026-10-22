@@ -171,14 +171,39 @@ require __DIR__ . '/includes/head.php';
    dashboard.php — page-scoped styles only
    ============================================================ */
 
+/* ---------- Hero banner ---------- */
+.hero {
+    position: relative; overflow: hidden;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px; flex-wrap: wrap;
+    padding: 40px;
+    margin-bottom: 24px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-lg);
+    background:
+        radial-gradient(760px 280px at 100% 0%, rgba(232,163,61,.18), transparent 65%),
+        radial-gradient(520px 240px at 0% 100%, rgba(134,184,232,.08), transparent 65%),
+        var(--surface);
+    box-shadow: var(--shadow-panel);
+}
+.hero__text { flex: 1 1 340px; min-width: 0; }
+.hero__title {
+    font-size: clamp(26px, 4.2vw, 40px);
+    line-height: 1.15; letter-spacing: -.015em;
+    overflow-wrap: break-word;
+}
+.hero__subtitle { margin-top: 10px; color: var(--paper-dim); font-size: 16px; }
+.hero__actions { display: flex; gap: 12px; flex-wrap: wrap; flex: none; }
+.hero__actions .btn { padding: 13px 22px; font-size: 14.5px; }
+
 /* ---------- Upcoming stay card ---------- */
 .upcoming-card {
     display: flex;
-    gap: 18px;
+    gap: 22px;
     align-items: flex-start;
 }
 .upcoming-card__img {
-    width: 96px; height: 76px;
+    width: 200px; height: 140px;
     border-radius: var(--radius-sm);
     background: var(--surface-raised);
     border: 1px solid var(--line);
@@ -219,11 +244,21 @@ require __DIR__ . '/includes/head.php';
     font-size: 13px; color: var(--paper-dim);
 }
 
+/* ---------- Section headings: title on the left, chip/link on the right ---------- */
+.panel__head {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px 14px; flex-wrap: wrap;
+}
+
 /* ---------- Recent bookings list ---------- */
+.recent-panel { margin-top: 16px; }
 .dash-bk-list { display: flex; flex-direction: column; gap: 10px; }
 .dash-bk-item {
-    display: flex; align-items: flex-start; gap: 12px;
-    padding: 12px 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "ref right" "body right";
+    gap: 2px 14px; align-items: center;
+    padding: 14px 16px;
     background: var(--surface-raised);
     border: 1px solid var(--line);
     border-radius: var(--radius-md);
@@ -231,17 +266,18 @@ require __DIR__ . '/includes/head.php';
 }
 .dash-bk-item:hover { border-color: var(--ember-strong); }
 .dash-bk-ref {
+    grid-area: ref;
     font-family: var(--font-display); font-size: 12px; font-weight: 700;
-    color: var(--ember); letter-spacing: .04em; flex-shrink: 0;
-    min-width: 110px;
+    color: var(--ember); letter-spacing: .04em;
 }
-.dash-bk-body { flex: 1; min-width: 0; }
-.dash-bk-room { font-weight: 700; font-size: 13.5px; margin-bottom: 1px; }
-.dash-bk-dates { font-size: 12px; color: var(--paper-dim); }
+.dash-bk-body { grid-area: body; min-width: 0; }
+.dash-bk-room { font-weight: 700; font-size: 14px; margin-bottom: 1px; }
+.dash-bk-dates { font-size: 12.5px; color: var(--paper-dim); }
 .dash-bk-right {
-    display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0;
+    grid-area: right;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 4px;
 }
-.dash-bk-amount { font-family: var(--font-display); font-size: 14px; font-weight: 700; }
+.dash-bk-amount { font-family: var(--font-display); font-size: 15px; font-weight: 700; }
 .dash-badge {
     display: inline-flex; align-items: center;
     padding: 2px 8px; border-radius: var(--radius-full);
@@ -265,28 +301,44 @@ require __DIR__ . '/includes/head.php';
 .countdown-chip .icon { width: 13px; height: 13px; }
 
 /* ---------- Responsive ---------- */
+@media (max-width: 860px) {
+    .hero { padding: 32px 28px; }
+}
 @media (max-width: 600px) {
-    .upcoming-card { flex-direction: column; }
-    .upcoming-card__img { width: 100%; height: 120px; }
-    .dash-bk-item { flex-direction: column; gap: 6px; }
-    .dash-bk-right { flex-direction: row; align-items: center; }
+    .hero { padding: 26px 20px; gap: 18px; }
+    .hero__subtitle { font-size: 14.5px; }
+    .hero__actions { width: 100%; }
+    .hero__actions .btn { flex: 1 1 0; justify-content: center; }
+    .upcoming-card { flex-direction: column; width: 100%; }
+    .upcoming-card__img { width: 100%; height: 180px; }
+    .upcoming-card__body { width: 100%; }
+    .upcoming-card__footer .btn { width: 100%; justify-content: center; }
+}
+@media (min-width: 700px) {
+    .dash-bk-item {
+        grid-template-columns: 200px minmax(0, 1fr) auto;
+        grid-template-areas: "ref body right";
+        gap: 14px 20px;
+    }
+    .dash-bk-right { flex-direction: row; align-items: center; gap: 16px; }
+    .dash-bk-amount { min-width: 96px; text-align: right; }
 }
 </style>
 
 <main class="page" id="main-content">
 
-    <div class="page-head">
-        <div class="page-head__text">
-            <h1 class="page-head__title">
+    <section class="hero">
+        <div class="hero__text">
+            <h1 class="hero__title">
                 Welcome<?php echo $greetingName ? ', ' . htmlspecialchars($greetingName) : ''; ?>! <span aria-hidden="true"></span>
             </h1>
-            <p class="page-head__subtitle">Here's what's happening with your bookings</p>
+            <p class="hero__subtitle">Here's what's happening with your bookings</p>
         </div>
-        <div class="page-head__actions">
+        <div class="hero__actions">
             <a href="user-guide.php" class="btn btn--ghost"><?php render_icon('circle-help'); ?> User Guide</a>
             <a href="bookings.php"   class="btn btn--primary"><?php render_icon('calendar-plus'); ?> Book Now</a>
         </div>
-    </div>
+    </section>
 
     <?php bm_fb_render_banner($feedbackPendingStays ?? []); ?>
 
@@ -387,73 +439,68 @@ require __DIR__ . '/includes/head.php';
             <?php endif; ?>
         </section>
 
-        <!-- Quick actions + recent bookings -->
-        <div style="display:flex;flex-direction:column;gap:20px;">
-
-            <!-- Quick Actions -->
-            <aside class="panel quick-actions">
-                <h2>Quick Actions</h2>
-                <a href="bookings.php" class="quick-action">
-                    <span class="quick-action__icon"><?php render_icon('calendar-plus'); ?></span>
-                    Make New Booking
-                </a>
-                <button type="button" class="quick-action" id="contactSupportBtn">
-                    <span class="quick-action__icon"><?php render_icon('life-buoy'); ?></span>
-                    Contact Support
-                </button>
-                <a href="profile.php" class="quick-action">
-                    <span class="quick-action__icon"><?php render_icon('pencil'); ?></span>
-                    Edit Profile
-                </a>
-            </aside>
-
-            <!-- Recent Bookings -->
-            <section class="panel">
-                <div class="panel__head">
-                    <h2>Recent Bookings</h2>
-                    <a href="bookings.php" style="font-size:13px;color:var(--ember);font-weight:600;text-decoration:none">
-                        View all →
-                    </a>
-                </div>
-
-                <?php if (empty($recentBookings)): ?>
-                    <?php render_empty_state(
-                        'calendar-check',
-                        'No bookings yet',
-                        'Your booking history will appear here.',
-                        'Book Now',
-                        'bookings.php'
-                    ); ?>
-                <?php else: ?>
-                    <div class="dash-bk-list">
-                        <?php foreach ($recentBookings as $bk): ?>
-                            <?php
-                            $ciLabel = date('M j', strtotime($bk['check_in']));
-                            $coLabel = date('M j, Y', strtotime($bk['check_out']));
-                            ?>
-                            <div class="dash-bk-item">
-                                <div class="dash-bk-ref"><?php echo htmlspecialchars($bk['reference']); ?></div>
-                                <div class="dash-bk-body">
-                                    <div class="dash-bk-room"><?php echo htmlspecialchars($bk['room_name']); ?></div>
-                                    <div class="dash-bk-dates">
-                                        <?php echo htmlspecialchars($ciLabel); ?> → <?php echo htmlspecialchars($coLabel); ?>
-                                    </div>
-                                </div>
-                                <div class="dash-bk-right">
-                                    <span class="dash-bk-amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></span>
-                                    <span class="dash-badge <?php echo dash_status_class($bk['status']); ?>">
-                                        <?php echo ucfirst(htmlspecialchars($bk['status'])); ?>
-                                    </span>
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                <?php endif; ?>
-            </section>
-
-        </div>
+        <!-- Quick actions -->
+        <aside class="panel quick-actions">
+            <h2>Quick Actions</h2>
+            <a href="bookings.php" class="quick-action">
+                <span class="quick-action__icon"><?php render_icon('calendar-plus'); ?></span>
+                Make New Booking
+            </a>
+            <button type="button" class="quick-action" id="contactSupportBtn">
+                <span class="quick-action__icon"><?php render_icon('life-buoy'); ?></span>
+                Contact Support
+            </button>
+            <a href="profile.php" class="quick-action">
+                <span class="quick-action__icon"><?php render_icon('pencil'); ?></span>
+                Edit Profile
+            </a>
+        </aside>
 
     </div><!-- .content-grid -->
+
+    <!-- Recent Bookings -->
+    <section class="panel recent-panel">
+        <div class="panel__head">
+            <h2>Recent Bookings</h2>
+            <a href="bookings.php" style="font-size:13px;color:var(--ember);font-weight:600;text-decoration:none">
+                View all →
+            </a>
+        </div>
+
+        <?php if (empty($recentBookings)): ?>
+            <?php render_empty_state(
+                'calendar-check',
+                'No bookings yet',
+                'Your booking history will appear here.',
+                'Book Now',
+                'bookings.php'
+            ); ?>
+        <?php else: ?>
+            <div class="dash-bk-list">
+                <?php foreach ($recentBookings as $bk): ?>
+                    <?php
+                    $ciLabel = date('M j', strtotime($bk['check_in']));
+                    $coLabel = date('M j, Y', strtotime($bk['check_out']));
+                    ?>
+                    <div class="dash-bk-item">
+                        <div class="dash-bk-ref"><?php echo htmlspecialchars($bk['reference']); ?></div>
+                        <div class="dash-bk-body">
+                            <div class="dash-bk-room"><?php echo htmlspecialchars($bk['room_name']); ?></div>
+                            <div class="dash-bk-dates">
+                                <?php echo htmlspecialchars($ciLabel); ?> → <?php echo htmlspecialchars($coLabel); ?>
+                            </div>
+                        </div>
+                        <div class="dash-bk-right">
+                            <span class="dash-bk-amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></span>
+                            <span class="dash-badge <?php echo dash_status_class($bk['status']); ?>">
+                                <?php echo ucfirst(htmlspecialchars($bk['status'])); ?>
+                            </span>
+                        </div>
+                    </div>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </section>
 
 </main>
 
