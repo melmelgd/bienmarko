@@ -7,6 +7,7 @@ bienmarko_require_role('user');
 require_once __DIR__ . '/../includes/db.php';
 
 require __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/booking-stay.php';   // admin check-in / check-out stages
 
 $currentPage = 'dashboard';
 $pageTitle   = 'Dashboard';
@@ -54,11 +55,38 @@ $stmtUpcoming = $pdo->prepare(
      WHERE b.guest_id = :gid
        AND b.status IN ('confirmed','pending')
        AND b.check_in >= :today
+       AND " . bk_not_checked_in_sql($pdo, 'b') . "
      ORDER BY b.check_in ASC
      LIMIT 1"
 );
 $stmtUpcoming->execute(['gid' => $guestId, 'today' => $today]);
 $upcomingStay = $stmtUpcoming->fetch() ?: null;
+
+/* ------------------------------------------------------------------
+   1b. Current stay — the admin has checked the guest in and has not
+       yet checked them out. Shown instead of "upcoming".
+------------------------------------------------------------------ */
+$currentStay = null;
+if (bk_has_stay_columns($pdo)) {
+    $stmtCurrent = $pdo->prepare(
+        "SELECT b.id, b.reference, b.check_in, b.check_out, b.guests_count,
+                b.total_amount, b.status, b.checked_in_at,
+                a.name AS room_name, a.type AS room_type, a.image_filename
+         FROM bookings b
+         JOIN accommodations a ON a.id = b.accommodation_id
+         WHERE b.guest_id = :gid
+           AND b.status <> 'cancelled'
+           AND b.checked_in_at IS NOT NULL
+           AND b.checked_out_at IS NULL
+         ORDER BY b.checked_in_at DESC
+         LIMIT 1"
+    );
+    $stmtCurrent->execute(['gid' => $guestId]);
+    $currentStay = $stmtCurrent->fetch() ?: null;
+}
+// What the panel / stat card features: the in-progress stay wins over a future one.
+$featuredStay = $currentStay ?: $upcomingStay;
+$featuredIsCurrent = $currentStay !== null;
 
 /* ------------------------------------------------------------------
    2. Active bookings count (confirmed + pending, not yet checked out)
@@ -67,7 +95,8 @@ $stmtActive = $pdo->prepare(
     "SELECT COUNT(*) FROM bookings
      WHERE guest_id = :gid
        AND status IN ('confirmed','pending')
-       AND check_out >= :today"
+       AND check_out >= :today
+       AND " . (bk_has_stay_columns($pdo) ? 'checked_out_at IS NULL' : '1=1')
 );
 $stmtActive->execute(['gid' => $guestId, 'today' => $today]);
 $activeBookingsCount = (int) $stmtActive->fetchColumn();
@@ -94,7 +123,7 @@ $pendingPaymentsCount = (int) $pendingCount;
 ------------------------------------------------------------------ */
 $stmtRecent = $pdo->prepare(
     "SELECT b.id, b.reference, b.check_in, b.check_out,
-            b.guests_count, b.status, b.total_amount,
+            b.guests_count, b.status, " . bk_stay_select($pdo) . ", b.total_amount,
             a.name AS room_name, a.type AS room_type
      FROM bookings b
      JOIN accommodations a ON a.id = b.accommodation_id
@@ -108,12 +137,14 @@ $recentBookings = $stmtRecent->fetchAll();
 /* ------------------------------------------------------------------
    Build stat cards
 ------------------------------------------------------------------ */
-if ($upcomingStay) {
+if ($featuredStay) {
     $nights = (int) round(
-        (strtotime($upcomingStay['check_out']) - strtotime($upcomingStay['check_in'])) / 86400
+        (strtotime($featuredStay['check_out']) - strtotime($featuredStay['check_in'])) / 86400
     );
-    $upcomingLabel = date('M j, Y', strtotime($upcomingStay['check_in']));
-    $upcomingMeta  = $upcomingStay['room_name'] . ' · ' . $nights . ' night' . ($nights === 1 ? '' : 's');
+    $upcomingLabel = $featuredIsCurrent
+        ? 'Checked in'
+        : date('M j, Y', strtotime($featuredStay['check_in']));
+    $upcomingMeta  = $featuredStay['room_name'] . ' · ' . $nights . ' night' . ($nights === 1 ? '' : 's');
 } else {
     $upcomingLabel = 'No upcoming stay';
     $upcomingMeta  = 'Book your next visit';
@@ -123,7 +154,7 @@ $statCards = [
     [
         'variant' => 'olive',
         'icon'    => 'bed-double',
-        'label'   => 'Upcoming Stay',
+        'label'   => $featuredIsCurrent ? 'Current Stay' : 'Upcoming Stay',
         'value'   => $upcomingLabel,
         'meta'    => $upcomingMeta,
     ],
@@ -152,14 +183,15 @@ $greetingName = $_SESSION['auth_name'] ?? null;
 /* ------------------------------------------------------------------
    Status badge helper
 ------------------------------------------------------------------ */
-function dash_status_class(string $status): string
+function dash_status_class(string $colour): string
 {
-    return match ($status) {
-        'confirmed'  => 'dash-badge--green',
-        'pending'    => 'dash-badge--amber',
-        'cancelled'  => 'dash-badge--red',
-        'completed'  => 'dash-badge--blue',
-        default      => 'dash-badge--grey',
+    return match ($colour) {
+        'green'  => 'dash-badge--green',
+        'amber'  => 'dash-badge--amber',
+        'red'    => 'dash-badge--red',
+        'blue'   => 'dash-badge--blue',
+        'teal'   => 'dash-badge--teal',
+        default  => 'dash-badge--grey',
     };
 }
 
@@ -287,6 +319,7 @@ require __DIR__ . '/includes/head.php';
 .dash-badge--amber  { background: rgba(220,160,40,.2); color: var(--ember-strong); }
 .dash-badge--red    { background: rgba(220,80,60,.2);  color: var(--danger); }
 .dash-badge--blue   { background: rgba(80,140,220,.2); color: #86b8e8; }
+.dash-badge--teal   { background: rgba(30,170,170,.2); color: #5fd8d0; }
 .dash-badge--grey   { background: rgba(140,140,150,.2); color: var(--paper-dim); }
 
 /* ---------- Countdown chip ---------- */
@@ -352,10 +385,15 @@ require __DIR__ . '/includes/head.php';
         <!-- Upcoming stay panel -->
         <section class="panel">
             <div class="panel__head">
-                <h2>Your Upcoming Stay</h2>
-                <?php if ($upcomingStay): ?>
+                <h2><?php echo $featuredIsCurrent ? 'Your Current Stay' : 'Your Upcoming Stay'; ?></h2>
+                <?php if ($featuredStay && $featuredIsCurrent): ?>
+                    <span class="countdown-chip">
+                        <?php render_icon('circle-check'); ?>
+                        Checked in<?php echo !empty($featuredStay['checked_in_at']) ? ' · ' . htmlspecialchars(date('M j, g:i A', strtotime($featuredStay['checked_in_at']))) : ''; ?>
+                    </span>
+<?php elseif ($featuredStay): ?>
                     <?php
-                    $daysUntil = (int) round((strtotime($upcomingStay['check_in']) - strtotime($today)) / 86400);
+                    $daysUntil = (int) round((strtotime($featuredStay['check_in']) - strtotime($today)) / 86400);
                     ?>
                     <span class="countdown-chip">
                         <?php render_icon('calendar-clock'); ?>
@@ -370,51 +408,51 @@ require __DIR__ . '/includes/head.php';
                 <?php endif; ?>
             </div>
 
-            <?php if ($upcomingStay): ?>
+            <?php if ($featuredStay): ?>
                 <?php
                 $nights = (int) round(
-                    (strtotime($upcomingStay['check_out']) - strtotime($upcomingStay['check_in'])) / 86400
+                    (strtotime($featuredStay['check_out']) - strtotime($featuredStay['check_in'])) / 86400
                 );
                 $imgBase = '../admin/assets/uploads/accommodations/';
                 ?>
                 <div class="upcoming-card">
                     <div class="upcoming-card__img">
-                        <?php if (!empty($upcomingStay['image_filename'])): ?>
-                            <img src="<?php echo htmlspecialchars($imgBase . $upcomingStay['image_filename']); ?>"
-                                 alt="<?php echo htmlspecialchars($upcomingStay['room_name']); ?>"
+                        <?php if (!empty($featuredStay['image_filename'])): ?>
+                            <img src="<?php echo htmlspecialchars($imgBase . $featuredStay['image_filename']); ?>"
+                                 alt="<?php echo htmlspecialchars($featuredStay['room_name']); ?>"
                                  loading="lazy">
                         <?php else: ?>
                             <?php render_icon('bed-double'); ?>
                         <?php endif; ?>
                     </div>
                     <div class="upcoming-card__body">
-                        <div class="upcoming-card__ref"><?php echo htmlspecialchars($upcomingStay['reference']); ?></div>
-                        <div class="upcoming-card__room"><?php echo htmlspecialchars($upcomingStay['room_name']); ?></div>
-                        <div class="upcoming-card__type"><?php echo htmlspecialchars($upcomingStay['room_type']); ?></div>
+                        <div class="upcoming-card__ref"><?php echo htmlspecialchars($featuredStay['reference']); ?></div>
+                        <div class="upcoming-card__room"><?php echo htmlspecialchars($featuredStay['room_name']); ?></div>
+                        <div class="upcoming-card__type"><?php echo htmlspecialchars($featuredStay['room_type']); ?></div>
                         <div class="upcoming-card__dates">
                             <div class="upcoming-date-block">
                                 <span class="upcoming-date-block__lbl">Check-in</span>
                                 <span class="upcoming-date-block__val">
-                                    <?php echo date('M j, Y', strtotime($upcomingStay['check_in'])); ?>
+                                    <?php echo date('M j, Y', strtotime($featuredStay['check_in'])); ?>
                                 </span>
                             </div>
                             <div class="upcoming-date-block">
                                 <span class="upcoming-date-block__lbl">Check-out</span>
                                 <span class="upcoming-date-block__val">
-                                    <?php echo date('M j, Y', strtotime($upcomingStay['check_out'])); ?>
+                                    <?php echo date('M j, Y', strtotime($featuredStay['check_out'])); ?>
                                 </span>
                             </div>
                             <div class="upcoming-date-block">
                                 <span class="upcoming-date-block__lbl">Guests</span>
                                 <span class="upcoming-date-block__val">
-                                    <?php echo (int) $upcomingStay['guests_count']; ?>
+                                    <?php echo (int) $featuredStay['guests_count']; ?>
                                 </span>
                             </div>
                         </div>
                         <div class="upcoming-card__footer">
                             <div>
                                 <div class="upcoming-card__total">
-                                    ₱<?php echo number_format((float) $upcomingStay['total_amount'], 2); ?>
+                                    ₱<?php echo number_format((float) $featuredStay['total_amount'], 2); ?>
                                     <small>estimated total</small>
                                 </div>
                                 <div class="upcoming-nights">
@@ -459,48 +497,6 @@ require __DIR__ . '/includes/head.php';
     </div><!-- .content-grid -->
 
     <!-- Recent Bookings -->
-    <section class="panel recent-panel">
-        <div class="panel__head">
-            <h2>Recent Bookings</h2>
-            <a href="bookings.php" style="font-size:13px;color:var(--ember);font-weight:600;text-decoration:none">
-                View all →
-            </a>
-        </div>
-
-        <?php if (empty($recentBookings)): ?>
-            <?php render_empty_state(
-                'calendar-check',
-                'No bookings yet',
-                'Your booking history will appear here.',
-                'Book Now',
-                'bookings.php'
-            ); ?>
-        <?php else: ?>
-            <div class="dash-bk-list">
-                <?php foreach ($recentBookings as $bk): ?>
-                    <?php
-                    $ciLabel = date('M j', strtotime($bk['check_in']));
-                    $coLabel = date('M j, Y', strtotime($bk['check_out']));
-                    ?>
-                    <div class="dash-bk-item">
-                        <div class="dash-bk-ref"><?php echo htmlspecialchars($bk['reference']); ?></div>
-                        <div class="dash-bk-body">
-                            <div class="dash-bk-room"><?php echo htmlspecialchars($bk['room_name']); ?></div>
-                            <div class="dash-bk-dates">
-                                <?php echo htmlspecialchars($ciLabel); ?> → <?php echo htmlspecialchars($coLabel); ?>
-                            </div>
-                        </div>
-                        <div class="dash-bk-right">
-                            <span class="dash-bk-amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></span>
-                            <span class="dash-badge <?php echo dash_status_class($bk['status']); ?>">
-                                <?php echo ucfirst(htmlspecialchars($bk['status'])); ?>
-                            </span>
-                        </div>
-                    </div>
-                <?php endforeach; ?>
-            </div>
-        <?php endif; ?>
-    </section>
 
 </main>
 

@@ -211,10 +211,7 @@ require __DIR__ . '/includes/head.php';
         <?php page_head('Receipts', 'Download and review your payment receipts'); ?>
     </div>
 
-    <!-- Stat cards -->
-    <div class="stat-grid">
-        <?php foreach ($statCards as $card): render_stat_card($card); endforeach; ?>
-    </div>
+   
 
     <section class="panel">
         <div class="panel__head">

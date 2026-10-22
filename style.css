@@ -1716,29 +1716,34 @@ body.reveal-ready [data-reveal].is-visible {
     .slider-arrow { display: none; }
 }
 
-/* Dedicated room and event-hall listing pages */
+/* Dedicated listing pages: Rooms, Event Halls, Cottages, Pool */
 .listing-page { min-height: 100vh; }
-.listing-topbar {
-    min-height: 96px;
-    padding: 18px 5%;
+
+/* Same navbar as the landing page, on a solid background */
+.listing-header { background: var(--black); }
+.listing-page .navbar { background: var(--black); }
+
+/* Logo with the "back" link stacked underneath it */
+.listing-brand {
+    width: 245px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 24px;
-    border-bottom: 1px solid var(--line);
-    background: var(--black);
+    flex-direction: column;
+    gap: 10px;
 }
-.listing-topbar .logo { width: auto; }
-.listing-topbar .listing-back {
+.listing-brand .logo { width: auto; }
+.listing-back {
     color: var(--gold-light);
-    font-size: 11px;
+    font-size: 10.5px;
     font-weight: 700;
     letter-spacing: 1.3px;
     text-transform: uppercase;
+    transition: color .25s ease;
 }
-.listing-topbar .listing-back:hover { color: var(--cream); }
-.listing-main { padding: 80px 5% 110px; }
-.listing-main .section-heading { margin-bottom: 56px; }
+.listing-back:hover { color: var(--cream); }
+
+/* Tighter spacing: title -> paragraph -> cards */
+.listing-main { padding: 56px 5% 100px; }
+.listing-main .section-heading { margin: 0 auto 30px; }
 .listing-main .section-heading h1 {
     margin: 10px 0 0;
     color: var(--cream);
@@ -1747,7 +1752,10 @@ body.reveal-ready [data-reveal].is-visible {
     font-weight: 500;
     line-height: 1;
 }
-.listing-main .section-heading > p:last-child { color: var(--muted); }
+.listing-page .listing-main .section-heading > p:last-child:not(.section-label) {
+    margin: 14px auto 0;
+    color: var(--muted);
+}
 .listing-page .room-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1755,6 +1763,13 @@ body.reveal-ready [data-reveal].is-visible {
 }
 .listing-page .room-grid-empty { grid-column: 1 / -1; }
 .listing-page .room-card[hidden] { display: none !important; }
+
+/* The hover overlay is the booking button now: make the whole photo clickable */
+.listing-page .room-hover a::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+}
 .listing-footnote {
     max-width: 760px;
     margin: 36px auto 0;
@@ -1762,24 +1777,20 @@ body.reveal-ready [data-reveal].is-visible {
     font-size: 13px;
     text-align: center;
 }
-.listing-book-link {
-    display: inline-flex;
-    margin-top: 14px;
-    padding: 10px 17px;
-    border: 1px solid var(--gold);
-    color: var(--gold-light);
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-}
-.listing-book-link:hover { background: var(--gold); color: var(--black); }
+
 @media (max-width: 1080px) {
     .listing-page .room-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+/* Touch screens have no hover, so keep the overlay visible there */
+@media (hover: none) {
+    .listing-page .room-hover { opacity: 1; background: rgba(201, 155, 76, 0.85); }
+}
+@media (max-width: 800px) {
+    .listing-brand { width: auto; gap: 8px; }
+}
 @media (max-width: 720px) {
-    .listing-main { padding: 58px 16px 80px; }
-    .listing-main .section-heading { margin-bottom: 36px; }
+    .listing-main { padding: 40px 16px 80px; }
+    .listing-main .section-heading { margin-bottom: 24px; }
     .listing-page .room-grid {
         grid-template-columns: 1fr;
         overflow: visible;
@@ -1790,8 +1801,7 @@ body.reveal-ready [data-reveal].is-visible {
         flex: initial;
         scroll-snap-align: none;
     }
-    .listing-topbar { min-height: 82px; padding-inline: 18px; }
-    .listing-topbar .logo strong { font-size: 20px; }
+    .listing-page .navbar { padding: 0 18px; }
 }
 
 @media (max-width: 1050px) {

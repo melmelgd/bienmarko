@@ -14,6 +14,7 @@ bienmarko_require_role('admin');
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/booking-stay.php';
 
 $active_page        = 'dashboard';
 $page_title         = 'Dashboard Overview';
@@ -65,29 +66,28 @@ $pdo->exec("
         ADD COLUMN IF NOT EXISTS `email`      VARCHAR(200) NULL DEFAULT NULL AFTER `guest_name`
 ");
 
-/* ------------------------------------------------------------------
-   STAT 1 — Upcoming stays (check_in >= today, confirmed/pending)
------------------------------------------------------------------- */
-$stmtUpcoming = $pdo->prepare(
-    "SELECT COUNT(*) FROM bookings
-     WHERE status IN ('confirmed','pending')
-       AND check_in >= :today"
-);
-$stmtUpcoming->execute(['today' => $today]);
-$statUpcoming = (int) $stmtUpcoming->fetchColumn();
+// Manual front-desk check-in / check-out timestamps (see booking-stay.php).
+// The Upcoming / Active Now cards below rely on these columns.
+bk_stay_migrate($pdo);
 
 /* ------------------------------------------------------------------
-   STAT 2 — Active bookings (currently checked in: check_in <= today
-             and check_out > today)
+   STAT 1 — Upcoming stays: bookings still waiting for the guest to
+            arrive (not cancelled, NOT yet checked in by the front desk).
+            Uses the same stage rule as admin/bookings.php, so a guest
+            disappears from here the moment "Confirm Check-in" is clicked.
 ------------------------------------------------------------------ */
-$stmtActive = $pdo->prepare(
-    "SELECT COUNT(*) FROM bookings
-     WHERE status IN ('confirmed','pending')
-       AND check_in  <= :today
-       AND check_out >  :today2"
-);
-$stmtActive->execute(['today' => $today, 'today2' => $today]);
-$statActive = (int) $stmtActive->fetchColumn();
+$statUpcoming = (int) $pdo->query(
+    "SELECT COUNT(*) FROM bookings WHERE " . bk_stage_sql('upcoming', '')
+)->fetchColumn();
+
+/* ------------------------------------------------------------------
+   STAT 2 — Active now: guests physically checked in and not yet
+            checked out (checked_in_at set, checked_out_at empty).
+            Same stage rule as the "Checked-in" tab on admin/bookings.php.
+------------------------------------------------------------------ */
+$statActive = (int) $pdo->query(
+    "SELECT COUNT(*) FROM bookings WHERE " . bk_stage_sql('checked_in', '')
+)->fetchColumn();
 
 /* ------------------------------------------------------------------
    STAT 3 — Pending payments (confirmed, check_in >= today)

@@ -6,6 +6,7 @@ bienmarko_start_session();
 bienmarko_require_role('user');
 
 require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../includes/booking-stay.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -91,7 +92,7 @@ if ($bookingId === false || $bookingId < 1) {
 
 try {
     $stmt = $pdo->prepare(
-        'SELECT b.id, b.status, b.accommodation_id,
+        'SELECT b.id, b.status, ' . bk_stay_select($pdo) . ', b.accommodation_id,
                 a.name AS accommodation_name, a.type AS accommodation_type
          FROM bookings b
          LEFT JOIN accommodations a ON a.id = b.accommodation_id
@@ -106,7 +107,7 @@ try {
 if (!$booking) {
     fb_fail(403, 'We could not find that booking on your account.');
 }
-if ($booking['status'] !== 'completed') {
+if (bk_stage($booking) !== 'completed') {
     fb_fail(403, 'You can leave feedback once your stay is completed.');
 }
 

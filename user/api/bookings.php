@@ -8,6 +8,7 @@ bienmarko_require_role('user');
 require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/booking-emails.php';
 require_once __DIR__ . '/../includes/booking-notifications.php';
+require_once __DIR__ . '/../includes/booking-stay.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -227,6 +228,24 @@ function bk_validate_dates(string $checkIn, string $checkOut): ?string
 function bk_can_self_manage(string $checkIn): bool
 {
     return strtotime($checkIn) >= strtotime(date('Y-m-d'));
+}
+
+/**
+ * Once the admin has checked the guest in (or out) at the front desk the
+ * booking is in progress / finished, so the guest can no longer edit or
+ * cancel it online.
+ */
+function bk_assert_not_checked_in(PDO $pdo, int $bookingId): void
+{
+    if (!bk_has_stay_columns($pdo)) {
+        return;
+    }
+    $stmt = $pdo->prepare("SELECT checked_in_at, checked_out_at FROM bookings WHERE id = :id LIMIT 1");
+    $stmt->execute(['id' => $bookingId]);
+    $row = $stmt->fetch();
+    if ($row && (!empty($row['checked_in_at']) || !empty($row['checked_out_at']))) {
+        bk_fail(409, 'You have already been checked in for this booking, so it can no longer be changed online. Please contact the resort.');
+    }
 }
 
 /**
@@ -998,6 +1017,8 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
         bk_fail(409, 'Only pending or confirmed bookings can be modified.');
     }
 
+    bk_assert_not_checked_in($pdo, (int) $booking['id']);
+
     if (!bk_can_self_manage($booking['old_check_in'])) {
         bk_fail(403, 'This booking\'s check-in date has already passed. Please contact the resort directly for changes.');
     }
@@ -1241,6 +1262,8 @@ function bk_action_cancel(PDO $pdo, array $input, int $guestId): never
     if ($booking['status'] === 'completed') {
         bk_fail(409, 'Completed bookings cannot be cancelled.');
     }
+
+    bk_assert_not_checked_in($pdo, (int) $booking['id']);
 
     if (!bk_can_self_manage($booking['check_in'])) {
         bk_fail(403, 'This booking\'s check-in date has already passed. Please contact the resort directly for changes.');

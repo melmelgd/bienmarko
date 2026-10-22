@@ -11,11 +11,35 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body class="listing-page" data-listing-category="pool" data-listing-label="pool access options">
-    <header class="listing-topbar">
-        <a href="index.html#home" class="logo" aria-label="Bien Marko's home">
-            <strong>Bien Markos</strong>
-        </a>
-        <a class="listing-back" href="index.html#accommodations">← Our Accommodations</a>
+    <header class="listing-header">
+        <nav class="navbar" aria-label="Primary navigation">
+            <div class="listing-brand">
+                <a href="index.html#home" class="logo" aria-label="Bien Marko's Pension House home">
+                    <strong>Bien Marko's</strong>
+                </a>
+                <a class="listing-back" href="index.html#accommodations">&larr; Our Accommodations</a>
+            </div>
+
+            <div class="nav-links" id="navLinks">
+                <a href="index.html#home">Home</a>
+                <a class="active" href="index.html#accommodations">Accommodation</a>
+                <a href="index.html#about">About</a>
+                <a href="index.html#contact">Contact</a>
+                <div class="nav-mobile-actions">
+                    <a href="login.php" class="login">Log in</a>
+                    <a href="register.php" class="signup">Sign up</a>
+                </div>
+            </div>
+
+            <div class="nav-actions">
+                <a href="login.php" class="login">Log in</a>
+                <a href="register.php" class="signup">Sign up</a>
+            </div>
+
+            <button class="menu-btn" id="menuBtn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks">
+                <span></span><span></span><span></span>
+            </button>
+        </nav>
     </header>
 
     <main class="listing-main">

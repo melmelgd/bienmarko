@@ -7,6 +7,7 @@ bienmarko_require_role('user');
 require_once __DIR__ . '/../includes/db.php';
 
 require __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/booking-stay.php';   // Upcoming / Checked-in / Completed (admin front desk)
 
 $currentPage = 'bookings';
 $pageTitle   = 'Book a Stay';
@@ -86,9 +87,10 @@ try {
     );
 
     $guestId = (int) ($_SESSION['auth_user_id'] ?? 0);
+    $stayCols = bk_stay_select($pdo);   // checked_in_at / checked_out_at set by the admin
     $stmt = $pdo->prepare(
         "SELECT b.id, b.reference, b.check_in, b.check_out,
-                b.guests_count, b.status, b.total_amount, b.notes,
+                b.guests_count, b.status, {$stayCols}, b.total_amount, b.notes,
                 b.created_at, b.accommodation_id, b.companion_names,
                 b.guest_name, b.email AS contact_email, b.phone AS contact_phone,
                 b.address AS contact_address,
@@ -111,15 +113,16 @@ $csrfToken = bienmarko_csrf_token();
 $today     = date('Y-m-d');
 $imgBase   = '../admin/assets/uploads/accommodations/';
 
-// Status badge colors
-function booking_status_class(string $status): string
+// Status badge colors (colour key comes from bk_stage_badge())
+function booking_status_class(string $colour): string
 {
-    return match ($status) {
-        'confirmed'  => 'badge--green',
-        'pending'    => 'badge--amber',
-        'cancelled'  => 'badge--red',
-        'completed'  => 'badge--blue',
-        default      => 'badge--grey',
+    return match ($colour) {
+        'green'  => 'badge--green',
+        'amber'  => 'badge--amber',
+        'red'    => 'badge--red',
+        'blue'   => 'badge--blue',
+        'teal'   => 'badge--teal',
+        default  => 'badge--grey',
     };
 }
 
@@ -785,6 +788,7 @@ require __DIR__ . '/includes/head.php';
 .badge--amber  { background: rgba(220,160,40,.2); color: var(--ember-strong); }
 .badge--red    { background: rgba(220,80,60,.2);  color: var(--danger); }
 .badge--blue   { background: rgba(80,140,220,.2); color: #86b8e8; }
+.badge--teal   { background: rgba(30,170,170,.2); color: #5fd8d0; }
 .badge--grey   { background: rgba(140,140,150,.2); color: var(--paper-dim); }
 
 /* ---------- Error state ---------- */
@@ -1396,8 +1400,12 @@ require __DIR__ . '/includes/head.php';
                         $checkOut   = date('M j, Y', strtotime($bk['check_out']));
                         $nights     = (int) round((strtotime($bk['check_out']) - strtotime($bk['check_in'])) / 86400);
                         $isPool     = strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0;
-                        $isActive   = in_array($bk['status'], ['pending', 'confirmed'], true);
-                        $canModify  = $isActive && strtotime($bk['check_in']) >= strtotime($today);
+                        // Stage mirrors what the admin recorded at the front desk.
+                        [$stage, $stageLabel, $stageColour] = bk_stage_badge($bk);
+                        $isActive   = in_array($bk['status'], ['pending', 'confirmed'], true) && $stage !== 'completed';
+                        $isCheckedIn = $stage === 'checked_in';
+                        // Once the admin has checked the guest in, the booking can no longer be edited / cancelled online.
+                        $canModify  = $isActive && !$isCheckedIn && strtotime($bk['check_in']) >= strtotime($today);
 
                         // Contact details saved with the booking; older bookings fall back to the profile.
                         if (!empty($bk['guest_name'])) {
@@ -1440,6 +1448,7 @@ require __DIR__ . '/includes/head.php';
                                  data-phone="<?php echo htmlspecialchars($rowPhone); ?>"
                                  data-address="<?php echo htmlspecialchars($rowAddress); ?>"
                                  data-status="<?php echo htmlspecialchars($bk['status']); ?>"
+                                 data-stage="<?php echo htmlspecialchars($stage); ?>"
                                  data-image="<?php echo htmlspecialchars((string) $bk['image_filename']); ?>">
                             <div class="bk-item__img">
                                 <?php if (!empty($bk['image_filename'])): ?>
@@ -1463,10 +1472,14 @@ require __DIR__ . '/includes/head.php';
                             </div>
                             <div class="bk-item__right">
                                 <span class="bk-item__amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></span>
-                                <span class="badge <?php echo booking_status_class($bk['status']); ?>">
-                                    <?php echo ucfirst(htmlspecialchars($bk['status'])); ?>
+                                <span class="badge <?php echo booking_status_class($stageColour); ?>">
+                                    <?php echo htmlspecialchars($stageLabel); ?>
                                 </span>
-                                <?php if ($isActive): ?>
+                                <?php if ($isCheckedIn): ?>
+                                    <span class="bk-item__note">
+                                        Checked in<?php echo !empty($bk['checked_in_at']) ? ' ' . htmlspecialchars(date('M j, g:i A', strtotime($bk['checked_in_at']))) : ''; ?>
+                                    </span>
+                                <?php elseif ($isActive): ?>
                                     <?php if ($canModify): ?>
                                         <div class="bk-item__actions">
                                             <button type="button" class="bk-action-btn bk-action-btn--edit" data-bk-edit>

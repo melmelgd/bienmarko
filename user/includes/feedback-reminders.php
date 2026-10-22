@@ -103,6 +103,7 @@ function bm_fb_ensure_schema(PDO $pdo): void
 function bm_fb_unreviewed_stays(PDO $pdo, ?int $guestId = null, ?int $withinDays = null): array
 {
     bm_fb_ensure_schema($pdo);
+    require_once __DIR__ . '/booking-stay.php';
 
     $sql = "SELECT b.id, b.guest_id, b.reference, b.check_in, b.check_out,
                    a.name AS room_name, g.first_name, g.email AS guest_email
@@ -110,7 +111,7 @@ function bm_fb_unreviewed_stays(PDO $pdo, ?int $guestId = null, ?int $withinDays
             JOIN accommodations a ON a.id = b.accommodation_id
             JOIN guests g         ON g.id = b.guest_id
             LEFT JOIN feedback f  ON f.booking_id = b.id
-            WHERE b.status = 'completed'
+            WHERE " . bk_completed_sql($pdo, 'b') . "
               AND f.id IS NULL";
     $params = [];
 

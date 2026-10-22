@@ -2,14 +2,16 @@
 /**
  * admin/bookings.php
  * -----------------------------------------------------------------------
- * Bookings management, organised around the front-desk workflow:
+ * Bookings management — ONE list of every booking (no view tabs), always
+ * ordered by stage:
  *
- *   ?view=upcoming  Upcoming Arrivals  — active, guest has NOT checked in
- *   ?view=staying   Currently Staying  — admin recorded the check-in, guest
- *                                        has not been checked out yet
- *   ?view=all       All Bookings       — every record (Upcoming, Checked-in,
- *                                        Completed, Cancelled) with the
- *                                        search box, status filter and paging
+ *   1. Upcoming    — guest has NOT checked in (nearest arrival first)
+ *   2. Checked-in  — admin recorded the check-in (earliest check-out first)
+ *   3. Completed   — admin recorded the check-out (most recent first)
+ *   4. Cancelled   — (most recent first)
+ *
+ * The stat cards, the status dropdown and the search box narrow the list;
+ * the stage order always applies.
  *
  * Statuses are NEVER changed by a date or a clock. A guest moves
  * Upcoming → Checked-in → Completed only when the admin confirms it in the
@@ -76,24 +78,12 @@ $filterSearch = trim($_GET['search'] ?? '');
 $allowedStatuses = ['', 'upcoming', 'checked_in', 'completed', 'cancelled'];
 if (!in_array($filterStatus, $allowedStatuses, true)) $filterStatus = '';
 
-/* No ?view= → Upcoming Arrivals (the front desk's working list). A link that
-   carries a search or status filter but no view (e.g. the notification bell's
-   "bookings.php?search=BM-XXXX") must still find ANY booking, so it opens
-   All Bookings. */
-$view = $_GET['view'] ?? '';
-if (!in_array($view, ['upcoming', 'staying', 'all'], true)) {
-    $view = ($filterSearch !== '' || $filterStatus !== '') ? 'all' : 'upcoming';
-}
-if ($view !== 'all') {
-    $filterStatus = '';   // the status filter belongs to All Bookings only
-}
-
 /* Pagination — 10 bookings per page, like the Payments and Dashboard tables */
 $perPage     = 10;
 $currentPage = max(1, (int) ($_GET['page'] ?? 1));
 
 /* ------------------------------------------------------------------
-   Counts — drive the tab badges and the stat cards. They are computed
+   Counts — drive the stat cards. They are computed
    from the same stage conditions as the lists, on every page load, so a
    status change is reflected the moment the page refreshes.
 ------------------------------------------------------------------ */
@@ -118,11 +108,7 @@ $statCancelled  = (int) $countRow['cancelled'];
 $whereClauses = [];
 $params       = [];
 
-if ($view === 'upcoming') {
-    $whereClauses[] = bk_stage_sql('upcoming');
-} elseif ($view === 'staying') {
-    $whereClauses[] = bk_stage_sql('checked_in');
-} elseif ($filterStatus !== '') {
+if ($filterStatus !== '') {
     $whereClauses[] = bk_stage_sql($filterStatus);
 }
 
@@ -145,23 +131,28 @@ if ($filterSearch !== '') {
 
 $where = $whereClauses ? 'WHERE ' . implode(' AND ', $whereClauses) : '';
 
-/* Sorting — every ORDER BY ends in b.id so the order is fully deterministic
-   and identical on every page of the results.
-     upcoming : today & future arrivals first (nearest date first), then any
-                arrivals whose date has already passed (still Upcoming until
-                the admin acts — they are never auto-checked-in); ties on a
-                date → check-in time if the column exists, then booking order.
-     staying  : soonest expected check-out first (overdue ones lead).
-     all      : check-in date ascending, ties → check-in time, booking order. */
+/* Sorting — one list, grouped by stage:  Upcoming → Checked-in → Completed
+   → Cancelled. Every ORDER BY ends in b.id so the order is fully
+   deterministic and identical on every page of the results.
+     1 upcoming   : today & future arrivals first (nearest date first), then
+                    any arrivals whose date has already passed (still Upcoming
+                    until the admin acts — never auto-checked-in); ties on a
+                    date → check-in time if the column exists, then booking
+                    order.
+     2 checked_in : soonest expected check-out first (overdue ones lead).
+     3 completed  : most recent stay first.
+     4 cancelled  : most recent stay first.                                  */
+$stageRank = 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN 1'
+           . ' WHEN '     . bk_stage_sql('checked_in') . ' THEN 2'
+           . ' WHEN '     . bk_stage_sql('completed')  . ' THEN 3'
+           . ' ELSE 4 END';
 $timeSort = $hasCheckInTime ? 'b.check_in_time IS NULL, b.check_in_time ASC, ' : '';
-if ($view === 'upcoming') {
-    $orderBy = '(b.check_in < ' . $pdo->quote($today) . ') ASC, b.check_in ASC, '
-             . $timeSort . 'b.created_at ASC, b.id ASC';
-} elseif ($view === 'staying') {
-    $orderBy = 'b.check_out ASC, b.check_in ASC, b.created_at ASC, b.id ASC';
-} else {
-    $orderBy = 'b.check_in ASC, ' . $timeSort . 'b.created_at ASC, b.id ASC';
-}
+$orderBy  = $stageRank . ' ASC, '
+          . 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN (b.check_in < ' . $pdo->quote($today) . ') ELSE 0 END ASC, '
+          . 'CASE WHEN ' . bk_stage_sql('checked_in') . ' THEN b.check_out END ASC, '
+          . 'CASE WHEN ' . bk_stage_sql('upcoming') . ' OR ' . bk_stage_sql('checked_in') . ' THEN b.check_in END ASC, '
+          . 'CASE WHEN ' . bk_stage_sql('completed') . ' OR ' . bk_stage_sql('cancelled') . ' THEN b.check_in END DESC, '
+          . $timeSort . 'b.created_at ASC, b.id ASC';
 
 /* Total matching rows (all filters applied, no LIMIT) — drives the
    pagination bar and the "N bookings" count in the table header. */
@@ -260,16 +251,6 @@ function bk_time_label(array $bk): string
     }
     $t = strtotime($bk['check_in_time']);
     return $t ? date('g:i A', $t) : '';
-}
-
-/** Link to another view, keeping the current search term. */
-function bk_view_url(string $view, string $search): string
-{
-    $q = ['view' => $view];
-    if ($search !== '') {
-        $q['search'] = $search;
-    }
-    return htmlspecialchars('bookings.php?' . http_build_query($q), ENT_QUOTES, 'UTF-8');
 }
 
 require __DIR__ . '/includes/head.php';
@@ -474,24 +455,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .date-picker-legend { margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-tertiary); }
 .dp-swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; background: var(--red-bg); border: 1px solid var(--red); }
 
-/* View tabs — Upcoming Arrivals / Currently Staying / All Bookings */
-.view-tabs { display: flex; gap: 6px; flex-wrap: wrap; padding: 5px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); }
-.view-tab {
-    flex: 1 1 0; min-width: 170px;
-    display: flex; align-items: center; justify-content: center; gap: 9px;
-    padding: 11px 16px; border-radius: var(--r-md);
-    font-size: 14px; font-weight: 600; color: var(--text-secondary);
-    text-decoration: none; border: 1px solid transparent;
-    transition: background var(--transition), color var(--transition), border-color var(--transition);
-}
-.view-tab:hover { color: var(--text); background: var(--panel-alt); }
-.view-tab.is-active { background: var(--gold-tint-bg); border-color: var(--gold-600); color: var(--gold-400); }
-.view-tab-count {
-    min-width: 24px; padding: 1px 8px; text-align: center;
-    border-radius: var(--r-full); font-size: 12px; font-weight: 700;
-    background: var(--panel-alt); color: var(--text-secondary);
-}
-.view-tab.is-active .view-tab-count { background: var(--gold-500); color: var(--on-accent); }
+/* Table sub-heading */
 .view-hint { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
 
 /* Small date tags + reference code */
@@ -568,28 +532,6 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
 
 <div class="stack">
 
-    <!-- ===== View tabs ===== -->
-    <nav class="view-tabs" aria-label="Booking views">
-        <a class="view-tab <?php echo $view === 'upcoming' ? 'is-active' : ''; ?>" href="<?php echo bk_view_url('upcoming', $filterSearch); ?>"
-           <?php echo $view === 'upcoming' ? 'aria-current="page"' : ''; ?>>
-            <?php echo icon('clock', 'icon-sm'); ?>
-            <span>Upcoming Arrivals</span>
-            <span class="view-tab-count"><?php echo $statUpcoming; ?></span>
-        </a>
-        <a class="view-tab <?php echo $view === 'staying' ? 'is-active' : ''; ?>" href="<?php echo bk_view_url('staying', $filterSearch); ?>"
-           <?php echo $view === 'staying' ? 'aria-current="page"' : ''; ?>>
-            <?php echo icon('bed', 'icon-sm'); ?>
-            <span>Currently Staying</span>
-            <span class="view-tab-count"><?php echo $statCheckedIn; ?></span>
-        </a>
-        <a class="view-tab <?php echo $view === 'all' ? 'is-active' : ''; ?>" href="<?php echo bk_view_url('all', $filterSearch); ?>"
-           <?php echo $view === 'all' ? 'aria-current="page"' : ''; ?>>
-            <?php echo icon('calendar', 'icon-sm'); ?>
-            <span>All Bookings</span>
-            <span class="view-tab-count"><?php echo $statTotal; ?></span>
-        </a>
-    </nav>
-
     <!-- ===== Stat cards (click = filter All Bookings by that status) ===== -->
     <div class="stat-grid">
         <?php
@@ -601,7 +543,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             ['cancelled',  'Cancelled',      $statCancelled, 'close',          'red'],
         ];
         foreach ($cards as [$key, $label, $val, $ico, $tint]):
-            $isActive = ($view === 'all' && $filterStatus === $key);
+            $isActive = ($filterStatus === $key);
         ?>
         <div class="stat-card <?php echo $isActive ? 'is-active' : ''; ?>" onclick="applyStatusFilter('<?php echo $key; ?>')">
             <div class="stat-card-top">
@@ -620,7 +562,6 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             <input type="text" id="searchInput" placeholder="Search by name, email, reference, or accommodation…"
                    value="<?php echo htmlspecialchars($filterSearch, ENT_QUOTES, 'UTF-8'); ?>">
         </div>
-        <?php if ($view === 'all'): ?>
         <select class="filter-select" id="statusSelect">
             <option value="">All Statuses</option>
             <option value="upcoming"   <?php echo $filterStatus === 'upcoming'   ? 'selected' : ''; ?>>Upcoming</option>
@@ -628,23 +569,29 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             <option value="completed"  <?php echo $filterStatus === 'completed'  ? 'selected' : ''; ?>>Completed</option>
             <option value="cancelled"  <?php echo $filterStatus === 'cancelled'  ? 'selected' : ''; ?>>Cancelled</option>
         </select>
-        <?php endif; ?>
     </div>
 
     <!-- ===== Bookings Table ===== -->
     <?php
-    $viewMeta = [
-        'upcoming' => ['Upcoming Arrivals', 'Guests who have not checked in yet — nearest arrival first. A guest stays Upcoming until you confirm they have arrived.', 'calendar-check', 'No upcoming arrivals', 'Active reservations for guests who have not checked in will appear here.'],
-        'staying'  => ['Currently Staying', 'Guests you have checked in — earliest check-out first. They stay here until you record their check-out.', 'bed', 'No guests currently staying', 'Guests appear here after you confirm their check-in from Upcoming Arrivals.'],
-        'all'      => ['All Bookings', 'Every booking, oldest check-in date first.', 'calendar', 'No bookings yet', 'New bookings from guests will appear here automatically.'],
+    $statusLabels = [
+        'upcoming'   => 'Upcoming',
+        'checked_in' => 'Checked-in',
+        'completed'  => 'Completed',
+        'cancelled'  => 'Cancelled',
     ];
-    [$viewTitle, $viewHint, $emptyIcon, $emptyTitle, $emptyMsg] = $viewMeta[$view];
+    $viewTitle = 'Bookings';
+    $viewHint  = $filterStatus !== ''
+        ? 'Showing ' . $statusLabels[$filterStatus] . ' bookings only.'
+        : 'Upcoming stays first, then checked-in, completed and cancelled.';
+    $emptyIcon  = 'calendar';
+    $emptyTitle = 'No bookings yet';
+    $emptyMsg   = 'New bookings from guests will appear here automatically.';
     if ($totalBookings === 0 && ($filterSearch !== '' || $filterStatus !== '')) {
         $emptyIcon  = 'inbox';
         $emptyTitle = 'No bookings match';
         $emptyMsg   = 'Try a different search term or clear the filter.';
     }
-    $colCount = ($view === 'upcoming') ? 8 : 7;
+    $colCount = 7;
     ?>
     <div class="panel table-wrap">
         <div class="table-head">
@@ -660,32 +607,13 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             <table id="bookingsTable">
                 <thead>
                     <tr>
-                        <?php if ($view === 'upcoming'): ?>
-                            <th>Guest</th>
-                            <th>Contact</th>
-                            <th>Accommodation</th>
-                            <th>Check-in</th>
-                            <th>Check-out</th>
-                            <th>Reference</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        <?php elseif ($view === 'staying'): ?>
-                            <th>Guest</th>
-                            <th>Accommodation</th>
-                            <th>Check-in</th>
-                            <th>Expected Check-out</th>
-                            <th>Reference</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        <?php else: ?>
-                            <th>Guest</th>
-                            <th>Room</th>
-                            <th>Check-in</th>
-                            <th>Check-out</th>
-                            <th>Reference</th>
-                            <th>Status</th>
-                            <th>Actions</th>
-                        <?php endif; ?>
+                        <th>Guest</th>
+                        <th>Room</th>
+                        <th>Check-in</th>
+                        <th>Check-out</th>
+                        <th>Reference</th>
+                        <th>Status</th>
+                        <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="bookingsTbody">
@@ -707,18 +635,10 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                             <tr data-id="<?php echo $bid; ?>" onclick="openDetail(<?php echo $bid; ?>)">
                                 <td>
                                     <div class="td-guest"><?php echo htmlspecialchars(bk_name($bk), ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <?php if ($view === 'all' && $email): ?>
+                                    <?php if ($email): ?>
                                         <div class="td-sub"><?php echo htmlspecialchars($email, ENT_QUOTES, 'UTF-8'); ?></div>
                                     <?php endif; ?>
                                 </td>
-
-                                <?php if ($view === 'upcoming'): ?>
-                                    <td>
-                                        <?php if ($email): ?><div><?php echo htmlspecialchars($email, ENT_QUOTES, 'UTF-8'); ?></div><?php endif; ?>
-                                        <?php if ($phone): ?><div class="td-sub"><?php echo htmlspecialchars($phone, ENT_QUOTES, 'UTF-8'); ?></div><?php endif; ?>
-                                        <?php if (!$email && !$phone): ?><span class="td-sub">—</span><?php endif; ?>
-                                    </td>
-                                <?php endif; ?>
 
                                 <td>
                                     <div><?php echo htmlspecialchars($bk['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
@@ -728,22 +648,22 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                                 <td>
                                     <div><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></div>
                                     <?php if ($timeLbl): ?><div class="td-sub"><?php echo $timeLbl; ?></div><?php endif; ?>
-                                    <?php if ($view === 'upcoming') echo bk_date_chip($bk['check_in'], $today, 'Overdue'); ?>
+                                    <?php if ($stage === 'upcoming') echo bk_date_chip($bk['check_in'], $today, 'Overdue'); ?>
                                 </td>
                                 <td>
                                     <div><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></div>
-                                    <?php if ($view === 'staying') echo bk_date_chip($bk['check_out'], $today, 'Overdue'); ?>
+                                    <?php if ($stage === 'checked_in') echo bk_date_chip($bk['check_out'], $today, 'Overdue'); ?>
                                 </td>
 
                                 <td><span class="ref-code"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></span></td>
                                 <td><?php echo bk_stage_badge($bk); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
-                                        <?php if ($view === 'upcoming'): ?>
+                                        <?php if ($stage === 'upcoming'): ?>
                                             <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest in">
                                                 <?php echo icon('calendar-check', 'icon-sm'); ?> Check-in
                                             </button>
-                                        <?php elseif ($view === 'staying'): ?>
+                                        <?php elseif ($stage === 'checked_in'): ?>
                                             <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest out">
                                                 <?php echo icon('logout', 'icon-sm'); ?> Check-out
                                             </button>
@@ -751,7 +671,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                                         <button class="btn-sm btn-sm--gold" onclick="openDetail(<?php echo $bid; ?>)" title="View Details">
                                             <?php echo icon('eye', 'icon-sm'); ?>
                                         </button>
-                                        <?php if ($canCancel && $view !== 'staying'): ?>
+                                        <?php if ($canCancel): ?>
                                             <button class="btn-sm btn-sm--danger" onclick="quickStatus(<?php echo $bid; ?>, 'cancelled')" title="Cancel">
                                                 <?php echo icon('close', 'icon-sm'); ?>
                                             </button>
@@ -765,7 +685,6 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             </table>
         </div>
         <?php render_pagination('bookings.php', $currentPage, $perPage, $totalBookings, [
-            'view'   => $view,
             'status' => $filterStatus,
             'search' => $filterSearch,
         ], 'booking'); ?>
@@ -1118,15 +1037,14 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
 var BOOKINGS   = <?php echo $bookingsJson; ?>;
 var CSRF       = <?php echo json_encode($csrf); ?>;
 var TODAY      = <?php echo json_encode($today); ?>;        // server date (YYYY-MM-DD), used only for wording hints
-var CURRENT_VIEW = <?php echo json_encode($view); ?>;       // upcoming | staying | all
 var bookingMap = {};
 BOOKINGS.forEach(function (b) { bookingMap[b.id] = b; });
 
 /* ---------- Filter helpers ---------- */
-// Stat cards and the status dropdown filter All Bookings.
+// Stat cards and the status dropdown narrow the (stage-ordered) list.
 function applyStatusFilter(status) {
     var url = new URL(window.location.href);
-    url.searchParams.set('view', 'all');
+    url.searchParams.delete('view');   // old ?view= links no longer apply
     if (status) url.searchParams.set('status', status);
     else url.searchParams.delete('status');
     var search = document.getElementById('searchInput').value.trim();
@@ -1136,21 +1054,21 @@ function applyStatusFilter(status) {
     window.location.href = url.toString();
 }
 
-var statusSelect = document.getElementById('statusSelect');   // only rendered in All Bookings
+var statusSelect = document.getElementById('statusSelect');
 if (statusSelect) {
     statusSelect.addEventListener('change', function () {
         applyStatusFilter(this.value);
     });
 }
 
-// Search keeps the current view (and, in All Bookings, the status filter).
+// Search keeps the current status filter.
 var searchTimer;
 document.getElementById('searchInput').addEventListener('input', function () {
     clearTimeout(searchTimer);
     var val = this.value;
     searchTimer = setTimeout(function () {
         var url = new URL(window.location.href);
-        url.searchParams.set('view', CURRENT_VIEW);
+        url.searchParams.delete('view');
         if (val.trim()) url.searchParams.set('search', val.trim());
         else url.searchParams.delete('search');
         url.searchParams.delete('page');
@@ -1295,7 +1213,7 @@ function stayAction(id, action) {
     .then(function (data) {
         if (data.success) {
             toast(action === 'check_in'
-                ? 'Guest checked in — moved to Currently Staying.'
+                ? 'Guest checked in — status updated to Checked-in.'
                 : 'Guest checked out — booking completed.', 'success');
             closeDetail();
             // Reload so every list and count comes straight from the database.

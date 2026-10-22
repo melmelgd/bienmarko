@@ -7,6 +7,7 @@ bienmarko_require_role('user');
 require_once __DIR__ . '/../includes/db.php';
 
 require __DIR__ . '/includes/bootstrap.php';
+require_once __DIR__ . '/includes/booking-stay.php';   // completed = admin confirmed check-out
 
 $currentPage = 'feedback';
 $pageTitle   = 'Feedback';
@@ -62,7 +63,7 @@ try {
          JOIN accommodations a ON a.id = b.accommodation_id
          LEFT JOIN feedback f  ON f.booking_id = b.id
          WHERE b.guest_id = :gid
-           AND b.status = 'completed'
+           AND " . bk_completed_sql($pdo, 'b') . "
            AND f.id IS NULL
          ORDER BY b.check_out DESC, b.id DESC"
     );
@@ -201,9 +202,7 @@ require __DIR__ . '/includes/head.php';
                             ? 'You can leave feedback once your booking is completed. We will notify you here when it is ready.'
                             : 'Book a room and complete your stay to share your experience with us.'
                     ); ?>
-                    <a class="btn btn--primary" href="<?php echo $hasAnyBooking ? 'bookings.php' : 'guest-book.php'; ?>">
-                        <?php echo $hasAnyBooking ? 'View my bookings' : 'Book a room'; ?>
-                    </a>
+                    
                 </div>
             <?php else: ?>
             <?php $recommended = $reviewableStays[0]; ?>

@@ -2,6 +2,25 @@
    API categories used by the existing booking system:
    "rooms" = bedrooms; "venues" = event spaces. */
 document.addEventListener("DOMContentLoaded", () => {
+    /* Mobile menu toggle — same behaviour as the landing page */
+    const menuBtn = document.getElementById("menuBtn");
+    const navLinksWrap = document.getElementById("navLinks");
+    if (menuBtn && navLinksWrap) {
+        const closeMenu = () => {
+            navLinksWrap.classList.remove("mobile-open");
+            menuBtn.classList.remove("open");
+            menuBtn.setAttribute("aria-expanded", "false");
+            menuBtn.setAttribute("aria-label", "Open menu");
+        };
+        menuBtn.addEventListener("click", () => {
+            const isOpen = navLinksWrap.classList.toggle("mobile-open");
+            menuBtn.classList.toggle("open", isOpen);
+            menuBtn.setAttribute("aria-expanded", isOpen ? "true" : "false");
+            menuBtn.setAttribute("aria-label", isOpen ? "Close menu" : "Open menu");
+        });
+        navLinksWrap.querySelectorAll("a").forEach((link) => link.addEventListener("click", closeMenu));
+    }
+
     const grid = document.getElementById("roomGrid");
     const page = document.body;
     if (!grid || !page) return;
@@ -75,8 +94,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 </div>
             </div>
             <h3>${escapeHtml(item.name || "Accommodation")}</h3>
-            <p>${escapeHtml(subtitle(item))}</p>
-            <a class="listing-book-link" href="${escapeHtml(bookingUrl)}">Book / Inquire</a>`;
+            <p>${escapeHtml(subtitle(item))}</p>`;
         return card;
     };
 

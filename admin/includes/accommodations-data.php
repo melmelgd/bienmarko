@@ -36,9 +36,9 @@
  * -----------------------------------------------------------------------
  */
 
-/** The only four statuses an accommodation can have. Order matters for
+/** The only three statuses an accommodation can have. Order matters for
  *  the stat cards and the status <select> on each card. */
-const ACC_STATUSES = ['available', 'booked', 'unavailable', 'maintenance'];
+const ACC_STATUSES = ['available', 'booked', 'maintenance'];
 
 /**
  * The preset accommodation type/category options offered in the
@@ -61,7 +61,6 @@ const ACC_TYPE_REQUIRING_ROOM_NUMBER = 'Room';
 const ACC_STATUS_LABELS = [
     'available'   => 'Available',
     'booked'      => 'Booked',
-    'unavailable' => 'Unavailable',
     'maintenance' => 'Under Maintenance',
 ];
 
@@ -161,6 +160,11 @@ function acc_ensure_table(): void
              ADD COLUMN `room_number` VARCHAR(20) NULL AFTER `type`"
         );
     }
+
+    // "Unavailable" status was removed from the UI. Move any leftover rows
+    // to "maintenance" so they stay non-bookable and still appear in filters.
+    // (The DB ENUM value is left in place on purpose — no schema change needed.)
+    $pdo->exec("UPDATE `accommodations` SET `status` = 'maintenance' WHERE `status` = 'unavailable'");
 
     $done = true;
 }
@@ -297,7 +301,6 @@ function acc_status_counts(): array
         'total'       => 0,
         'available'   => 0,
         'booked'      => 0,
-        'unavailable' => 0,
         'maintenance' => 0,
     ];
 

@@ -9,7 +9,7 @@ require_once __DIR__ . '/includes/accommodations-data.php';
 
 $dbError = null;
 $accommodations = [];
-$counts = ['total' => 0, 'available' => 0, 'booked' => 0, 'unavailable' => 0, 'maintenance' => 0];
+$counts = ['total' => 0, 'available' => 0, 'booked' => 0, 'maintenance' => 0];
 
 try {
     acc_ensure_table();
@@ -179,7 +179,6 @@ require_once __DIR__ . '/includes/ui.php';
 .status-select--available   { background-color: var(--emerald-bg); color: var(--emerald); }
 .status-select--booked      { background-color: var(--blue-bg); color: var(--blue); }
 .status-select--maintenance { background-color: var(--amber-bg); color: var(--gold-400); }
-.status-select--unavailable { background-color: var(--red-bg); color: var(--red); }
 .status-select option { background: var(--panel); color: var(--text); }
 
 .acc-no-results { display: none; text-align: center; padding: 48px 20px; color: var(--text-tertiary); }
@@ -366,13 +365,12 @@ require_once __DIR__ . '/includes/ui.php';
 
 <div class="stack">
 
-  <div class="stat-grid stat-grid--5">
+  <div class="stat-grid">
     <?php
       render_stat_card('Total Units', (string) $counts['total'], 'bed', 'fuchsia');
       render_stat_card('Available', (string) $counts['available'], 'calendar-check', 'emerald');
       render_stat_card('Booked', (string) $counts['booked'], 'calendar', 'blue');
       render_stat_card('Under Maintenance', (string) $counts['maintenance'], 'alert-triangle', 'amber');
-      render_stat_card('Unavailable', (string) $counts['unavailable'], 'close', 'red');
     ?>
   </div>
 
