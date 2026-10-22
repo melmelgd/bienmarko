@@ -588,8 +588,20 @@ require __DIR__ . '/includes/head.php';
   color: var(--paper);
   padding: 0;
   width: min(94vw, 460px);
+  max-height: calc(100vh - 24px);          /* fallback for older browsers */
+  max-height: calc(100dvh - 24px);         /* never taller than the screen */
   box-shadow: 0 24px 60px -20px rgba(0,0,0,.7);
   overflow: hidden;
+}
+/* The inner wrapper scrolls when the content is taller than the screen,
+   so the header stays reachable and the action buttons are always visible. */
+.bk-modal > div[id$="ModalContent"] {
+  max-height: calc(100vh - 28px);
+  max-height: calc(100dvh - 28px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
 }
 .bk-modal::backdrop { background: rgba(0,0,0,.65); backdrop-filter: blur(3px); }
 .bk-modal__head {
@@ -651,6 +663,9 @@ require __DIR__ . '/includes/head.php';
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 16px 20px;
   border-top: 1px solid var(--line);
+  /* stay pinned to the bottom so the buttons never scroll out of view */
+  position: sticky; bottom: 0; z-index: 2;
+  background: var(--surface-raised);
 }
 .bk-modal__error {
   font-size: 13px; color: var(--danger);
@@ -671,12 +686,23 @@ require __DIR__ . '/includes/head.php';
   display: none; flex-direction: column; gap: 14px;
   padding: 16px 20px;
   border-top: 1px solid var(--line);
+  /* pinned so "Yes, Confirm Booking" is always on screen */
+  position: sticky; bottom: 0; z-index: 2;
+  background: var(--surface-raised);
 }
 .bk-modal__confirm-step.is-visible { display: flex; }
 .bk-modal__confirm-text {
   margin: 0; font-size: 13.5px; line-height: 1.5; color: var(--paper-dim);
 }
 .bk-modal__confirm-actions { display: flex; justify-content: flex-end; gap: 10px; }
+
+@media (max-height: 760px) {
+  .bk-modal__head { padding-top: 14px; }
+  .bk-modal__room { padding: 10px 20px; }
+  .bk-modal__details { padding: 10px 20px; gap: 7px; }
+  .bk-modal__foot,
+  .bk-modal__confirm-step { padding-top: 12px; padding-bottom: 12px; }
+}
 
 /* ---------- Success screen ---------- */
 .bk-success {
