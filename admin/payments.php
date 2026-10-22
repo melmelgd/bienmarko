@@ -16,6 +16,7 @@ bienmarko_require_role('admin');
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/billing-calc.php';
 
 $active_page        = 'payments';
 $page_title         = 'Payments & Billing';
@@ -442,6 +443,22 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .bill-total-label { font-size: 15px; font-weight: 700; }
 .bill-total-value { font-size: 22px; font-weight: 800; font-family: var(--font-display); color: var(--gold-400); }
 
+/* Billing summary groups + calculation explanation */
+.bill-group { margin-bottom: 16px; }
+.bill-group:last-of-type { margin-bottom: 0; }
+.bill-group-title { font-size: 12px; font-weight: 700; color: var(--gold-400); letter-spacing: .02em; padding-bottom: 4px; border-bottom: 1px solid var(--border-strong); }
+.bill-formula { display: block; margin-top: 2px; font-size: 11.5px; font-weight: 400; color: var(--text-tertiary); }
+.bill-row-value--discount { color: var(--red); }
+.calc-box { margin-top: 16px; padding: 12px 14px; background: var(--panel-alt); border: 1px solid var(--border); border-left: 3px solid var(--gold-500); border-radius: var(--r-md); }
+.calc-box-title { font-size: 12px; font-weight: 700; color: var(--gold-400); margin-bottom: 6px; }
+.calc-box-note { margin: 0 0 8px; font-size: 12.5px; line-height: 1.5; color: var(--text-secondary); }
+.calc-steps { margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.75; color: var(--text); }
+.calc-steps li::marker { color: var(--gold-500); font-weight: 700; }
+.calc-steps li:last-child { font-weight: 700; color: var(--gold-400); }
+.bill-errors { margin-top: 12px; padding: 10px 12px; background: var(--red-bg); border: 1px solid var(--red); border-radius: var(--r-sm); color: var(--red); font-size: 12.5px; line-height: 1.5; }
+.bill-errors ul { margin: 0; padding-left: 16px; }
+.bill-warn { margin-top: 12px; padding: 10px 12px; background: var(--amber-bg); border: 1px solid var(--gold-500); border-radius: var(--r-sm); color: var(--gold-400); font-size: 12.5px; line-height: 1.5; }
+
 /* Form fields */
 .form-row   { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-group { display: flex; flex-direction: column; gap: 5px; }
@@ -690,7 +707,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                 <div class="modal-section-title">Fee Breakdown</div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Room Fee (₱)</label>
+                        <label class="form-label">Accommodation / Room Fee (₱)</label>
                         <input class="form-input" type="number" id="fRoomFee" min="0" step="0.01" oninput="recalc()" placeholder="0.00">
                     </div>
                     <div class="form-group">
@@ -703,8 +720,8 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     </div>
                     <div class="form-group">
                         <label class="form-label">Discount (%)</label>
-                        <input class="form-input" type="number" id="fDiscount" min="0" max="100" step="0.01" oninput="recalc()" placeholder="0">
-                        <span class="form-hint" style="font-size:11px;color:var(--text-tertiary);">Percent off per discounted guest (e.g. 20 for senior citizen)</span>
+                        <input class="form-input" type="number" id="fDiscount" min="0" max="<?php echo json_encode(BIENMARKO_MAX_DISCOUNT_PERCENT); ?>" step="0.01" oninput="recalc()" placeholder="0">
+                        <span class="form-hint" style="font-size:11px;color:var(--text-tertiary);">Percent off each eligible guest&rsquo;s share of the accommodation fee (e.g. 20 for senior citizen)</span>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Guests with Discount</label>
@@ -716,30 +733,84 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         <input class="form-input" type="text" id="fDiscountReason" placeholder="e.g. Senior citizen, promo code…">
                     </div>
                 </div>
+                <div class="bill-errors" id="billErrors" role="alert" style="display:none;"></div>
+                <div class="bill-warn" id="billLegacyNote" style="display:none;"></div>
             </div>
 
             <!-- Running total -->
             <div class="modal-section">
                 <div class="modal-section-title">Billing Summary</div>
-                <div class="bill-row">
-                    <span class="bill-row-label">Room Fee</span>
-                    <span class="bill-row-value" id="bsRoomFee">₱0.00</span>
+
+                <div class="bill-group">
+                    <div class="bill-group-title">Accommodation Details</div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Accommodation / Room Fee</span>
+                        <span class="bill-row-value" id="bsRoomFee">₱0.00</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Total Number of Guests</span>
+                        <span class="bill-row-value" id="bsGuests">0</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Per-Person Share
+                            <small class="bill-formula" id="bsShareFormula">Accommodation fee ÷ total guests</small>
+                        </span>
+                        <span class="bill-row-value" id="bsShare">₱0.00</span>
+                    </div>
                 </div>
-                <div class="bill-row">
-                    <span class="bill-row-label">Extra Guest Fee</span>
-                    <span class="bill-row-value" id="bsExtraGuest">₱0.00</span>
+
+                <div class="bill-group">
+                    <div class="bill-group-title">Discount Details</div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Discount Percentage</span>
+                        <span class="bill-row-value" id="bsDiscPct">0%</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Guests Receiving the Discount</span>
+                        <span class="bill-row-value" id="bsDiscGuests">0</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Discount per Eligible Guest
+                            <small class="bill-formula">Per-person share × discount %</small>
+                        </span>
+                        <span class="bill-row-value" id="bsDiscPer">₱0.00</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Total Discount
+                            <small class="bill-formula">Discount per eligible guest × eligible guests</small>
+                        </span>
+                        <span class="bill-row-value bill-row-value--discount" id="bsDiscTotal">₱0.00</span>
+                    </div>
                 </div>
-                <div class="bill-row">
-                    <span class="bill-row-label">Other Charges</span>
-                    <span class="bill-row-value" id="bsOtherCharges">₱0.00</span>
+
+                <div class="bill-group">
+                    <div class="bill-group-title">Final Billing Summary</div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Accommodation Fee</span>
+                        <span class="bill-row-value" id="bsRoomFeeFinal">₱0.00</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Extra Guest Fees</span>
+                        <span class="bill-row-value" id="bsExtraGuest">₱0.00</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label">Other Charges</span>
+                        <span class="bill-row-value" id="bsOtherCharges">₱0.00</span>
+                    </div>
+                    <div class="bill-row">
+                        <span class="bill-row-label" style="color:var(--red);">Total Discount</span>
+                        <span class="bill-row-value bill-row-value--discount" id="bsDiscount">₱0.00</span>
+                    </div>
+                    <div class="bill-total-row">
+                        <span class="bill-total-label">Final Amount Due</span>
+                        <span class="bill-total-value" id="bsTotal">₱0.00</span>
+                    </div>
                 </div>
-                <div class="bill-row">
-                    <span class="bill-row-label" style="color:var(--red);" id="bsDiscountLabel">Discount</span>
-                    <span class="bill-row-value" id="bsDiscount" style="color:var(--red);">– ₱0.00</span>
-                </div>
-                <div class="bill-total-row">
-                    <span class="bill-total-label">Total Due</span>
-                    <span class="bill-total-value" id="bsTotal">₱0.00</span>
+
+                <div class="calc-box">
+                    <div class="calc-box-title">How this was calculated</div>
+                    <p class="calc-box-note" id="bsNote"></p>
+                    <ol class="calc-steps" id="bsSteps"></ol>
                 </div>
             </div>
 
@@ -829,12 +900,15 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 <!-- ===== Toast ===== -->
 <div class="toast-wrap" id="toastWrap"></div>
 
+<script src="assets/js/billing-calc.js?v=<?php echo (int) @filemtime(__DIR__ . '/assets/js/billing-calc.js'); ?>"></script>
 <script>
 /* ============================================================
    Payments page JS
    ============================================================ */
 var ROWS     = <?php echo $rowsJson; ?>;
 var CSRF     = <?php echo json_encode($csrf); ?>;
+var BILL_MAX_PCT = <?php echo json_encode(BIENMARKO_MAX_DISCOUNT_PERCENT); ?>; // same limit the server enforces
+var billSaving   = false;
 var rowMap   = {};
 ROWS.forEach(function (r) { rowMap[r.booking_id] = r; });
 
@@ -879,6 +953,7 @@ function openBilling(bid) {
     document.getElementById('billCO').textContent        = fmtDate(r.check_out);
     document.getElementById('billNights').textContent    = r.nights + ' night' + (r.nights === 1 ? '' : 's');
     document.getElementById('billGuests').textContent    = r.guests_count;
+    document.getElementById('fDiscountGuests').max       = r.guests_count; // cannot exceed total guests
 
     document.getElementById('fRoomFee').value        = r.room_fee.toFixed(2);
     document.getElementById('fExtraGuest').value     = r.extra_guest_fee.toFixed(2);
@@ -897,6 +972,20 @@ function openBilling(bid) {
 
     recalc();
 
+    /* A record saved under older rules may hold a different discount than the
+       current calculation gives. Say so, so nothing changes silently on save. */
+    var legacyNote = document.getElementById('billLegacyNote');
+    legacyNote.style.display = 'none';
+    if (r.pay_id) {
+        var cNow = computeBilling();
+        if (cNow.ok && Math.abs((r.discount || 0) - cNow.total_discount) >= 0.005) {
+            legacyNote.textContent = 'The saved discount for this booking is ' + BillingCalc.peso(r.discount || 0) +
+                ', but the current calculation gives ' + BillingCalc.peso(cNow.total_discount) +
+                '. Saving will update the record to the current figure.';
+            legacyNote.style.display = '';
+        }
+    }
+
     var receiptBtn = document.getElementById('receiptBtn');
     receiptBtn.style.display = r.pay_id ? '' : 'none';
 
@@ -911,96 +1000,169 @@ document.getElementById('billingModal').addEventListener('click', function (e) {
     if (e.target === this) closeBilling();
 });
 
-/* ---------- Discount helpers ---------- */
-function clampPct(p) { p = parseFloat(p) || 0; return Math.min(100, Math.max(0, p)); }
-function pctLabel(p) { return (Math.round(p * 100) / 100) + '%'; }
-function discountAmount(subtotal, pct) { return Math.round(subtotal * pct) / 100; }
+/* ---------- Billing calculation ----------
+   The maths lives in assets/js/billing-calc.js — the exact same algorithm as
+   includes/billing-calc.php, which the server runs again when saving, so the
+   preview, the saved record and the receipt always show the same amount.
 
-/* Number of discounted guests, kept between 0 and the guests in the room. */
-function clampGuests(n, max) {
-    n = parseInt(n, 10) || 0;
-    return Math.min(Math.max(1, max || 1), Math.max(0, n));
+     per-person share   = accommodation fee ÷ total guests
+     discount per guest = per-person share × discount % ÷ 100
+     total discount     = discount per guest × guests with discount
+     final amount due   = accommodation fee + extra guest fees + other charges − total discount
+*/
+function pctLabel(p) { return BillingCalc.pctLabel(p); }
+
+function readBillingInputs() {
+    var r = activeBid ? rowMap[activeBid] : null;
+    return {
+        accommodation_fee: document.getElementById('fRoomFee').value,
+        extra_guest_fee:   document.getElementById('fExtraGuest').value,
+        other_charges:     document.getElementById('fOtherCharges').value,
+        total_guests:      r ? r.guests_count : 0,
+        discount_percent:  document.getElementById('fDiscount').value,
+        discount_guests:   document.getElementById('fDiscountGuests').value,
+        amount_paid:       document.getElementById('fTotalPaid').value
+    };
 }
 
-/* The discount is an add-on for the guests who qualify, not for the whole bill.
-   Room fee + extra guest fee is shared equally between the guests in the room,
-   and the percentage is taken off only the share of the discounted guests.
-   Other charges are never discounted. */
-function perGuestShare(rf, eg, guestsCount) {
-    return (rf + eg) / Math.max(1, guestsCount || 1);
-}
-function guestDiscount(rf, eg, guestsCount, discGuests, pct) {
-    return discountAmount(perGuestShare(rf, eg, guestsCount) * discGuests, pct);
+function computeBilling() {
+    return BillingCalc.calculate(readBillingInputs(), { maxPercent: BILL_MAX_PCT });
 }
 
-/* ---------- Recalculate running total ---------- */
+function setText(id, text) { document.getElementById(id).textContent = text; }
+
+/* ---------- Recalculate running total (runs on every input change) ---------- */
 function recalc() {
-    var rf   = parseFloat(document.getElementById('fRoomFee').value)      || 0;
-    var eg   = parseFloat(document.getElementById('fExtraGuest').value)   || 0;
-    var oc   = parseFloat(document.getElementById('fOtherCharges').value) || 0;
-    var pct  = clampPct(document.getElementById('fDiscount').value);
-    var paid = parseFloat(document.getElementById('fTotalPaid').value)    || 0;
+    var c       = computeBilling();
+    var errBox  = document.getElementById('billErrors');
+    var saveBtn = document.getElementById('saveBillBtn');
+    var steps   = document.getElementById('bsSteps');
+    var ids = ['bsRoomFee', 'bsRoomFeeFinal', 'bsGuests', 'bsShare', 'bsDiscPct', 'bsDiscGuests',
+               'bsDiscPer', 'bsDiscTotal', 'bsExtraGuest', 'bsOtherCharges', 'bsDiscount', 'bsTotal'];
 
-    var gc      = activeBid && rowMap[activeBid] ? rowMap[activeBid].guests_count : 1;
-    var dg      = clampGuests(document.getElementById('fDiscountGuests').value, gc);
-    var share   = perGuestShare(rf, eg, gc);
-    var disc    = guestDiscount(rf, eg, gc, dg, pct);
-    var total   = Math.max(0, rf + eg + oc - disc);
-    var balance = Math.max(0, total - paid);
+    steps.innerHTML = '';
 
-    var payStatus = paid <= 0 ? 'Unpaid' : (paid >= total ? 'Paid' : 'Partial');
+    /* Invalid input: show what is wrong, blank the figures, block saving. */
+    if (!c.ok) {
+        errBox.innerHTML = '';
+        var ul = document.createElement('ul');
+        c.errors.forEach(function (msg) {
+            var li = document.createElement('li');
+            li.textContent = msg;
+            ul.appendChild(li);
+        });
+        errBox.appendChild(ul);
+        errBox.style.display = '';
+        ids.forEach(function (id) { setText(id, '—'); });
+        setText('bsShareFormula', 'Accommodation fee ÷ total guests');
+        setText('bsNote', 'Fix the highlighted problems above to see the calculation.');
+        setText('discHint', 'Number of guests who get the discount');
+        document.getElementById('fPayStatus').value = '—';
+        document.getElementById('fBalance').value   = '—';
+        saveBtn.disabled = true;
+        return;
+    }
 
-    document.getElementById('bsRoomFee').textContent      = '₱' + fmt(rf);
-    document.getElementById('bsExtraGuest').textContent   = '₱' + fmt(eg);
-    document.getElementById('bsOtherCharges').textContent = '₱' + fmt(oc);
-    document.getElementById('bsDiscount').textContent     = '– ₱' + fmt(disc);
-    document.getElementById('bsDiscountLabel').textContent = (pct > 0 && dg > 0)
-        ? 'Discount (' + pctLabel(pct) + ' × ' + dg + ' guest' + (dg === 1 ? '' : 's') + ')'
-        : 'Discount';
-    document.getElementById('discHint').textContent       = (pct > 0 && dg > 0)
-        ? dg + ' of ' + gc + ' guest' + (gc === 1 ? '' : 's') + ' × ₱' + fmt(share) + ' each = ₱' + fmt(disc) + ' off'
-        : 'How many of the ' + gc + ' guest' + (gc === 1 ? '' : 's') + ' in the room get the discount';
-    document.getElementById('bsTotal').textContent        = '₱' + fmt(total);
-    document.getElementById('fPayStatus').value           = payStatus;
-    document.getElementById('fBalance').value             = '₱' + fmt(balance);
+    errBox.style.display = 'none';
+    saveBtn.disabled = billSaving;
+
+    var peso = BillingCalc.peso;
+    var gc   = c.total_guests;
+    var gl   = gc === 1 ? 'guest' : 'guests';
+
+    /* Accommodation details */
+    setText('bsRoomFee',      peso(c.accommodation_fee));
+    setText('bsGuests',       String(gc));
+    setText('bsShare',        peso(c.per_person_share));
+    setText('bsShareFormula', peso(c.accommodation_fee) + ' ÷ ' + gc + ' ' + gl + ' = ' + peso(c.per_person_share));
+
+    /* Discount details */
+    setText('bsDiscPct',    pctLabel(c.discount_percent));
+    setText('bsDiscGuests', c.discount_guests + ' of ' + gc + ' ' + gl);
+    setText('bsDiscPer',    peso(c.discount_guests > 0 ? c.discount_per_guest : 0)); // nobody eligible -> nothing to show
+    setText('bsDiscTotal',  peso(c.total_discount));
+
+    /* Final billing summary */
+    setText('bsRoomFeeFinal', peso(c.accommodation_fee));
+    setText('bsExtraGuest',   peso(c.extra_guest_fee));
+    setText('bsOtherCharges', peso(c.other_charges));
+    setText('bsDiscount',     (c.total_discount > 0 ? '\u2212 ' : '') + peso(c.total_discount));
+    setText('bsTotal',        peso(c.final_amount));
+
+    /* Plain-language explanation + step-by-step breakdown (built from live data) */
+    var discounted = c.total_discount > 0;
+    var note;
+    if (!discounted) {
+        note = 'No discount is applied. Every guest pays a full share of the accommodation fee.';
+    } else if (c.discount_guests === gc) {
+        note = 'The discount is applied to every guest\u2019s share of the accommodation fee.';
+    } else {
+        note = 'The discount is applied only to the eligible guest\u2019s share of the accommodation fee. ' +
+               'The remaining guests pay their full shares.';
+    }
+    if (discounted && (c.extra_guest_fee > 0 || c.other_charges > 0)) {
+        note += ' Extra guest fees and other charges are always charged in full.';
+    }
+    setText('bsNote', note);
+
+    BillingCalc.explain(c).forEach(function (line) {
+        var li = document.createElement('li');
+        li.textContent = line;
+        steps.appendChild(li);
+    });
+
+    setText('discHint', discounted
+        ? c.discount_guests + ' of ' + gc + ' ' + gl + ' get ' + pctLabel(c.discount_percent) +
+          ' off their ' + peso(c.per_person_share) + ' share = ' + peso(c.total_discount) + ' off'
+        : 'How many of the ' + gc + ' ' + gl + ' in the room get the discount');
+
+    /* Payment */
+    document.getElementById('fPayStatus').value = c.payment_status.charAt(0).toUpperCase() + c.payment_status.slice(1);
+    document.getElementById('fBalance').value   = peso(c.balance);
 }
 
 /* ---------- Save billing ---------- */
 function saveBilling() {
-    if (!activeBid) return;
+    if (!activeBid || billSaving) return;
+
+    var c = computeBilling();
+    if (!c.ok) {            // should not happen (button is disabled), but never send bad data
+        toast(c.errors[0], 'error');
+        recalc();
+        return;
+    }
+
     var btn = document.getElementById('saveBillBtn');
+    billSaving = true;
     btn.disabled = true;
     btn.textContent = 'Saving…';
 
-    var rf   = parseFloat(document.getElementById('fRoomFee').value)      || 0;
-    var eg   = parseFloat(document.getElementById('fExtraGuest').value)   || 0;
-    var oc   = parseFloat(document.getElementById('fOtherCharges').value) || 0;
-    var pct  = clampPct(document.getElementById('fDiscount').value);
-    var paid = parseFloat(document.getElementById('fTotalPaid').value)    || 0;
-    var gc   = rowMap[activeBid] ? rowMap[activeBid].guests_count : 1;
-    var dg   = clampGuests(document.getElementById('fDiscountGuests').value, gc);
-    var disc = guestDiscount(rf, eg, gc, dg, pct);
-    var total = Math.max(0, rf + eg + oc - disc);
-
-    var payStatus = paid <= 0 ? 'unpaid' : (paid >= total ? 'paid' : 'partial');
-
+    /* The server recalculates everything from these inputs and the booking's
+       real guest count. discount / payment_status / total_amount are sent only
+       so the server can log a mismatch; it never trusts them. */
     var payload = {
-        action:          'save_payment',
-        csrf_token:      CSRF,
-        booking_id:      activeBid,
-        room_fee:        rf,
-        extra_guest_fee: eg,
-        other_charges:   oc,
-        discount_percent: pct,
-        discount_guests: dg,
-        discount:        disc,
-        discount_reason: document.getElementById('fDiscountReason').value,
-        total_paid:      paid,
-        payment_method:  document.getElementById('fPayMethod').value,
-        payment_status:  payStatus,
-        notes:           document.getElementById('fPayNotes').value,
-        total_amount:    total,
+        action:           'save_payment',
+        csrf_token:       CSRF,
+        booking_id:       activeBid,
+        room_fee:         c.accommodation_fee,
+        extra_guest_fee:  c.extra_guest_fee,
+        other_charges:    c.other_charges,
+        discount_percent: c.discount_percent,
+        discount_guests:  c.discount_guests,
+        discount:         c.total_discount,
+        discount_reason:  document.getElementById('fDiscountReason').value,
+        total_paid:       c.amount_paid,
+        payment_method:   document.getElementById('fPayMethod').value,
+        payment_status:   c.payment_status,
+        notes:            document.getElementById('fPayNotes').value,
+        total_amount:     c.final_amount
     };
+
+    function done() {
+        billSaving = false;
+        btn.textContent = 'Save & Record';
+        recalc();   // re-enables the button only if the inputs are valid
+    }
 
     fetch('api/payments.php', {
         method: 'POST',
@@ -1010,56 +1172,60 @@ function saveBilling() {
     .then(function (r) { return r.json(); })
     .then(function (data) {
         if (data.success) {
-            // Update local row data for receipt
+            /* Keep the local row in step with what the SERVER saved. */
+            var b = data.billing || c;
             var r = rowMap[activeBid];
-            r.room_fee        = rf;
-            r.extra_guest_fee = eg;
-            r.other_charges   = oc;
-            r.discount        = disc;
-            r.discount_percent = pct;
-            r.discount_guests = dg;
-            r.discount_reason = document.getElementById('fDiscountReason').value;
-            r.total_paid      = paid;
-            r.pay_method      = document.getElementById('fPayMethod').value;
-            r.payment_status  = payStatus;
-            r.pay_notes       = document.getElementById('fPayNotes').value;
-            r.pay_id          = data.pay_id || r.pay_id || 1;
+            r.room_fee         = b.accommodation_fee;
+            r.extra_guest_fee  = b.extra_guest_fee;
+            r.other_charges    = b.other_charges;
+            r.discount         = b.total_discount;
+            r.discount_percent = b.discount_percent;
+            r.discount_guests  = b.discount_guests;
+            r.discount_reason  = document.getElementById('fDiscountReason').value;
+            r.total_paid       = b.amount_paid;
+            r.pay_method       = document.getElementById('fPayMethod').value;
+            r.payment_status   = b.payment_status;
+            r.pay_notes        = document.getElementById('fPayNotes').value;
+            r.pay_id           = data.pay_id || r.pay_id || 1;
 
-            toast('Payment recorded successfully!', 'success');
+            if (Math.abs(b.final_amount - c.final_amount) >= 0.005) {
+                toast('Saved. The server calculated ' + BillingCalc.peso(b.final_amount) +
+                      ' (screen showed ' + BillingCalc.peso(c.final_amount) + '). The saved amount is the correct one.', 'error');
+            } else {
+                toast('Payment recorded successfully!', 'success');
+            }
             document.getElementById('receiptBtn').style.display = '';
-            btn.disabled    = false;
-            btn.textContent = 'Save & Record';
+            document.getElementById('billLegacyNote').style.display = 'none';
+            done();
 
-            if (payStatus === 'paid') {
+            if (b.payment_status === 'paid') {
                 setTimeout(function () { window.location.reload(); }, 1000);
             }
         } else {
             toast(data.error || 'Failed to save payment.', 'error');
-            btn.disabled    = false;
-            btn.textContent = 'Save & Record';
+            done();
         }
     })
     .catch(function () {
         toast('Network error. Please try again.', 'error');
-        btn.disabled    = false;
-        btn.textContent = 'Save & Record';
+        done();
     });
 }
 
-/* ---------- Receipt ---------- */
+/* ---------- Receipt ----------
+   Built from the SAVED figures (the ones the server calculated and stored),
+   so the receipt always shows the same amount as the billing record. */
 function buildReceipt(r) {
-    var rf   = r.room_fee        || 0;
-    var eg   = r.extra_guest_fee || 0;
-    var oc   = r.other_charges   || 0;
-    var pct  = r.discount_percent || 0;
-    var dg   = (r.discount_guests !== null && r.discount_guests !== undefined) ? r.discount_guests : null;
-    /* New records: per-guest discount. Old records (no guest count): use the amount that was saved. */
-    var disc = dg !== null
-        ? guestDiscount(rf, eg, r.guests_count, clampGuests(dg, r.guests_count), pct)
-        : (r.discount || 0);
-    var paid = r.total_paid      || 0;
-    var total = Math.max(0, rf + eg + oc - disc);
-    var bal   = Math.max(0, total - paid);
+    var cents = function (n) { return Math.round((Number(n) || 0) * 100); };
+    var rf    = r.room_fee        || 0;
+    var eg    = r.extra_guest_fee || 0;
+    var oc    = r.other_charges   || 0;
+    var disc  = r.discount        || 0;
+    var pct   = r.discount_percent || 0;
+    var dg    = (r.discount_guests !== null && r.discount_guests !== undefined) ? r.discount_guests : null;
+    var paid  = r.total_paid      || 0;
+    var total = Math.max(0, cents(rf) + cents(eg) + cents(oc) - cents(disc)) / 100;
+    var bal   = Math.max(0, cents(total) - cents(paid)) / 100;
 
     document.getElementById('rcRef').textContent          = 'REF: ' + r.reference;
     document.getElementById('rcGuest').textContent        = r.guest_name || '—';

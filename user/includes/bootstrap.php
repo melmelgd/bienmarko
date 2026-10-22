@@ -74,6 +74,20 @@ if (!empty($_SESSION['auth_user_id'])) {
     }
 }
 
+/* ------------------------------------------------------------------
+   Booking notifications: confirmation (with reference no.), plus the
+   1-week-before and 1-night-before check-in reminders. Creates each bell
+   notification once. Never allowed to break a page.
+------------------------------------------------------------------ */
+require_once __DIR__ . '/booking-notifications.php';
+if (!empty($_SESSION['auth_user_id'])) {
+    try {
+        bm_bn_sync($pdo, (int) $_SESSION['auth_user_id']);
+    } catch (Throwable $e) {
+        error_log('[booking-notify] ' . $e->getMessage());
+    }
+}
+
 $notifications    = [];
 $notifUnreadCount = 0;
 
@@ -93,7 +107,9 @@ if (!empty($_SESSION['auth_user_id'])) {
             'id'      => (int) $n['id'],
             'href'    => ($n['type'] === 'feedback_reminder' && $n['booking_id'])
                 ? 'feedback.php?booking=' . (int) $n['booking_id']
-                : null,
+                : (in_array($n['type'], ['booking_confirmed', 'booking_reminder_week', 'booking_reminder_night'], true)
+                    ? 'bookings.php'
+                    : null),
             'message' => $n['message'],
             'is_read' => (bool) $n['is_read'],
             'time'    => bm_relative_time($n['created_at']),

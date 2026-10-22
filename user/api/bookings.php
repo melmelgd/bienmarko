@@ -7,6 +7,7 @@ bienmarko_require_role('user');
 
 require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/booking-emails.php';
+require_once __DIR__ . '/../includes/booking-notifications.php';
 
 header('Content-Type: application/json; charset=utf-8');
 
@@ -929,6 +930,13 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
     }
 
     bk_notify_admin($pdo, $bookingId, $reference, $guestName, $room['name'], $checkIn, $checkOut);
+
+    // Guest's bell notification: booking confirmed + reference number (non-fatal).
+    try {
+        bm_bn_notify_confirmation($pdo, $bookingId);
+    } catch (Throwable $e) {
+        error_log('[bienmarko] guest confirmation notification failed: ' . $e->getMessage());
+    }
 
     // Email the guest (sent after the response; never blocks or breaks the booking).
     bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {

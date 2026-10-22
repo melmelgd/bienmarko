@@ -3,11 +3,21 @@
  * admin/api/payments.php
  * -----------------------------------------------------------------------
  * JSON API for admin payment/billing operations.
- * The discount is received as a percentage (discount_percent, 0-100) plus
- * the number of guests in the room who get it (discount_guests). It applies
- * only to those guests' share of (room fee + extra guest fee), not to the
- * whole bill. The peso amount is calculated here and stored in `discount`,
- * so the client can't send a mismatched amount.
+ *
+ * The server is the AUTHORITY for every billing figure. The client sends the
+ * inputs (fees, discount %, number of discounted guests, amount paid); the
+ * discount, final amount, balance and payment status are all calculated here
+ * by bienmarko_billing_calculate() (includes/billing-calc.php) from those
+ * validated inputs plus the booking's real guests_count. Any discount /
+ * total / status the browser sends is ignored (a mismatch is only logged).
+ *
+ *   per-person share   = accommodation fee ÷ total guests
+ *   discount per guest = per-person share × discount % ÷ 100
+ *   total discount     = discount per guest × guests with discount
+ *                        (never more than the accommodation fee)
+ *   final amount due   = accommodation fee + extra guest fees
+ *                        + other charges − total discount
+ *
  *   POST { action: "save_payment", ... } — upsert a payment record
  * -----------------------------------------------------------------------
  */
@@ -15,6 +25,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 require_once __DIR__ . '/../../includes/booking-emails.php';
+require_once __DIR__ . '/../includes/billing-calc.php';
 
 bienmarko_start_session();
 bienmarko_require_role('admin');
@@ -98,25 +109,17 @@ function pay_notify_guest(PDO $pdo, ?int $guestId, int $bookingId, string $messa
    ACTION: save_payment
    ================================================================ */
 if ($action === 'save_payment') {
-    $bookingId     = (int)   ($body['booking_id']      ?? 0);
-    $roomFee       = (float) ($body['room_fee']         ?? 0);
-    $extraGuestFee = (float) ($body['extra_guest_fee']  ?? 0);
-    $otherCharges  = (float) ($body['other_charges']    ?? 0);
-    $discountPct   = min(100.0, max(0.0, round((float) ($body['discount_percent'] ?? 0), 2)));
-    $discountGuests= max(0, (int) ($body['discount_guests'] ?? 0));
-    $discountReason= trim($body['discount_reason']     ?? '');
-    $totalPaid     = (float) ($body['total_paid']       ?? 0);
-    $paymentMethod = in_array($body['payment_method'] ?? '', ['cash','gcash']) ? $body['payment_method'] : 'cash';
-    $paymentStatus = in_array($body['payment_status'] ?? '', ['unpaid','partial','paid']) ? $body['payment_status'] : 'unpaid';
-    $notes         = trim($body['notes']               ?? '');
-    $totalAmount   = (float) ($body['total_amount']     ?? 0);
+    $bookingId     = (int) ($body['booking_id'] ?? 0);
+    $discountReason= trim((string) ($body['discount_reason'] ?? ''));
+    $paymentMethod = in_array($body['payment_method'] ?? '', ['cash','gcash'], true) ? $body['payment_method'] : 'cash';
+    $notes         = trim((string) ($body['notes'] ?? ''));
 
     if ($bookingId <= 0) {
         echo json_encode(['success' => false, 'error' => 'Invalid booking ID.']);
         exit;
     }
 
-    /* Verify booking exists */
+    /* Verify booking exists — its guests_count is the authoritative guest total */
     $bkStmt = $pdo->prepare("SELECT id, total_amount, guests_count FROM bookings WHERE id = :id");
     $bkStmt->execute(['id' => $bookingId]);
     $bk = $bkStmt->fetch();
@@ -125,18 +128,45 @@ if ($action === 'save_payment') {
         exit;
     }
 
-    /* Discount: an add-on for the guests who qualify, not the whole bill.
-       Room fee + extra guest fee is split equally between the guests in the
-       room; the percentage comes off only the discounted guests' share.
-       Other charges are never discounted. */
-    $guestsCount    = max(1, (int) ($bk['guests_count'] ?? 1));
-    $discountGuests = min($discountGuests, $guestsCount);
-    $perGuestShare  = ($roomFee + $extraGuestFee) / $guestsCount;
-    $subtotal   = $roomFee + $extraGuestFee + $otherCharges;
-    $discount   = round($perGuestShare * $discountGuests * $discountPct / 100, 2);
+    /* Authoritative calculation + validation (same algorithm as billing-calc.js) */
+    $calc = bienmarko_billing_calculate([
+        'accommodation_fee' => $body['room_fee']         ?? 0,
+        'extra_guest_fee'   => $body['extra_guest_fee']  ?? 0,
+        'other_charges'     => $body['other_charges']    ?? 0,
+        'total_guests'      => $bk['guests_count']       ?? 0,
+        'discount_percent'  => $body['discount_percent'] ?? 0,
+        'discount_guests'   => $body['discount_guests']  ?? 0,
+        'amount_paid'       => $body['total_paid']       ?? 0,
+    ]);
+    if (!$calc['ok']) {
+        http_response_code(422);
+        echo json_encode([
+            'success' => false,
+            'error'   => implode(' ', $calc['errors']),
+            'errors'  => $calc['errors'],
+        ]);
+        exit;
+    }
 
-    /* Compute final total */
-    $finalTotal = max(0.0, $subtotal - $discount);
+    /* Everything below is saved/used from the server's own figures */
+    $roomFee        = $calc['accommodation_fee'];
+    $extraGuestFee  = $calc['extra_guest_fee'];
+    $otherCharges   = $calc['other_charges'];
+    $discountPct    = $calc['discount_percent'];
+    $discountGuests = $calc['discount_guests'];
+    $discount       = $calc['total_discount'];
+    $finalTotal     = $calc['final_amount'];
+    $totalPaid      = $calc['amount_paid'];
+    $paymentStatus  = $calc['payment_status'];   // never trusted from the browser
+
+    /* Diagnostic only: the browser's own preview should always match. */
+    if (isset($body['total_amount']) && is_numeric($body['total_amount'])
+        && abs((float) $body['total_amount'] - $finalTotal) >= 0.01) {
+        error_log(sprintf(
+            '[payments api] client/server total mismatch for booking %d: client %.2f, server %.2f',
+            $bookingId, (float) $body['total_amount'], $finalTotal
+        ));
+    }
 
     $paidAt = ($paymentStatus === 'paid') ? date('Y-m-d H:i:s') : null;
 
@@ -280,7 +310,11 @@ if ($action === 'save_payment') {
             }
         }
 
-        echo json_encode(['success' => true, 'pay_id' => $payId]);
+        echo json_encode([
+            'success' => true,
+            'pay_id'  => $payId,
+            'billing' => $calc,   // the authoritative figures that were saved
+        ]);
 
     } catch (\Throwable $e) {
         error_log('[payments api] ' . $e->getMessage());
