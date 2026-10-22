@@ -40,6 +40,86 @@
     });
   }
 
+  /**
+   * Sends a FormData to the API as a plain urlencoded form, never as
+   * multipart/form-data: some hosts' web-server filters answer multipart POSTs
+   * with "403 Forbidden" before PHP even runs. Any file in the form is turned
+   * into text fields instead (<field>_b64 + <field>_name; `photos[]` becomes
+   * `photos_b64[]` + `photos_name[]`), which api/accommodations.php decodes
+   * and validates exactly like a normal upload. Images are shrunk first
+   * (max 1600px, JPEG) so they stay small and quick to send.
+   */
+  var IMAGE_MAX_SIDE = 1600;
+
+  function readAsBase64(blob) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () {
+        var result = String(reader.result || '');
+        resolve(result.slice(result.indexOf(',') + 1));
+      };
+      reader.onerror = function () { reject(new Error('Could not read the selected file.')); };
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  function shrinkImage(file) {
+    return new Promise(function (resolve) {
+      if (!/^image\/(jpeg|png|webp)$/i.test(file.type || '')) { resolve(file); return; }
+      var url = URL.createObjectURL(file);
+      var img = new Image();
+      img.onload = function () {
+        URL.revokeObjectURL(url);
+        var scale = Math.min(1, IMAGE_MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        var ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(function (blob) {
+          if (!blob) { resolve(file); return; }
+          blob.name = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+          resolve(blob);
+        }, 'image/jpeg', 0.85);
+      };
+      img.onerror = function () { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+
+  function postApi(formData) {
+    var body = new URLSearchParams();
+    var jobs = [];
+
+    formData.forEach(function (value, key) {
+      if (typeof value === 'string') {
+        body.append(key, value);
+        return;
+      }
+      if (!value || !value.size) return; // empty file input: nothing to send
+
+      var isMulti = /\[\]$/.test(key);
+      var base = key.replace(/\[\]$/, '');
+      var isImage = /^image\//i.test(value.type || '');
+
+      jobs.push(
+        (isImage ? shrinkImage(value) : Promise.resolve(value)).then(function (blob) {
+          return readAsBase64(blob).then(function (b64) {
+            var name = blob.name || value.name || 'upload';
+            body.append(base + '_b64' + (isMulti ? '[]' : ''), b64);
+            body.append(base + '_name' + (isMulti ? '[]' : ''), name);
+          });
+        })
+      );
+    });
+
+    return Promise.all(jobs).then(function () {
+      return fetch(API_URL, { method: 'POST', body: body, credentials: 'same-origin' });
+    }).then(parseApiResponse);
+  }
+
   function apiErrorMessage(err) {
     if (err && err.serverReply) {
       return err.message + (err.snippet ? ' ' + err.snippet : '');
@@ -293,8 +373,7 @@
 
       var formData = new FormData(modalForm);
 
-      fetch(API_URL, { method: 'POST', body: formData })
-        .then(parseApiResponse)
+      postApi(formData)
         .then(function (json) {
           if (json && json.success) {
             window.location.reload();
@@ -361,8 +440,7 @@
       formData.set('id', pendingDeleteId);
       formData.set('csrf_token', csrfToken());
 
-      fetch(API_URL, { method: 'POST', body: formData })
-        .then(parseApiResponse)
+      postApi(formData)
         .then(function (json) {
           if (json && json.success) {
             window.location.reload();
@@ -395,8 +473,7 @@
 
       select.disabled = true;
 
-      fetch(API_URL, { method: 'POST', body: formData })
-        .then(parseApiResponse)
+      postApi(formData)
         .then(function (json) {
           if (json && json.success) {
             window.location.reload();
@@ -619,8 +696,7 @@
     formData.set('id', id);
     formData.set('csrf_token', csrfToken());
 
-    fetch(API_URL, { method: 'POST', body: formData })
-      .then(parseApiResponse)
+    postApi(formData)
       .then(function (json) {
         if (photosLoadingEl) photosLoadingEl.style.display = 'none';
         if (json && json.success) {
@@ -692,8 +768,7 @@
 
       photosInput.disabled = true;
 
-      fetch(API_URL, { method: 'POST', body: formData })
-        .then(parseApiResponse)
+      postApi(formData)
         .then(function (json) {
           photosInput.disabled = false;
           photosInput.value = '';
@@ -728,8 +803,7 @@
         fd.set('photo_id', photoId);
         fd.set('csrf_token', csrfToken());
 
-        fetch(API_URL, { method: 'POST', body: fd })
-          .then(parseApiResponse)
+        postApi(fd)
           .then(function (json) {
             if (json && json.success) {
               fetchPhotos(currentPhotosAccId);
@@ -757,8 +831,7 @@
         fd2.set('photo_id', delPhotoId);
         fd2.set('csrf_token', csrfToken());
 
-        fetch(API_URL, { method: 'POST', body: fd2 })
-          .then(parseApiResponse)
+        postApi(fd2)
           .then(function (json) {
             if (json && json.success) {
               renderPhotosGrid(json.photos || [], json.cover);
@@ -811,8 +884,7 @@
     formData.set('id', currentTourAccId);
     formData.set('csrf_token', csrfToken());
 
-    fetch(API_URL, { method: 'POST', body: formData })
-      .then(parseApiResponse)
+    postApi(formData)
       .then(function (json) {
         if (json && json.success) {
           renderTourStatus(null);
@@ -942,8 +1014,7 @@
 
       tourInput.disabled = true;
 
-      fetch(API_URL, { method: 'POST', body: formData })
-        .then(parseApiResponse)
+      postApi(formData)
         .then(function (json) {
           tourInput.disabled = false;
           tourInput.value = '';

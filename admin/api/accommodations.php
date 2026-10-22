@@ -98,7 +98,11 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     acc_json_fail(405, 'Method not allowed.');
 }
 
-if (!bienmarko_csrf_valid($_POST['csrf_token'] ?? null)) {
+if (empty($_POST) && empty($_FILES) && (int) ($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+    acc_json_fail(413, 'That upload is larger than this server allows (post_max_size is ' . ini_get('post_max_size') . '). Please use a smaller file.');
+}
+
+if (!bienmarko_csrf_valid(isset($_POST['csrf_token']) && is_string($_POST['csrf_token']) ? $_POST['csrf_token'] : null)) {
     acc_json_fail(403, 'Your session has expired. Please refresh the page and try again.');
 }
 
@@ -115,6 +119,104 @@ try {
 }
 
 $pdo = bienmarko_db();
+
+/**
+ * File uploads can arrive two ways:
+ *   1. the normal multipart $_FILES array, or
+ *   2. as base64 text fields in a plain urlencoded POST: <field>_b64 + <field>_name
+ *      (for `photos[]` that is photos_b64[] + photos_name[]).
+ * The second way exists because some hosts' web-server filters answer
+ * multipart/form-data uploads with "403 Forbidden" before PHP ever runs.
+ * Both are normalised here into the same $_FILES-style single-file array, so
+ * all the validation below is shared. Base64 items carry '_b64' => true.
+ */
+$GLOBALS['acc_tmp_files'] = [];
+register_shutdown_function(static function (): void {
+    foreach ($GLOBALS['acc_tmp_files'] as $f) {
+        if (is_file($f)) {
+            @unlink($f);
+        }
+    }
+});
+
+function acc_b64_to_file(string $data, string $name, string $tmpDir): ?array
+{
+    $comma = strpos($data, ',');
+    if (strncmp($data, 'data:', 5) === 0 && $comma !== false) {
+        $data = substr($data, $comma + 1);
+    }
+    $bytes = base64_decode($data, true);
+    if ($bytes === false || $bytes === '') {
+        return ['name' => $name, 'tmp_name' => '', 'error' => UPLOAD_ERR_PARTIAL, 'size' => 0, '_b64' => true];
+    }
+
+    $tmp = @tempnam($tmpDir, 'b64');
+    if ($tmp === false || @file_put_contents($tmp, $bytes) === false) {
+        return ['name' => $name, 'tmp_name' => '', 'error' => UPLOAD_ERR_CANT_WRITE, 'size' => 0, '_b64' => true];
+    }
+    $GLOBALS['acc_tmp_files'][] = $tmp;
+
+    return ['name' => $name, 'tmp_name' => $tmp, 'error' => UPLOAD_ERR_OK, 'size' => strlen($bytes), '_b64' => true];
+}
+
+/** One uploaded file for a single-file field (image, tour_html), or null if none was sent. */
+function acc_single_upload(string $field, string $tmpDir): ?array
+{
+    if (isset($_POST[$field . '_b64']) && is_string($_POST[$field . '_b64']) && $_POST[$field . '_b64'] !== '') {
+        return acc_b64_to_file($_POST[$field . '_b64'], (string) ($_POST[$field . '_name'] ?? ''), $tmpDir);
+    }
+    return $_FILES[$field] ?? null;
+}
+
+/** Every uploaded file for a multi-file field (photos[]), as a list of single-file arrays. */
+function acc_multi_uploads(string $field, string $tmpDir): array
+{
+    $out = [];
+
+    if (isset($_POST[$field . '_b64']) && is_array($_POST[$field . '_b64'])) {
+        $names = (isset($_POST[$field . '_name']) && is_array($_POST[$field . '_name'])) ? $_POST[$field . '_name'] : [];
+        foreach ($_POST[$field . '_b64'] as $i => $data) {
+            if (is_string($data) && $data !== '') {
+                $out[] = acc_b64_to_file($data, (string) ($names[$i] ?? ''), $tmpDir);
+            }
+        }
+    }
+
+    $f = $_FILES[$field] ?? null;
+    if ($f && isset($f['name']) && is_array($f['name'])) {
+        foreach ($f['name'] as $i => $n) {
+            if (($f['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
+                continue;
+            }
+            $out[] = [
+                'name'     => $n,
+                'type'     => $f['type'][$i] ?? '',
+                'tmp_name' => $f['tmp_name'][$i] ?? '',
+                'error'    => $f['error'][$i] ?? UPLOAD_ERR_NO_FILE,
+                'size'     => $f['size'][$i] ?? 0,
+            ];
+        }
+    }
+
+    return $out;
+}
+
+/** True when the file really came from a browser upload (or our own base64 decode). */
+function acc_upload_is_valid_source(array $file): bool
+{
+    return !empty($file['_b64']) || is_uploaded_file($file['tmp_name']);
+}
+
+function acc_move_upload(array $file, string $dest): bool
+{
+    if (!empty($file['_b64'])) {
+        if (@rename($file['tmp_name'], $dest)) {
+            return true;
+        }
+        return @copy($file['tmp_name'], $dest);
+    }
+    return move_uploaded_file($file['tmp_name'], $dest);
+}
 
 /**
  * Shared field validation for create + update.
@@ -218,7 +320,7 @@ function acc_handle_image_upload(?array $file, array &$errors): ?string
         return null;
     }
 
-    if (!is_uploaded_file($file['tmp_name'])) {
+    if (!acc_upload_is_valid_source($file)) {
         $errors[] = 'Image upload failed. Please try again.';
         return null;
     }
@@ -243,7 +345,7 @@ function acc_handle_image_upload(?array $file, array &$errors): ?string
     $filename = bin2hex(random_bytes(16)) . '.' . $ext;
     $dest = ACC_UPLOAD_DIR . '/' . $filename;
 
-    if (!move_uploaded_file($file['tmp_name'], $dest)) {
+    if (!acc_move_upload($file, $dest)) {
         $errors[] = 'Could not save the uploaded image. Please try again.';
         return null;
     }
@@ -279,7 +381,7 @@ function acc_store_one_gallery_photo(array $file, array &$errors): ?string
         return null;
     }
 
-    if (!is_uploaded_file($file['tmp_name'])) {
+    if (!acc_upload_is_valid_source($file)) {
         $errors[] = 'Photo upload failed. Please try again.';
         return null;
     }
@@ -304,7 +406,7 @@ function acc_store_one_gallery_photo(array $file, array &$errors): ?string
     $filename = bin2hex(random_bytes(16)) . '.' . $ext;
     $dest = ACC_UPLOAD_DIR . '/' . $filename;
 
-    if (!move_uploaded_file($file['tmp_name'], $dest)) {
+    if (!acc_move_upload($file, $dest)) {
         $errors[] = 'Could not save one of the uploaded photos. Please try again.';
         return null;
     }
@@ -313,43 +415,20 @@ function acc_store_one_gallery_photo(array $file, array &$errors): ?string
 }
 
 /**
- * Normalises a multi-file <input name="photos[]" multiple> submission
- * (PHP's $_FILES shape for multi-file inputs is column-oriented, not
- * row-oriented — files[name][0], files[name][1], ... — so this reshapes
- * it into a plain list of single-file arrays) and stores each valid one
- * via acc_store_one_gallery_photo(). Returns the list of stored filenames.
+ * Stores each valid photo from the normalised list built by acc_multi_uploads().
  * A file that fails validation is skipped (its message lands in $errors)
  * rather than aborting the whole batch, since a 3-photo upload where 1
- * file is bad shouldn't cost the other 2.
+ * file is bad shouldn't cost the other 2. Returns the stored filenames.
  */
-function acc_handle_gallery_uploads(?array $filesField, array &$errors): array
+function acc_handle_gallery_uploads(array $files, array &$errors): array
 {
-    if (!$filesField || empty($filesField['name']) || !is_array($filesField['name'])) {
-        return [];
-    }
-
-    $count = count($filesField['name']);
     $stored = [];
-
-    for ($i = 0; $i < $count; $i++) {
-        if (($filesField['error'][$i] ?? UPLOAD_ERR_NO_FILE) === UPLOAD_ERR_NO_FILE) {
-            continue; // empty slot — browsers can send these, just skip
-        }
-
-        $single = [
-            'name'     => $filesField['name'][$i]     ?? '',
-            'type'     => $filesField['type'][$i]      ?? '',
-            'tmp_name' => $filesField['tmp_name'][$i]  ?? '',
-            'error'    => $filesField['error'][$i]     ?? UPLOAD_ERR_NO_FILE,
-            'size'     => $filesField['size'][$i]      ?? 0,
-        ];
-
+    foreach ($files as $single) {
         $filename = acc_store_one_gallery_photo($single, $errors);
         if ($filename !== null) {
             $stored[] = $filename;
         }
     }
-
     return $stored;
 }
 
@@ -380,7 +459,7 @@ function acc_handle_tour_upload(?array $file, array &$errors): ?string
         return null;
     }
 
-    if (!is_uploaded_file($file['tmp_name'])) {
+    if (!acc_upload_is_valid_source($file)) {
         $errors[] = '360° tour upload failed. Please try again.';
         return null;
     }
@@ -407,7 +486,7 @@ function acc_handle_tour_upload(?array $file, array &$errors): ?string
     $filename = bin2hex(random_bytes(16)) . '.html';
     $dest = ACC_TOUR_UPLOAD_DIR . '/' . $filename;
 
-    if (!move_uploaded_file($file['tmp_name'], $dest)) {
+    if (!acc_move_upload($file, $dest)) {
         $errors[] = 'Could not save the uploaded tour file. Please try again.';
         return null;
     }
@@ -418,7 +497,7 @@ function acc_handle_tour_upload(?array $file, array &$errors): ?string
 function acc_action_create(PDO $pdo): never
 {
     [$errors, $data] = acc_validate_fields($_POST);
-    $imageFilename = acc_handle_image_upload($_FILES['image'] ?? null, $errors);
+    $imageFilename = acc_handle_image_upload(acc_single_upload('image', ACC_UPLOAD_DIR), $errors);
 
     if ($errors) {
         acc_delete_image_file($imageFilename);
@@ -461,7 +540,7 @@ function acc_action_update(PDO $pdo): never
     }
 
     [$errors, $data] = acc_validate_fields($_POST);
-    $newImageFilename = acc_handle_image_upload($_FILES['image'] ?? null, $errors);
+    $newImageFilename = acc_handle_image_upload(acc_single_upload('image', ACC_UPLOAD_DIR), $errors);
 
     if ($errors) {
         acc_delete_image_file($newImageFilename);
@@ -593,9 +672,8 @@ function acc_action_upload_photos(PDO $pdo): never
     $id = (int) $acc['id'];
 
     $existingCount = count(acc_get_photos($pdo, $id));
-    $incoming = isset($_FILES['photos']['name']) && is_array($_FILES['photos']['name'])
-        ? count(array_filter($_FILES['photos']['name'], static function ($n) { return $n !== ''; }))
-        : 0;
+    $incomingFiles = acc_multi_uploads('photos', ACC_UPLOAD_DIR);
+    $incoming = count($incomingFiles);
 
     if ($incoming === 0) {
         acc_json_fail(400, 'Please choose at least one photo to upload.');
@@ -605,7 +683,7 @@ function acc_action_upload_photos(PDO $pdo): never
     }
 
     $errors = [];
-    $stored = acc_handle_gallery_uploads($_FILES['photos'] ?? null, $errors);
+    $stored = acc_handle_gallery_uploads($incomingFiles, $errors);
 
     if (!$stored) {
         acc_json_fail(400, $errors ? implode(' ', $errors) : 'No photos were uploaded. Please try again.');
@@ -714,7 +792,7 @@ function acc_action_upload_tour(PDO $pdo): never
     $id = (int) $acc['id'];
 
     $errors = [];
-    $newTourFilename = acc_handle_tour_upload($_FILES['tour_html'] ?? null, $errors);
+    $newTourFilename = acc_handle_tour_upload(acc_single_upload('tour_html', ACC_TOUR_UPLOAD_DIR), $errors);
 
     if ($errors || $newTourFilename === null) {
         acc_delete_tour_file($newTourFilename);
