@@ -2,9 +2,19 @@
 /**
  * admin/bookings.php
  * -----------------------------------------------------------------------
- * Full live bookings management page. Displays all bookings (registered
- * and guest walk-ins), with stat cards, search/filter, status management,
- * and a detail modal. All data pulled from the database.
+ * Bookings management, organised around the front-desk workflow:
+ *
+ *   ?view=upcoming  Upcoming Arrivals  — active, guest has NOT checked in
+ *   ?view=staying   Currently Staying  — admin recorded the check-in, guest
+ *                                        has not been checked out yet
+ *   ?view=all       All Bookings       — every record (Upcoming, Checked-in,
+ *                                        Completed, Cancelled) with the
+ *                                        search box, status filter and paging
+ *
+ * Statuses are NEVER changed by a date or a clock. A guest moves
+ * Upcoming → Checked-in → Completed only when the admin confirms it in the
+ * booking's detail dialog (api/bookings.php: check_in / check_out). The
+ * stage rules live in includes/booking-stay.php.
  * -----------------------------------------------------------------------
  */
 require_once __DIR__ . '/../includes/auth-common.php';
@@ -14,6 +24,7 @@ bienmarko_require_role('admin');
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/ui.php';
+require_once __DIR__ . '/includes/booking-stay.php';
 
 $active_page       = 'bookings';
 $page_title        = 'Bookings';
@@ -47,56 +58,72 @@ $pdo->exec("
         ADD COLUMN IF NOT EXISTS `companion_names` TEXT NULL DEFAULT NULL AFTER `booking_type`
 ");
 
+// Manual front-desk check-in / check-out timestamps (see booking-stay.php).
+bk_stay_migrate($pdo);
+
+// Optional: if the bookings table ever gets a `check_in_time` column, the
+// Upcoming / All sorts use it as the tie-breaker between guests arriving on
+// the same date (earliest first) and it is shown next to the date. Today the
+// table only stores a check-in DATE, so this stays off and ties fall back to
+// the booking's creation order.
+$hasCheckInTime = (bool) $pdo->query("SHOW COLUMNS FROM `bookings` LIKE 'check_in_time'")->fetch();
+
 /* ------------------------------------------------------------------
-   Filters from GET
+   Request: view, search, status filter, page
 ------------------------------------------------------------------ */
 $filterStatus = $_GET['status'] ?? '';
 $filterSearch = trim($_GET['search'] ?? '');
-/* Display statuses only: Upcoming, Checked-in, Cancelled. These are derived
-   from the booking dates + cancelled flag (the DB status column is shared
-   with Payments / Dashboard / Reports, so its values are left untouched). */
-$allowedStatuses = ['', 'upcoming', 'checked_in', 'cancelled'];
+$allowedStatuses = ['', 'upcoming', 'checked_in', 'completed', 'cancelled'];
 if (!in_array($filterStatus, $allowedStatuses, true)) $filterStatus = '';
+
+/* No ?view= → Upcoming Arrivals (the front desk's working list). A link that
+   carries a search or status filter but no view (e.g. the notification bell's
+   "bookings.php?search=BM-XXXX") must still find ANY booking, so it opens
+   All Bookings. */
+$view = $_GET['view'] ?? '';
+if (!in_array($view, ['upcoming', 'staying', 'all'], true)) {
+    $view = ($filterSearch !== '' || $filterStatus !== '') ? 'all' : 'upcoming';
+}
+if ($view !== 'all') {
+    $filterStatus = '';   // the status filter belongs to All Bookings only
+}
 
 /* Pagination — 10 bookings per page, like the Payments and Dashboard tables */
 $perPage     = 10;
 $currentPage = max(1, (int) ($_GET['page'] ?? 1));
 
 /* ------------------------------------------------------------------
-   Stat cards
+   Counts — drive the tab badges and the stat cards. They are computed
+   from the same stage conditions as the lists, on every page load, so a
+   status change is reflected the moment the page refreshes.
 ------------------------------------------------------------------ */
-$statTotal = (int) $pdo->query("SELECT COUNT(*) FROM bookings")->fetchColumn();
-
-$statUpcomingStmt = $pdo->prepare(
-    "SELECT COUNT(*) FROM bookings WHERE status <> 'cancelled' AND check_in > :today"
-);
-$statUpcomingStmt->execute(['today' => $today]);
-$statUpcoming = (int) $statUpcomingStmt->fetchColumn();
-
-$statCheckedInStmt = $pdo->prepare(
-    "SELECT COUNT(*) FROM bookings WHERE status <> 'cancelled' AND check_in <= :today"
-);
-$statCheckedInStmt->execute(['today' => $today]);
-$statCheckedIn = (int) $statCheckedInStmt->fetchColumn();
-
-$statCancelled = (int) $pdo->query(
-    "SELECT COUNT(*) FROM bookings WHERE status = 'cancelled'"
-)->fetchColumn();
+$countRow = $pdo->query(
+    "SELECT
+        COUNT(*)                                          AS total,
+        COALESCE(SUM(" . bk_stage_sql('upcoming',   '') . "), 0) AS upcoming,
+        COALESCE(SUM(" . bk_stage_sql('checked_in', '') . "), 0) AS checked_in,
+        COALESCE(SUM(" . bk_stage_sql('completed',  '') . "), 0) AS completed,
+        COALESCE(SUM(" . bk_stage_sql('cancelled',  '') . "), 0) AS cancelled
+     FROM bookings"
+)->fetch();
+$statTotal      = (int) $countRow['total'];
+$statUpcoming   = (int) $countRow['upcoming'];
+$statCheckedIn  = (int) $countRow['checked_in'];
+$statCompleted  = (int) $countRow['completed'];
+$statCancelled  = (int) $countRow['cancelled'];
 
 /* ------------------------------------------------------------------
-   Build main query with optional filters
+   Build main query
 ------------------------------------------------------------------ */
 $whereClauses = [];
 $params       = [];
 
-if ($filterStatus === 'cancelled') {
-    $whereClauses[] = "b.status = 'cancelled'";
-} elseif ($filterStatus === 'upcoming') {
-    $whereClauses[] = "b.status <> 'cancelled' AND b.check_in > :today";
-    $params['today'] = $today;
-} elseif ($filterStatus === 'checked_in') {
-    $whereClauses[] = "b.status <> 'cancelled' AND b.check_in <= :today";
-    $params['today'] = $today;
+if ($view === 'upcoming') {
+    $whereClauses[] = bk_stage_sql('upcoming');
+} elseif ($view === 'staying') {
+    $whereClauses[] = bk_stage_sql('checked_in');
+} elseif ($filterStatus !== '') {
+    $whereClauses[] = bk_stage_sql($filterStatus);
 }
 
 if ($filterSearch !== '') {
@@ -108,14 +135,33 @@ if ($filterSearch !== '') {
         OR g.last_name  LIKE :s5
         OR g.email      LIKE :s6
         OR a.name       LIKE :s7
+        OR CONCAT_WS(\' \', g.first_name, g.last_name) LIKE :s8
     )';
     $like = '%' . $filterSearch . '%';
-    foreach (['s1','s2','s3','s4','s5','s6','s7'] as $k) {
+    foreach (['s1','s2','s3','s4','s5','s6','s7','s8'] as $k) {
         $params[$k] = $like;
     }
 }
 
 $where = $whereClauses ? 'WHERE ' . implode(' AND ', $whereClauses) : '';
+
+/* Sorting — every ORDER BY ends in b.id so the order is fully deterministic
+   and identical on every page of the results.
+     upcoming : today & future arrivals first (nearest date first), then any
+                arrivals whose date has already passed (still Upcoming until
+                the admin acts — they are never auto-checked-in); ties on a
+                date → check-in time if the column exists, then booking order.
+     staying  : soonest expected check-out first (overdue ones lead).
+     all      : check-in date ascending, ties → check-in time, booking order. */
+$timeSort = $hasCheckInTime ? 'b.check_in_time IS NULL, b.check_in_time ASC, ' : '';
+if ($view === 'upcoming') {
+    $orderBy = '(b.check_in < ' . $pdo->quote($today) . ') ASC, b.check_in ASC, '
+             . $timeSort . 'b.created_at ASC, b.id ASC';
+} elseif ($view === 'staying') {
+    $orderBy = 'b.check_out ASC, b.check_in ASC, b.created_at ASC, b.id ASC';
+} else {
+    $orderBy = 'b.check_in ASC, ' . $timeSort . 'b.created_at ASC, b.id ASC';
+}
 
 /* Total matching rows (all filters applied, no LIMIT) — drives the
    pagination bar and the "N bookings" count in the table header. */
@@ -132,9 +178,12 @@ $totalPages  = max(1, (int) ceil($totalBookings / $perPage));
 $currentPage = min($currentPage, $totalPages);
 $offset      = ($currentPage - 1) * $perPage;
 
+$timeSelect = $hasCheckInTime ? 'b.check_in_time,' : '';
 $sql = "SELECT
             b.id, b.reference, b.check_in, b.check_out,
+            {$timeSelect}
             b.guests_count, b.status, b.total_amount,
+            b.checked_in_at, b.checked_out_at,
             b.booking_type, b.payment_method, b.notes,
             b.accommodation_id,
             b.guest_name, b.email AS guest_book_email,
@@ -147,7 +196,7 @@ $sql = "SELECT
         JOIN accommodations a ON a.id = b.accommodation_id
         LEFT JOIN guests     g ON g.id = b.guest_id
         {$where}
-        ORDER BY b.created_at DESC
+        ORDER BY {$orderBy}
         LIMIT {$perPage} OFFSET {$offset}";
 
 $stmt = $pdo->prepare($sql);
@@ -175,29 +224,52 @@ function bk_phone(array $bk): string
     return $bk['reg_phone'] ?? $bk['guest_phone'] ?? '';
 }
 
-/**
- * Display status for a booking — one of: upcoming, checked_in, cancelled.
- *   cancelled  → the booking was cancelled
- *   upcoming   → not cancelled and the check-in date is still ahead
- *   checked_in → not cancelled and check-in date is today or earlier
- */
-function bk_display_status(array $bk, string $today): string
-{
-    if (($bk['status'] ?? '') === 'cancelled') {
-        return 'cancelled';
-    }
-    return ($bk['check_in'] > $today) ? 'upcoming' : 'checked_in';
-}
-
-function bk_display_badge(array $bk, string $today): string
+/** Status badge — Upcoming, Checked-in, Completed or Cancelled. */
+function bk_stage_badge(array $bk): string
 {
     $map = [
         'upcoming'   => ['ab--amber', 'Upcoming'],
         'checked_in' => ['ab--green', 'Checked-in'],
+        'completed'  => ['ab--blue',  'Completed'],
         'cancelled'  => ['ab--red',   'Cancelled'],
     ];
-    [$cls, $lbl] = $map[bk_display_status($bk, $today)];
+    [$cls, $lbl] = $map[bk_stage($bk)];
     return '<span class="ab ' . $cls . '">' . $lbl . '</span>';
+}
+
+/** Small "Today / Tomorrow / Overdue" tag under a date — a label only; it never changes a status. */
+function bk_date_chip(string $date, string $today, string $overdueLabel): string
+{
+    if ($date === $today) {
+        return '<span class="chip chip--gold">Today</span>';
+    }
+    if ($date === date('Y-m-d', strtotime($today . ' +1 day'))) {
+        return '<span class="chip chip--blue">Tomorrow</span>';
+    }
+    if ($date < $today) {
+        return '<span class="chip chip--red">' . htmlspecialchars($overdueLabel, ENT_QUOTES, 'UTF-8') . '</span>';
+    }
+    return '';
+}
+
+/** Check-in time (only when the optional column exists and has a value). */
+function bk_time_label(array $bk): string
+{
+    if (empty($bk['check_in_time'])) {
+        return '';
+    }
+    $t = strtotime($bk['check_in_time']);
+    return $t ? date('g:i A', $t) : '';
+}
+
+/** Link to another view, keeping the current search term. */
+function bk_view_url(string $view, string $search): string
+{
+    $q = ['view' => $view];
+    if ($search !== '') {
+        $q['search'] = $search;
+    }
+    return htmlspecialchars('bookings.php?' . http_build_query($q), ENT_QUOTES, 'UTF-8');
 }
 
 require __DIR__ . '/includes/head.php';
@@ -210,7 +282,7 @@ require __DIR__ . '/includes/topbar.php';
    admin/bookings.php — page-scoped styles
    ============================================================ */
 .stack       { display: flex; flex-direction: column; gap: 24px; }
-.stat-grid   { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.stat-grid   { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
 .stat-card   { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 16px 18px; cursor: pointer; transition: border-color var(--transition), box-shadow var(--transition); }
 .stat-card:hover, .stat-card.is-active { border-color: var(--gold-500); box-shadow: 0 0 0 2px rgba(245,166,35,.15); }
 .stat-card-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
@@ -402,8 +474,42 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .date-picker-legend { margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-tertiary); }
 .dp-swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; background: var(--red-bg); border: 1px solid var(--red); }
 
+/* View tabs — Upcoming Arrivals / Currently Staying / All Bookings */
+.view-tabs { display: flex; gap: 6px; flex-wrap: wrap; padding: 5px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); }
+.view-tab {
+    flex: 1 1 0; min-width: 170px;
+    display: flex; align-items: center; justify-content: center; gap: 9px;
+    padding: 11px 16px; border-radius: var(--r-md);
+    font-size: 14px; font-weight: 600; color: var(--text-secondary);
+    text-decoration: none; border: 1px solid transparent;
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.view-tab:hover { color: var(--text); background: var(--panel-alt); }
+.view-tab.is-active { background: var(--gold-tint-bg); border-color: var(--gold-600); color: var(--gold-400); }
+.view-tab-count {
+    min-width: 24px; padding: 1px 8px; text-align: center;
+    border-radius: var(--r-full); font-size: 12px; font-weight: 700;
+    background: var(--panel-alt); color: var(--text-secondary);
+}
+.view-tab.is-active .view-tab-count { background: var(--gold-500); color: var(--on-accent); }
+.view-hint { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
+
+/* Small date tags + reference code */
+.chip { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: var(--r-full); font-size: 10.5px; font-weight: 700; letter-spacing: .03em; }
+.chip--gold { background: var(--gold-tint-bg); color: var(--gold-400); }
+.chip--blue { background: var(--blue-bg);       color: var(--blue); }
+.chip--red  { background: var(--red-bg);        color: var(--red); }
+.ref-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; letter-spacing: .02em; }
+
+/* Check-in / check-out notice inside the detail dialog */
+.stay-notice { margin-bottom: 20px; padding: 12px 14px; border-radius: var(--r-md); font-size: 13.5px; line-height: 1.55; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text-secondary); }
+.stay-notice strong { color: var(--text); }
+.stay-notice--arrive { border-color: var(--gold-600); background: var(--gold-tint-bg); }
+.stay-notice--depart { border-color: var(--emerald); background: var(--emerald-bg); }
+.stay-notice-warn { display: block; margin-top: 6px; color: var(--gold-400); font-weight: 600; }
+
 /* Responsive */
-@media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 700px)  { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 540px)  { .detail-grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: 1fr; } }
 </style>
@@ -411,15 +517,31 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 <?php
 /* Pass bookings to JS as JSON for the detail modal */
 $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
+    $stage = bk_stage($bk);
+    // Same rules the old page used: only confirmed/pending bookings can be
+    // edited or cancelled. New: once a guest has checked in, the booking can
+    // still be edited (e.g. a stay extension) but can no longer be cancelled.
+    $live = in_array($bk['status'], ['confirmed', 'pending'], true);
+    $fmt  = static function ($ts) {
+        return $ts ? date('M j, Y g:i A', strtotime($ts)) : '';
+    };
     return [
         'id'           => (int) $bk['id'],
         'reference'    => $bk['reference'],
         'booking_type' => $bk['booking_type'],
         'status'       => $bk['status'],
-        'display_status' => bk_display_status($bk, $today),
+        'stage'        => $stage,
+        'can_check_in'  => $stage === 'upcoming',
+        'can_check_out' => $stage === 'checked_in',
+        'can_cancel'    => $stage === 'upcoming' && $live,
+        'can_edit'      => in_array($stage, ['upcoming', 'checked_in'], true) && $live,
+        'can_restore'   => $stage === 'cancelled',
+        'checked_in_at'  => $fmt($bk['checked_in_at']),
+        'checked_out_at' => $fmt($bk['checked_out_at']),
         'accommodation_id' => (int) $bk['accommodation_id'],
         'check_in'     => $bk['check_in'],
         'check_out'    => $bk['check_out'],
+        'check_in_time' => bk_time_label($bk),
         'guests_count' => (int) $bk['guests_count'],
         'total_amount' => number_format((float) $bk['total_amount'], 2),
         'payment_method'=> $bk['payment_method'] ?? 'cash',
@@ -446,57 +568,90 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
 
 <div class="stack">
 
-    <!-- ===== Stat cards (clickable filters) ===== -->
+    <!-- ===== View tabs ===== -->
+    <nav class="view-tabs" aria-label="Booking views">
+        <a class="view-tab <?php echo $view === 'upcoming' ? 'is-active' : ''; ?>" href="<?php echo bk_view_url('upcoming', $filterSearch); ?>"
+           <?php echo $view === 'upcoming' ? 'aria-current="page"' : ''; ?>>
+            <?php echo icon('clock', 'icon-sm'); ?>
+            <span>Upcoming Arrivals</span>
+            <span class="view-tab-count"><?php echo $statUpcoming; ?></span>
+        </a>
+        <a class="view-tab <?php echo $view === 'staying' ? 'is-active' : ''; ?>" href="<?php echo bk_view_url('staying', $filterSearch); ?>"
+           <?php echo $view === 'staying' ? 'aria-current="page"' : ''; ?>>
+            <?php echo icon('bed', 'icon-sm'); ?>
+            <span>Currently Staying</span>
+            <span class="view-tab-count"><?php echo $statCheckedIn; ?></span>
+        </a>
+        <a class="view-tab <?php echo $view === 'all' ? 'is-active' : ''; ?>" href="<?php echo bk_view_url('all', $filterSearch); ?>"
+           <?php echo $view === 'all' ? 'aria-current="page"' : ''; ?>>
+            <?php echo icon('calendar', 'icon-sm'); ?>
+            <span>All Bookings</span>
+            <span class="view-tab-count"><?php echo $statTotal; ?></span>
+        </a>
+    </nav>
+
+    <!-- ===== Stat cards (click = filter All Bookings by that status) ===== -->
     <div class="stat-grid">
-        <div class="stat-card <?php echo $filterStatus === '' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('')">
+        <?php
+        $cards = [
+            ['',           'Total Bookings', $statTotal,     'calendar',       'grey'],
+            ['upcoming',   'Upcoming',       $statUpcoming,  'clock',          'amber'],
+            ['checked_in', 'Checked-in',     $statCheckedIn, 'calendar-check', 'emerald'],
+            ['completed',  'Completed',      $statCompleted, 'check',          'blue'],
+            ['cancelled',  'Cancelled',      $statCancelled, 'close',          'red'],
+        ];
+        foreach ($cards as [$key, $label, $val, $ico, $tint]):
+            $isActive = ($view === 'all' && $filterStatus === $key);
+        ?>
+        <div class="stat-card <?php echo $isActive ? 'is-active' : ''; ?>" onclick="applyStatusFilter('<?php echo $key; ?>')">
             <div class="stat-card-top">
-                <span class="stat-label">Total Bookings</span>
-                <span class="stat-icon stat-icon--grey"><?php echo icon('calendar'); ?></span>
+                <span class="stat-label"><?php echo $label; ?></span>
+                <span class="stat-icon stat-icon--<?php echo $tint; ?>"><?php echo icon($ico); ?></span>
             </div>
-            <span class="stat-value"><?php echo $statTotal; ?></span>
+            <span class="stat-value"><?php echo $val; ?></span>
         </div>
-        <div class="stat-card <?php echo $filterStatus === 'upcoming' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('upcoming')">
-            <div class="stat-card-top">
-                <span class="stat-label">Upcoming</span>
-                <span class="stat-icon stat-icon--amber"><?php echo icon('clock'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statUpcoming; ?></span>
-        </div>
-        <div class="stat-card <?php echo $filterStatus === 'checked_in' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('checked_in')">
-            <div class="stat-card-top">
-                <span class="stat-label">Checked-in</span>
-                <span class="stat-icon stat-icon--emerald"><?php echo icon('calendar-check'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statCheckedIn; ?></span>
-        </div>
-        <div class="stat-card <?php echo $filterStatus === 'cancelled' ? 'is-active' : ''; ?>" onclick="applyStatusFilter('cancelled')">
-            <div class="stat-card-top">
-                <span class="stat-label">Cancelled</span>
-                <span class="stat-icon stat-icon--red"><?php echo icon('close'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statCancelled; ?></span>
-        </div>
+        <?php endforeach; ?>
     </div>
 
     <!-- ===== Toolbar ===== -->
     <div class="toolbar">
         <div class="toolbar-search">
             <span class="toolbar-search-icon"><?php echo icon('inbox', 'icon-sm'); ?></span>
-            <input type="text" id="searchInput" placeholder="Search by name, email, reference, or room…"
+            <input type="text" id="searchInput" placeholder="Search by name, email, reference, or accommodation…"
                    value="<?php echo htmlspecialchars($filterSearch, ENT_QUOTES, 'UTF-8'); ?>">
         </div>
+        <?php if ($view === 'all'): ?>
         <select class="filter-select" id="statusSelect">
             <option value="">All Statuses</option>
             <option value="upcoming"   <?php echo $filterStatus === 'upcoming'   ? 'selected' : ''; ?>>Upcoming</option>
             <option value="checked_in" <?php echo $filterStatus === 'checked_in' ? 'selected' : ''; ?>>Checked-in</option>
+            <option value="completed"  <?php echo $filterStatus === 'completed'  ? 'selected' : ''; ?>>Completed</option>
             <option value="cancelled"  <?php echo $filterStatus === 'cancelled'  ? 'selected' : ''; ?>>Cancelled</option>
         </select>
+        <?php endif; ?>
     </div>
 
     <!-- ===== Bookings Table ===== -->
+    <?php
+    $viewMeta = [
+        'upcoming' => ['Upcoming Arrivals', 'Guests who have not checked in yet — nearest arrival first. A guest stays Upcoming until you confirm they have arrived.', 'calendar-check', 'No upcoming arrivals', 'Active reservations for guests who have not checked in will appear here.'],
+        'staying'  => ['Currently Staying', 'Guests you have checked in — earliest check-out first. They stay here until you record their check-out.', 'bed', 'No guests currently staying', 'Guests appear here after you confirm their check-in from Upcoming Arrivals.'],
+        'all'      => ['All Bookings', 'Every booking, oldest check-in date first.', 'calendar', 'No bookings yet', 'New bookings from guests will appear here automatically.'],
+    ];
+    [$viewTitle, $viewHint, $emptyIcon, $emptyTitle, $emptyMsg] = $viewMeta[$view];
+    if ($totalBookings === 0 && ($filterSearch !== '' || $filterStatus !== '')) {
+        $emptyIcon  = 'inbox';
+        $emptyTitle = 'No bookings match';
+        $emptyMsg   = 'Try a different search term or clear the filter.';
+    }
+    $colCount = ($view === 'upcoming') ? 8 : 7;
+    ?>
     <div class="panel table-wrap">
         <div class="table-head">
-            <h2 class="panel-title">All Bookings</h2>
+            <div>
+                <h2 class="panel-title"><?php echo $viewTitle; ?></h2>
+                <div class="view-hint"><?php echo htmlspecialchars($viewHint, ENT_QUOTES, 'UTF-8'); ?></div>
+            </div>
             <span class="results-count" id="resultsCount">
                 <?php echo $totalBookings; ?> booking<?php echo $totalBookings === 1 ? '' : 's'; ?>
             </span>
@@ -505,48 +660,99 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             <table id="bookingsTable">
                 <thead>
                     <tr>
-                        <th>Guest</th>
-                        <th>Room</th>
-                        <th>Check-in</th>
-                        <th>Check-out</th>
-                        <th>Status</th>
-                        <th>Actions</th>
+                        <?php if ($view === 'upcoming'): ?>
+                            <th>Guest</th>
+                            <th>Contact</th>
+                            <th>Accommodation</th>
+                            <th>Check-in</th>
+                            <th>Check-out</th>
+                            <th>Reference</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        <?php elseif ($view === 'staying'): ?>
+                            <th>Guest</th>
+                            <th>Accommodation</th>
+                            <th>Check-in</th>
+                            <th>Expected Check-out</th>
+                            <th>Reference</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        <?php else: ?>
+                            <th>Guest</th>
+                            <th>Room</th>
+                            <th>Check-in</th>
+                            <th>Check-out</th>
+                            <th>Reference</th>
+                            <th>Status</th>
+                            <th>Actions</th>
+                        <?php endif; ?>
                     </tr>
                 </thead>
                 <tbody id="bookingsTbody">
                     <?php if (empty($bookings)): ?>
                         <tr>
-                            <td colspan="6">
-                                <?php render_empty_state(
-                                    'calendar',
-                                    'No bookings yet',
-                                    'New bookings from guests will appear here automatically.'
-                                ); ?>
+                            <td colspan="<?php echo $colCount; ?>">
+                                <?php render_empty_state($emptyIcon, $emptyTitle, $emptyMsg); ?>
                             </td>
                         </tr>
                     <?php else: ?>
-                        <?php foreach ($bookings as $bk): ?>
-                            <tr data-id="<?php echo (int) $bk['id']; ?>" onclick="openDetail(<?php echo (int) $bk['id']; ?>)">
+                        <?php foreach ($bookings as $bk):
+                            $bid      = (int) $bk['id'];
+                            $stage    = bk_stage($bk);
+                            $canCancel = $stage === 'upcoming' && in_array($bk['status'], ['confirmed', 'pending'], true);
+                            $email    = bk_email($bk);
+                            $phone    = bk_phone($bk);
+                            $timeLbl  = bk_time_label($bk);
+                        ?>
+                            <tr data-id="<?php echo $bid; ?>" onclick="openDetail(<?php echo $bid; ?>)">
                                 <td>
                                     <div class="td-guest"><?php echo htmlspecialchars(bk_name($bk), ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <?php $email = bk_email($bk); if ($email): ?>
+                                    <?php if ($view === 'all' && $email): ?>
                                         <div class="td-sub"><?php echo htmlspecialchars($email, ENT_QUOTES, 'UTF-8'); ?></div>
                                     <?php endif; ?>
                                 </td>
+
+                                <?php if ($view === 'upcoming'): ?>
+                                    <td>
+                                        <?php if ($email): ?><div><?php echo htmlspecialchars($email, ENT_QUOTES, 'UTF-8'); ?></div><?php endif; ?>
+                                        <?php if ($phone): ?><div class="td-sub"><?php echo htmlspecialchars($phone, ENT_QUOTES, 'UTF-8'); ?></div><?php endif; ?>
+                                        <?php if (!$email && !$phone): ?><span class="td-sub">—</span><?php endif; ?>
+                                    </td>
+                                <?php endif; ?>
+
                                 <td>
                                     <div><?php echo htmlspecialchars($bk['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
                                     <div class="td-sub"><?php echo htmlspecialchars($bk['room_type'], ENT_QUOTES, 'UTF-8'); ?></div>
                                 </td>
-                                <td><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></td>
-                                <td><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></td>
-                                <td><?php echo bk_display_badge($bk, $today); ?></td>
+
+                                <td>
+                                    <div><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></div>
+                                    <?php if ($timeLbl): ?><div class="td-sub"><?php echo $timeLbl; ?></div><?php endif; ?>
+                                    <?php if ($view === 'upcoming') echo bk_date_chip($bk['check_in'], $today, 'Overdue'); ?>
+                                </td>
+                                <td>
+                                    <div><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></div>
+                                    <?php if ($view === 'staying') echo bk_date_chip($bk['check_out'], $today, 'Overdue'); ?>
+                                </td>
+
+                                <td><span class="ref-code"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></span></td>
+                                <td><?php echo bk_stage_badge($bk); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
-                                        <button class="btn-sm btn-sm--gold" onclick="openDetail(<?php echo (int) $bk['id']; ?>)" title="View Details">
+                                        <?php if ($view === 'upcoming'): ?>
+                                            <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest in">
+                                                <?php echo icon('calendar-check', 'icon-sm'); ?> Check-in
+                                            </button>
+                                        <?php elseif ($view === 'staying'): ?>
+                                            <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest out">
+                                                <?php echo icon('logout', 'icon-sm'); ?> Check-out
+                                            </button>
+                                        <?php endif; ?>
+                                        <button class="btn-sm btn-sm--gold" onclick="openDetail(<?php echo $bid; ?>)" title="View Details">
                                             <?php echo icon('eye', 'icon-sm'); ?>
                                         </button>
-                                        <?php if (in_array($bk['status'], ['confirmed','pending'])): ?>
-                                            <button class="btn-sm btn-sm--danger" onclick="quickStatus(<?php echo (int) $bk['id']; ?>, 'cancelled')" title="Cancel">
+                                        <?php if ($canCancel && $view !== 'staying'): ?>
+                                            <button class="btn-sm btn-sm--danger" onclick="quickStatus(<?php echo $bid; ?>, 'cancelled')" title="Cancel">
                                                 <?php echo icon('close', 'icon-sm'); ?>
                                             </button>
                                         <?php endif; ?>
@@ -559,6 +765,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             </table>
         </div>
         <?php render_pagination('bookings.php', $currentPage, $perPage, $totalBookings, [
+            'view'   => $view,
             'status' => $filterStatus,
             'search' => $filterSearch,
         ], 'booking'); ?>
@@ -577,6 +784,8 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
             <button class="modal-close" onclick="closeDetail()" aria-label="Close"><?php echo icon('close'); ?></button>
         </div>
         <div class="modal-body">
+            <!-- Front-desk prompt: filled by JS (verify-then-confirm for check-in / check-out) -->
+            <div class="stay-notice" id="dStayNotice" style="display:none;"></div>
             <div class="modal-section">
                 <div class="modal-section-title">Guest Information</div>
                 <div class="detail-grid">
@@ -636,6 +845,14 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                     <div class="detail-row">
                         <span class="detail-label">Payment Method</span>
                         <span class="detail-value" id="dPayMethod">—</span>
+                    </div>
+                    <div class="detail-row" id="dCheckedInRow" style="display:none;">
+                        <span class="detail-label">Checked in at</span>
+                        <span class="detail-value" id="dCheckedInAt">—</span>
+                    </div>
+                    <div class="detail-row" id="dCheckedOutRow" style="display:none;">
+                        <span class="detail-label">Checked out at</span>
+                        <span class="detail-value" id="dCheckedOutAt">—</span>
                     </div>
                 </div>
             </div>
@@ -900,12 +1117,16 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
    ============================================================ */
 var BOOKINGS   = <?php echo $bookingsJson; ?>;
 var CSRF       = <?php echo json_encode($csrf); ?>;
+var TODAY      = <?php echo json_encode($today); ?>;        // server date (YYYY-MM-DD), used only for wording hints
+var CURRENT_VIEW = <?php echo json_encode($view); ?>;       // upcoming | staying | all
 var bookingMap = {};
 BOOKINGS.forEach(function (b) { bookingMap[b.id] = b; });
 
 /* ---------- Filter helpers ---------- */
+// Stat cards and the status dropdown filter All Bookings.
 function applyStatusFilter(status) {
     var url = new URL(window.location.href);
+    url.searchParams.set('view', 'all');
     if (status) url.searchParams.set('status', status);
     else url.searchParams.delete('status');
     var search = document.getElementById('searchInput').value.trim();
@@ -915,16 +1136,21 @@ function applyStatusFilter(status) {
     window.location.href = url.toString();
 }
 
-document.getElementById('statusSelect').addEventListener('change', function () {
-    applyStatusFilter(this.value);
-});
+var statusSelect = document.getElementById('statusSelect');   // only rendered in All Bookings
+if (statusSelect) {
+    statusSelect.addEventListener('change', function () {
+        applyStatusFilter(this.value);
+    });
+}
 
+// Search keeps the current view (and, in All Bookings, the status filter).
 var searchTimer;
 document.getElementById('searchInput').addEventListener('input', function () {
     clearTimeout(searchTimer);
     var val = this.value;
     searchTimer = setTimeout(function () {
         var url = new URL(window.location.href);
+        url.searchParams.set('view', CURRENT_VIEW);
         if (val.trim()) url.searchParams.set('search', val.trim());
         else url.searchParams.delete('search');
         url.searchParams.delete('page');
@@ -945,7 +1171,7 @@ function openDetail(id) {
     var nights = Math.round((co - ci) / 86400000);
 
     document.getElementById('modalRef').textContent    = b.reference;
-    document.getElementById('modalBadge').innerHTML    = badgeHtml(b.display_status);
+    document.getElementById('modalBadge').innerHTML    = badgeHtml(b.stage);
     document.getElementById('dGuestName').textContent  = b.guest_name || '—';
     document.getElementById('dGuestType').innerHTML    = typeBadge(b.booking_type);
     document.getElementById('dGuestEmail').textContent = b.guest_email || '—';
@@ -954,7 +1180,7 @@ function openDetail(id) {
     document.getElementById('dAddressRow').style.display = b.guest_address ? '' : 'none';
     document.getElementById('dRoom').textContent      = b.room_name;
     document.getElementById('dRoomType').textContent  = b.room_type;
-    document.getElementById('dCheckIn').textContent   = fmtDate(b.check_in);
+    document.getElementById('dCheckIn').textContent   = fmtDate(b.check_in) + (b.check_in_time ? ' · ' + b.check_in_time : '');
     document.getElementById('dCheckOut').textContent  = fmtDate(b.check_out);
     document.getElementById('dNights').textContent    = nights + ' night' + (nights === 1 ? '' : 's');
     document.getElementById('dGuests').textContent    = b.guests_count;
@@ -963,6 +1189,14 @@ function openDetail(id) {
     document.getElementById('dPayMethod').textContent = cap(b.payment_method);
     document.getElementById('dTotal').textContent     = '₱' + b.total_amount;
     document.getElementById('dCreatedAt').textContent = b.created_at;
+
+    // When the admin recorded the arrival / departure (blank until they do)
+    document.getElementById('dCheckedInAt').textContent  = b.checked_in_at  || '—';
+    document.getElementById('dCheckedOutAt').textContent = b.checked_out_at || '—';
+    document.getElementById('dCheckedInRow').style.display  = b.checked_in_at  ? '' : 'none';
+    document.getElementById('dCheckedOutRow').style.display = b.checked_out_at ? '' : 'none';
+
+    renderStayNotice(b);
 
     var notesSection = document.getElementById('dNotesSection');
     if (b.notes && b.notes.trim()) {
@@ -980,19 +1214,27 @@ function openDetail(id) {
         companionsSection.style.display = 'none';
     }
 
-    // Render action buttons
+    // Render action buttons — driven by the booking's stage and the rules
+    // computed on the server (can_* flags), so the UI never offers a
+    // transition the API would refuse.
     var actions = document.getElementById('modalActions');
-    var btns = '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
-    if (b.status === 'confirmed' || b.status === 'pending') {
-        btns  = '<button class="btn btn-blue" onclick="openEdit(' + b.id + ')">Edit Booking</button>';
-        btns += '<button class="btn btn-danger" onclick="changeStatus(' + b.id + ',\'cancelled\')">Cancel Booking</button>';
-        btns += '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
-    } else if (b.status === 'cancelled') {
-        btns  = '<button class="btn btn-blue" onclick="changeStatus(' + b.id + ',\'confirmed\')">Restore Booking</button>';
-        btns += '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
-    } else {
-        btns = '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
+    var btns = '';
+    if (b.can_check_in) {
+        btns += '<button class="btn btn-success" id="stayBtn" onclick="stayAction(' + b.id + ',\'check_in\')">Confirm Check-in</button>';
     }
+    if (b.can_check_out) {
+        btns += '<button class="btn btn-success" id="stayBtn" onclick="stayAction(' + b.id + ',\'check_out\')">Confirm Check-out</button>';
+    }
+    if (b.can_edit) {
+        btns += '<button class="btn btn-blue" onclick="openEdit(' + b.id + ')">Edit Booking</button>';
+    }
+    if (b.can_cancel) {
+        btns += '<button class="btn btn-danger" onclick="changeStatus(' + b.id + ',\'cancelled\')">Cancel Booking</button>';
+    }
+    if (b.can_restore) {
+        btns += '<button class="btn btn-blue" onclick="changeStatus(' + b.id + ',\'confirmed\')">Restore Booking</button>';
+    }
+    btns += '<button class="btn btn-secondary" onclick="closeDetail()">Close</button>';
     actions.innerHTML = btns;
 
     document.getElementById('detailModal').classList.add('is-open');
@@ -1006,7 +1248,75 @@ document.getElementById('detailModal').addEventListener('click', function (e) {
     if (e.target === this) closeDetail();
 });
 
-/* ---------- Status change ---------- */
+/* ---------- Check-in / check-out (manual, admin-confirmed) ----------
+   The detail dialog above shows the full reservation first; the status only
+   changes when the admin presses "Confirm Check-in" / "Confirm Check-out".
+   Nothing here (or anywhere on this page) reacts to the date or the time. */
+function renderStayNotice(b) {
+    var el = document.getElementById('dStayNotice');
+    el.className = 'stay-notice';
+    el.style.display = 'none';
+    el.innerHTML = '';
+
+    if (b.can_check_in) {
+        var html = '<strong>Guest arriving at the front desk?</strong> Verify the guest\'s name, contact details, ' +
+                   'accommodation and dates below match the reservation, then confirm their arrival.';
+        if (b.check_in > TODAY) {
+            html += '<span class="stay-notice-warn">Scheduled for ' + fmtDate(b.check_in) + ' — this would be an early check-in.</span>';
+        } else if (b.check_in < TODAY) {
+            html += '<span class="stay-notice-warn">Scheduled for ' + fmtDate(b.check_in) + ' — this is a late arrival.</span>';
+        }
+        el.className += ' stay-notice--arrive';
+        el.innerHTML = html;
+        el.style.display = '';
+    } else if (b.can_check_out) {
+        var out = '<strong>Checked in' + (b.checked_in_at ? ' on ' + b.checked_in_at : '') + '.</strong> ' +
+                  'Confirm check-out only once the guest has settled up and left. The booking will move to Completed.';
+        if (b.check_out < TODAY) {
+            out += '<span class="stay-notice-warn">Expected check-out was ' + fmtDate(b.check_out) + ' — this guest is past their scheduled departure.</span>';
+        }
+        el.className += ' stay-notice--depart';
+        el.innerHTML = out;
+        el.style.display = '';
+    }
+}
+
+function stayAction(id, action) {
+    var btn = document.getElementById('stayBtn');
+    var label = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    fetch('api/bookings.php', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: action, id: id, csrf_token: CSRF }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+        if (data.success) {
+            toast(action === 'check_in'
+                ? 'Guest checked in — moved to Currently Staying.'
+                : 'Guest checked out — booking completed.', 'success');
+            closeDetail();
+            // Reload so every list and count comes straight from the database.
+            setTimeout(function () { window.location.reload(); }, 700);
+        } else {
+            toast(data.error || 'Could not update the booking.', 'error');
+            if (data.refresh) {
+                // Someone else already changed it — show the up-to-date lists.
+                setTimeout(function () { window.location.reload(); }, 1800);
+            } else if (btn) {
+                btn.disabled = false; btn.textContent = label;
+            }
+        }
+    })
+    .catch(function () {
+        toast('Network error. Please try again.', 'error');
+        if (btn) { btn.disabled = false; btn.textContent = label; }
+    });
+}
+
+/* ---------- Status change (cancel / restore) ---------- */
 function changeStatus(id, newStatus) {
     fetch('api/bookings.php', {
         method: 'POST',
@@ -1021,6 +1331,7 @@ function changeStatus(id, newStatus) {
             setTimeout(function () { window.location.reload(); }, 900);
         } else {
             toast(data.error || 'Failed to update status.', 'error');
+            if (data.refresh) setTimeout(function () { window.location.reload(); }, 1800);
         }
     })
     .catch(function () { toast('Network error. Please try again.', 'error'); });
@@ -1595,6 +1906,7 @@ function badgeHtml(status) {
     var map = {
         upcoming:   ['ab--amber', 'Upcoming'],
         checked_in: ['ab--green', 'Checked-in'],
+        completed:  ['ab--blue',  'Completed'],
         cancelled:  ['ab--red',   'Cancelled'],
     };
     var b = map[status] || ['ab--grey', cap(status)];

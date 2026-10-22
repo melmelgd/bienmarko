@@ -4,13 +4,23 @@
  * -----------------------------------------------------------------------
  * JSON API for admin booking operations.
  *   POST { action: "create", ... }         — create a new walk-in booking
- *   POST { action: "update_status", ... }  — update booking status
+ *   POST { action: "check_in",  id }       — admin confirms the guest has
+ *                                            arrived (Upcoming → Checked-in)
+ *   POST { action: "check_out", id }       — admin records departure
+ *                                            (Checked-in → Completed)
+ *   POST { action: "update_status", ... }  — cancel / restore a booking
+ *   POST { action: "update", ... }         — edit an existing booking
+ *
+ * Check-in and check-out are ALWAYS a manual admin action. Nothing here
+ * (or anywhere else) changes them based on a date or time. The stage
+ * rules live in includes/booking-stay.php.
  * -----------------------------------------------------------------------
  */
 declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 require_once __DIR__ . '/../../includes/booking-emails.php';
+require_once __DIR__ . '/../includes/booking-stay.php';
 
 bienmarko_start_session();
 bienmarko_require_role('admin');
@@ -26,6 +36,9 @@ try {
 } catch (\Throwable $e) {
     error_log('[bookings api] companion_names migration warning: ' . $e->getMessage());
 }
+
+// Adds bookings.checked_in_at / checked_out_at if they don't exist yet.
+bk_stay_migrate($pdo);
 
 /* ================================================================
    GET ?action=availability — read-only lookup used by the New/Edit
@@ -130,28 +143,139 @@ function bm_parse_companion_names(string $raw): ?string
 }
 
 /* ================================================================
-   ACTION: update_status
+   ACTION: check_in  (Upcoming → Checked-in)
+   -----------------------------------------------------------------
+   Only the admin can do this, only from the Upcoming stage, and only by
+   explicitly calling this action when the guest is physically at the
+   front desk. The scheduled check-in date is NOT consulted — an early
+   arrival is the admin's call, and a late one is never auto-completed.
+   The UPDATE re-checks the stage in its WHERE clause so a double-click,
+   or a second admin acting on a stale page, can't apply it twice.
+   ================================================================ */
+if ($action === 'check_in' || $action === 'check_out') {
+    $id = (int) ($body['id'] ?? 0);
+    if ($id <= 0) {
+        echo json_encode(['success' => false, 'error' => 'Invalid booking ID.']);
+        exit;
+    }
+
+    $isIn      = ($action === 'check_in');
+    $fromStage = $isIn ? 'upcoming'   : 'checked_in';
+    $column    = $isIn ? 'checked_in_at' : 'checked_out_at';
+
+    $upd = $pdo->prepare(
+        "UPDATE bookings SET {$column} = :now
+         WHERE id = :id AND " . bk_stage_sql($fromStage, '')
+    );
+    $upd->execute(['now' => date('Y-m-d H:i:s'), 'id' => $id]);
+
+    if ($upd->rowCount() === 0) {
+        // Nothing changed — work out why, so the admin gets a useful message.
+        $cur = $pdo->prepare("SELECT status, checked_in_at, checked_out_at FROM bookings WHERE id = :id");
+        $cur->execute(['id' => $id]);
+        $cur = $cur->fetch();
+
+        if (!$cur) {
+            echo json_encode(['success' => false, 'error' => 'Booking not found.']);
+            exit;
+        }
+        $labels = ['upcoming' => 'Upcoming', 'checked_in' => 'Checked-in', 'completed' => 'Completed', 'cancelled' => 'Cancelled'];
+        $stage  = bk_stage($cur);
+        echo json_encode([
+            'success' => false,
+            'refresh' => true,
+            'error'   => $isIn
+                ? "This booking can't be checked in — it is currently {$labels[$stage]}."
+                : "This booking can't be checked out — it is currently {$labels[$stage]}. Only Checked-in guests can be checked out.",
+        ]);
+        exit;
+    }
+
+    try {
+        $ref = $pdo->prepare("SELECT reference FROM bookings WHERE id = :id");
+        $ref->execute(['id' => $id]);
+        $ref = (string) $ref->fetchColumn();
+        $pdo->prepare(
+            "INSERT INTO admin_notifications (booking_id, type, message)
+             VALUES (:bid, 'booking_status', :msg)"
+        )->execute([
+            'bid' => $id,
+            'msg' => $isIn
+                ? "Booking {$ref}: guest checked in."
+                : "Booking {$ref}: guest checked out — booking completed.",
+        ]);
+    } catch (\Throwable $e) {
+        /* Non-fatal: the notification log must never block a front-desk action */
+    }
+
+    echo json_encode(['success' => true, 'stage' => $isIn ? 'checked_in' : 'completed']);
+    exit;
+}
+
+/* ================================================================
+   ACTION: update_status  (cancel / restore only)
+   -----------------------------------------------------------------
+   Check-in and check-out have their own actions above, so this endpoint
+   no longer accepts 'completed' / 'pending' (which would let a booking
+   skip the front-desk flow). Existing cancellation rules are kept:
+     • only confirmed/pending bookings can be cancelled (as before);
+     • new: a guest who is already Checked-in or Completed can't be
+       cancelled — the stay has started;
+     • only a Cancelled booking can be restored.
    ================================================================ */
 if ($action === 'update_status') {
     $id     = (int) ($body['id'] ?? 0);
     $status = trim($body['status'] ?? '');
 
-    $allowed = ['confirmed', 'pending', 'cancelled', 'completed'];
-    if ($id <= 0 || !in_array($status, $allowed, true)) {
-        echo json_encode(['success' => false, 'error' => 'Invalid booking ID or status.']);
+    if ($id <= 0 || !in_array($status, ['cancelled', 'confirmed'], true)) {
+        echo json_encode([
+            'success' => false,
+            'error'   => 'Invalid booking ID or status. Use Check-in / Check-out to record arrivals and departures.',
+        ]);
         exit;
     }
 
-    // Previous status — so the guest is only emailed on a real change to Cancelled.
-    $prevStatus = $pdo->prepare("SELECT status FROM bookings WHERE id = :id");
-    $prevStatus->execute(['id' => $id]);
-    $prevStatus = (string) $prevStatus->fetchColumn();
+    $curStmt = $pdo->prepare("SELECT status, checked_in_at, checked_out_at FROM bookings WHERE id = :id");
+    $curStmt->execute(['id' => $id]);
+    $cur = $curStmt->fetch();
 
-    $stmt = $pdo->prepare("UPDATE bookings SET status = :status WHERE id = :id");
-    $stmt->execute(['status' => $status, 'id' => $id]);
+    if (!$cur) {
+        echo json_encode(['success' => false, 'error' => 'Booking not found.']);
+        exit;
+    }
+    $prevStatus = (string) $cur['status'];
+    $stage      = bk_stage($cur);
+
+    if ($status === 'cancelled') {
+        if ($prevStatus === 'cancelled') {
+            echo json_encode(['success' => false, 'refresh' => true, 'error' => 'This booking is already cancelled.']);
+            exit;
+        }
+        if ($stage !== 'upcoming') {
+            echo json_encode([
+                'success' => false,
+                'refresh' => true,
+                'error'   => 'Only bookings that have not checked in yet can be cancelled.',
+            ]);
+            exit;
+        }
+        if (!in_array($prevStatus, ['confirmed', 'pending'], true)) {
+            echo json_encode(['success' => false, 'error' => "A {$prevStatus} booking can't be cancelled."]);
+            exit;
+        }
+    } else { // restore
+        if ($prevStatus !== 'cancelled') {
+            echo json_encode(['success' => false, 'refresh' => true, 'error' => 'Only cancelled bookings can be restored.']);
+            exit;
+        }
+    }
+
+    // "AND status = :prev" makes the write a no-op if someone else changed it first.
+    $stmt = $pdo->prepare("UPDATE bookings SET status = :status WHERE id = :id AND status = :prev");
+    $stmt->execute(['status' => $status, 'id' => $id, 'prev' => $prevStatus]);
 
     if ($stmt->rowCount() === 0) {
-        echo json_encode(['success' => false, 'error' => 'Booking not found.']);
+        echo json_encode(['success' => false, 'refresh' => true, 'error' => 'This booking was just changed by someone else. Please review it again.']);
         exit;
     }
 
