@@ -115,6 +115,13 @@ function receipt_status_class(string $status): string
     };
 }
 
+/** Display number for a payment receipt, e.g. RCP-BM-2026-000012. */
+function receipt_number(array $r): string
+{
+    $ts = strtotime((string) ($r['paid_at'] ?? $r['pay_created_at'] ?? 'now')) ?: time();
+    return 'RCP-BM-' . date('Y', $ts) . '-' . str_pad((string) (int) $r['pay_id'], 6, '0', STR_PAD_LEFT);
+}
+
 require __DIR__ . '/includes/head.php';
 ?>
 
@@ -123,44 +130,67 @@ require __DIR__ . '/includes/head.php';
    receipts.php — page-scoped styles only
    ============================================================ */
 
-.rc-list { display: flex; flex-direction: column; gap: 10px; }
+/* ---------- Page header ---------- */
+.rc-head { margin-bottom: 24px; }
+.rc-title {
+    font-family: var(--font-body);
+    font-size: 30px; font-weight: 700; letter-spacing: -.015em; line-height: 1.15; color: #fff;
+}
+.rc-sub { margin-top: 6px; font-size: 13.5px; color: #8c8c8c; }
+
+/* ---------- Receipt cards ---------- */
+.rc-list { display: flex; flex-direction: column; gap: 16px; }
 .rc-item {
-    display: flex; align-items: center; gap: 14px;
-    padding: 14px 16px;
-    background: var(--surface-raised);
-    border: 1px solid var(--line);
-    border-radius: var(--radius-md);
+    display: flex; align-items: center; gap: 20px;
+    padding: 20px 24px;
+    background: #171717; border: 1px solid #262626; border-radius: 10px;
     transition: border-color .15s;
 }
-.rc-item:hover { border-color: var(--ember-strong); }
-.rc-item__ref {
-    font-family: var(--font-display); font-size: 12px; font-weight: 700;
-    color: var(--ember); letter-spacing: .04em; flex-shrink: 0;
-    min-width: 100px;
+.rc-item:hover { border-color: #3a3a3a; }
+.rc-item__icon {
+    width: 44px; height: 44px; flex: none;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 10px; background: #123a22; color: #22c55e;
 }
+.rc-item__icon svg { width: 22px; height: 22px; }
 .rc-item__body { flex: 1; min-width: 0; }
-.rc-item__room { font-weight: 700; font-size: 13.5px; margin-bottom: 1px; }
-.rc-item__dates { font-size: 12px; color: var(--paper-dim); }
-.rc-item__right {
-    display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0;
+.rc-item__room { font-size: 16px; font-weight: 700; color: #fff; line-height: 1.3; }
+.rc-item__meta { margin-top: 4px; font-size: 12.5px; color: #8c8c8c; line-height: 1.6; word-break: break-word; }
+.rc-item__paid {
+    display: flex; flex-direction: column; align-items: center; gap: 4px;
+    min-width: 140px; text-align: center;
 }
-.rc-item__amount { font-family: var(--font-display); font-size: 15px; font-weight: 700; }
+.rc-item__paid-label { font-size: 12px; color: #8c8c8c; }
+.rc-item__amount { font-size: 19px; font-weight: 700; color: #f0b100; }
+.rc-item__actions { display: flex; flex-wrap: wrap; gap: 10px; flex: none; }
+.rc-btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    min-height: 40px; padding: 0 20px; border: 0; border-radius: 6px;
+    font-family: var(--font-body); font-size: 13.5px; font-weight: 700; line-height: 1;
+    white-space: nowrap; cursor: pointer; transition: filter .15s, transform .1s;
+}
+.rc-btn:hover { filter: brightness(1.12); }
+.rc-btn:active { transform: scale(.98); }
+.rc-btn svg { width: 15px; height: 15px; flex: none; }
+.rc-btn--amber { background: #f0b100; color: #1a1200; }
+.rc-btn--navy  { background: #1b2433; color: #fff; }
+
 .rc-badge {
     display: inline-flex; align-items: center;
-    padding: 2px 9px; border-radius: var(--radius-full);
-    font-size: 10px; font-weight: 700; letter-spacing: .03em;
+    padding: 3px 10px; border-radius: 999px; border: 1px solid transparent;
+    font-size: 11px; font-weight: 700; line-height: 1;
 }
-.rc-badge--green  { background: rgba(40,160,90,.2);  color: #4fd882; }
-.rc-badge--amber  { background: rgba(220,160,40,.2); color: var(--ember-strong); }
-.rc-badge--red    { background: rgba(220,80,60,.2);  color: var(--danger); }
-.rc-badge--grey   { background: rgba(140,140,150,.2); color: var(--paper-dim); }
-.rc-item__btn {
-    padding: 7px 14px; border-radius: var(--radius-full);
-    background: transparent; border: 1px solid var(--ember);
-    color: var(--ember); font-size: 12px; font-weight: 600;
-    white-space: nowrap;
+.rc-badge--green { background: #123a22; border-color: #1b5c36; color: #22c55e; }
+.rc-badge--amber { background: #3a2a05; border-color: #6b4e0a; color: #f0b100; }
+.rc-badge--red   { background: #3b1414; border-color: #6b2121; color: #f87171; }
+.rc-badge--grey  { background: #222; border-color: #3a3a3a; color: #aaa; }
+
+.rc-empty {
+    text-align: center; padding: 56px 24px;
+    background: #171717; border: 1px dashed #2f2f2f; border-radius: 10px;
 }
-.rc-item__btn:hover { background: rgba(232, 163, 61, .1); }
+.rc-empty h3 { font-family: var(--font-body); font-size: 17px; font-weight: 700; color: #fff; }
+.rc-empty p  { margin-top: 6px; font-size: 13.5px; color: #8c8c8c; }
 
 /* ---------- Receipt overlay (printable) ---------- */
 .rc-overlay {
@@ -194,66 +224,68 @@ require __DIR__ . '/includes/head.php';
 .rc-action-btn--close { background: #f5f5f5; color: #333; }
 
 @media print {
-    .topbar, .bottom-nav, .page-head, .stat-grid, .rc-list, .rc-actions { display: none !important; }
+    .topbar, .bottom-nav, .page-head, .rc-head, .stat-grid, .rc-list, .rc-empty, .rc-actions { display: none !important; }
     .rc-overlay { position: static !important; background: none !important; opacity: 1 !important; }
     .rc-box { box-shadow: none; max-height: none; }
 }
 
+@media (max-width: 860px) {
+    .rc-item { flex-wrap: wrap; gap: 16px; }
+    .rc-item__body { flex: 1 1 200px; }
+    .rc-item__paid { align-items: flex-start; text-align: left; min-width: 0; }
+}
 @media (max-width: 600px) {
-    .rc-item { flex-wrap: wrap; }
-    .rc-item__right { flex-direction: row; align-items: center; width: 100%; justify-content: space-between; }
+    .rc-title { font-size: 26px; }
+    .rc-item { padding: 18px; }
+    .rc-item__paid { flex: 1 1 100%; flex-direction: row; justify-content: space-between; align-items: center; }
+    .rc-item__actions { width: 100%; }
+    .rc-item__actions .rc-btn { flex: 1 1 auto; }
 }
 </style>
 
 <main class="page" id="main-content">
 
-    <div class="page-head">
-        <?php page_head('Receipts', 'Download and review your payment receipts'); ?>
+    <div class="rc-head">
+        <h1 class="rc-title">Receipts</h1>
+        <p class="rc-sub">Download and view your payment receipts</p>
     </div>
 
-   
-
-    <section class="panel">
-        <div class="panel__head">
-            <h2>Payment History</h2>
+    <?php if (empty($receipts)): ?>
+        <div class="rc-empty">
+            <h3>No receipts yet</h3>
+            <p>Once a payment is processed, your receipt will appear here.</p>
         </div>
-
-        <?php if (empty($receipts)): ?>
-            <?php render_empty_state(
-                'file-text',
-                'No receipts yet',
-                'Once a payment is processed, your receipt will appear here for download.'
-            ); ?>
-        <?php else: ?>
-            <div class="rc-list">
-                <?php foreach ($receipts as $r): ?>
-                    <?php
-                    $ciLabel = date('M j', strtotime($r['check_in']));
-                    $coLabel = date('M j, Y', strtotime($r['check_out']));
-                    $status  = $r['payment_status'] ?? 'unpaid';
-                    ?>
-                    <div class="rc-item">
-                        <div class="rc-item__ref"><?php echo htmlspecialchars($r['reference']); ?></div>
-                        <div class="rc-item__body">
-                            <div class="rc-item__room"><?php echo htmlspecialchars($r['room_name']); ?></div>
-                            <div class="rc-item__dates">
-                                <?php echo htmlspecialchars($ciLabel); ?> → <?php echo htmlspecialchars($coLabel); ?>
-                            </div>
+    <?php else: ?>
+        <div class="rc-list">
+            <?php foreach ($receipts as $r): ?>
+                <?php
+                $paidTs  = strtotime((string) ($r['paid_at'] ?? $r['pay_created_at']));
+                $status  = $r['payment_status'] ?? 'unpaid';
+                ?>
+                <article class="rc-item">
+                    <span class="rc-item__icon"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v4a2 2 0 0 0 2 2h4"/><path d="M10 9H8"/><path d="M16 13H8"/><path d="M16 17H8"/></svg></span>
+                    <div class="rc-item__body">
+                        <div class="rc-item__room"><?php echo htmlspecialchars($r['room_name']); ?></div>
+                        <div class="rc-item__meta">
+                            Receipt Number: <?php echo htmlspecialchars(receipt_number($r)); ?><br>
+                            Payment Date: <?php echo htmlspecialchars(date('M j, Y', $paidTs)); ?>
                         </div>
-                        <div class="rc-item__right">
-                            <span class="rc-item__amount">₱<?php echo number_format((float) $r['total_paid'], 2); ?></span>
-                            <span class="rc-badge <?php echo receipt_status_class($status); ?>">
-                                <?php echo ucfirst(htmlspecialchars($status)); ?>
-                            </span>
-                        </div>
-                        <button type="button" class="rc-item__btn" onclick="openReceipt(<?php echo (int) $r['pay_id']; ?>)">
-                            View Receipt
-                        </button>
                     </div>
-                <?php endforeach; ?>
-            </div>
-        <?php endif; ?>
-    </section>
+                    <div class="rc-item__paid">
+                        <span class="rc-item__paid-label">Amount Paid</span>
+                        <span class="rc-item__amount">₱<?php echo number_format((float) $r['total_paid'], 2); ?></span>
+                        <?php if ($status !== 'paid'): ?>
+                            <span class="rc-badge <?php echo receipt_status_class($status); ?>"><?php echo ucfirst(htmlspecialchars($status)); ?></span>
+                        <?php endif; ?>
+                    </div>
+                    <div class="rc-item__actions">
+                        <button type="button" class="rc-btn rc-btn--amber" onclick="openReceipt(<?php echo (int) $r['pay_id']; ?>)">View Receipt</button>
+                        <button type="button" class="rc-btn rc-btn--navy" onclick="downloadReceipt(<?php echo (int) $r['pay_id']; ?>)"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg> Download PDF</button>
+                    </div>
+                </article>
+            <?php endforeach; ?>
+        </div>
+    <?php endif; ?>
 
 </main>
 
@@ -266,6 +298,7 @@ require __DIR__ . '/includes/head.php';
         </div>
         <div class="rc-box__title">OFFICIAL RECEIPT</div>
         <div class="rc-box__ref" id="rcRef">REF: —</div>
+        <div class="rc-row"><span class="rc-row__label">Receipt No.</span> <span class="rc-row__value" id="rcNo">—</span></div>
         <hr class="rc-divider">
         <div class="rc-row"><span class="rc-row__label">Room</span>      <span class="rc-row__value" id="rcRoom">—</span></div>
         <div class="rc-row"><span class="rc-row__label">Check-in</span>  <span class="rc-row__value" id="rcCI">—</span></div>
@@ -305,6 +338,7 @@ var RECEIPTS = <?php echo json_encode(array_map(function ($r) {
     return [
         'pay_id'          => (int) $r['pay_id'],
         'reference'       => $r['reference'],
+        'receipt_no'      => receipt_number($r),
         'room_name'       => $r['room_name'],
         'room_type'       => $r['room_type'],
         'check_in'        => date('M j, Y', strtotime($r['check_in'])),
@@ -337,6 +371,7 @@ function openReceipt(payId) {
     var bal   = Math.max(0, total - r.total_paid);
 
     document.getElementById('rcRef').textContent          = 'REF: ' + r.reference;
+    document.getElementById('rcNo').textContent           = r.receipt_no;
     document.getElementById('rcRoom').textContent          = r.room_name + ' (' + r.room_type + ')';
     document.getElementById('rcCI').textContent             = r.check_in;
     document.getElementById('rcCO').textContent             = r.check_out;
@@ -361,12 +396,34 @@ function openReceipt(payId) {
     document.getElementById('rcOverlay').classList.add('is-open');
 }
 
+// "Download PDF": opens the receipt and the browser's print dialog, where
+// "Save as PDF" produces the file. The tab title is the suggested file name.
+function downloadReceipt(payId) {
+    var r = rcMap[payId];
+    if (!r) return;
+    openReceipt(payId);
+    var prevTitle = document.title;
+    document.title = r.receipt_no;
+    var restore = function () { document.title = prevTitle; window.removeEventListener('afterprint', restore); };
+    window.addEventListener('afterprint', restore);
+    setTimeout(function () { window.print(); }, 300);
+}
+
 function closeReceipt() {
     document.getElementById('rcOverlay').classList.remove('is-open');
 }
 document.getElementById('rcOverlay').addEventListener('click', function (e) {
     if (e.target === this) closeReceipt();
 });
+
+// Deep link from My Bookings: receipts.php?ref=BM-1001 opens that receipt straight away.
+(function () {
+    var ref = new URLSearchParams(window.location.search).get('ref');
+    if (!ref) return;
+    for (var i = 0; i < RECEIPTS.length; i++) {
+        if (RECEIPTS[i].reference === ref) { openReceipt(RECEIPTS[i].pay_id); break; }
+    }
+})();
 </script>
 
 <?php require __DIR__ . '/includes/foot.php'; ?>

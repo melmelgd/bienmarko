@@ -10,7 +10,8 @@ require __DIR__ . '/includes/bootstrap.php';
 require_once __DIR__ . '/includes/booking-stay.php';   // Upcoming / Checked-in / Completed (admin front desk)
 
 $currentPage = 'bookings';
-$pageTitle   = 'Book a Stay';
+$pageTitle   = 'My Bookings';
+$useSidebarShell = true;   // true = sidebar shell (includes/shell-sidebar.php); false = original top navigation bar
 
 // Accommodation-type filter (Step 1 chips / Step 2 chips). Same categories the
 // public listing pages use. ?type=rooms|cottage|venues|pool pre-selects one.
@@ -101,12 +102,27 @@ try {
          JOIN accommodations a ON a.id = b.accommodation_id
          WHERE b.guest_id = :guest_id
          ORDER BY b.created_at DESC
-         LIMIT 10"
+         LIMIT 100"
     );
     $stmt->execute(['guest_id' => $guestId]);
     $myBookings = $stmt->fetchAll();
 } catch (Throwable $e) {
     $myBookings = [];
+}
+
+// Which of this guest's bookings have a recorded payment (-> show the Receipt button).
+$receiptBookingIds = [];
+try {
+    $rStmt = $pdo->prepare(
+        "SELECT DISTINCT p.booking_id
+         FROM payments p
+         JOIN bookings b ON b.id = p.booking_id
+         WHERE b.guest_id = :gid AND p.total_paid > 0"
+    );
+    $rStmt->execute(['gid' => (int) ($_SESSION['auth_user_id'] ?? 0)]);
+    $receiptBookingIds = array_map('intval', $rStmt->fetchAll(PDO::FETCH_COLUMN));
+} catch (Throwable $e) {
+    // payments table may not exist yet on a fresh install — no receipts then.
 }
 
 $csrfToken = bienmarko_csrf_token();
@@ -124,6 +140,19 @@ function booking_status_class(string $colour): string
         'teal'   => 'badge--teal',
         default  => 'badge--grey',
     };
+}
+
+/** Small inline icons for the booking-card buttons. */
+function bk_btn_icon(string $name): string
+{
+    $paths = [
+        'chevron'  => '<path d="m9 18 6-6-6-6"/>',
+        'edit'     => '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
+        'trash'    => '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+        'download' => '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+    ];
+    return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
+        . ($paths[$name] ?? '') . '</svg>';
 }
 
 require __DIR__ . '/includes/head.php';
@@ -732,64 +761,126 @@ require __DIR__ . '/includes/head.php';
 }
 .bk-success__actions { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; justify-content: center; }
 
-/* ---------- My Bookings list ---------- */
-.bk-list { display: flex; flex-direction: column; gap: 12px; }
-.bk-item {
-  display: flex; align-items: flex-start; gap: 14px;
-  padding: 14px 16px;
-  background: var(--surface-raised); border: 1px solid var(--line);
-  border-radius: var(--radius-md);
+/* ---------- My Bookings page (sidebar layout) ---------- */
+.bkp-head {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+  margin-bottom: 24px;
 }
+.bkp-title {
+  font-family: var(--font-body);
+  font-size: 30px; font-weight: 700; letter-spacing: -.015em; line-height: 1.15;
+  color: #fff;
+}
+.bkp-sub { margin-top: 6px; font-size: 13.5px; color: #8c8c8c; }
+
+/* Shared button look: View Details / Modify / Cancel / Receipt / New Booking */
+.bk-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  min-height: 40px; padding: 0 20px;
+  border: 0; border-radius: 6px;
+  font-family: var(--font-body); font-size: 13.5px; font-weight: 700; line-height: 1;
+  white-space: nowrap; text-decoration: none; cursor: pointer;
+  transition: filter .15s, transform .1s;
+}
+.bk-btn:hover { filter: brightness(1.08); }
+.bk-btn:active { transform: scale(.98); }
+.bk-btn svg { width: 15px; height: 15px; flex: none; }
+.bk-btn--amber { background: #f0b100; color: #1a1200; }
+.bk-btn--cream { background: #fff7e0; color: #1a1200; }
+.bk-btn--red   { background: #e11d1d; color: #fff; }
+.bk-btn--ghost { background: transparent; color: #fff; border: 1px solid #2f2f2f; }
+.bk-btn--ghost:hover { border-color: #f0b100; filter: none; }
+
+/* Filter tabs */
+.bkp-tabs {
+  display: inline-flex; gap: 4px; max-width: 100%;
+  padding: 4px; margin-bottom: 24px;
+  background: #0a0a0a; border: 1px solid #2a2a2a; border-radius: 999px;
+  overflow-x: auto; scrollbar-width: none;
+}
+.bkp-tabs::-webkit-scrollbar { display: none; }
+.bkp-tab {
+  border: 0; background: transparent; color: #fff;
+  padding: 9px 20px; border-radius: 999px;
+  font-family: var(--font-body); font-size: 12.5px; font-weight: 700; line-height: 1;
+  white-space: nowrap; cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.bkp-tab:hover { background: #171717; }
+.bkp-tab[aria-selected="true"] { background: #f0b100; color: #1a1200; }
+
+/* New-booking wizard (collapsed until "New Booking" is pressed) */
+#newBookingWrap { margin-bottom: 32px; }
+#newBookingWrap[hidden] { display: none; }
+#newBookingWrap .panel { background: #171717; border-color: #262626; border-radius: 12px; box-shadow: none; }
+
+/* Booking cards */
+.bk-list { display: flex; flex-direction: column; gap: 20px; }
+.bk-item {
+  display: grid; grid-template-columns: 176px minmax(0, 1fr); gap: 24px;
+  align-items: start;
+  padding: 24px 28px;
+  background: #171717; border: 1px solid #262626; border-radius: 10px;
+}
+.bk-item[hidden] { display: none; }
 .bk-item__img {
-  width: 84px; height: 84px;
-  border-radius: var(--radius-sm);
-  background: var(--surface); border: 1px solid var(--line);
-  flex-shrink: 0; overflow: hidden;
+  width: 176px; height: 118px;
+  border-radius: 6px; overflow: hidden;
+  background: #101010; border: 1px solid #262626;
   display: flex; align-items: center; justify-content: center;
 }
 .bk-item__img img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.bk-item__img .icon { width: 26px; height: 26px; color: var(--paper-faint); }
-.bk-item__ref {
-  font-family: var(--font-display); font-size: 13px; font-weight: 700;
-  color: var(--ember); letter-spacing: .04em; flex-shrink: 0;
-  min-width: 120px;
+.bk-item__img .icon { width: 28px; height: 28px; color: var(--paper-faint); }
+
+.bk-card__main { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.bk-card__top {
+  display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) 112px;
+  gap: 16px; align-items: start;
 }
-.bk-item__body { flex: 1; min-width: 0; }
-.bk-item__room { font-weight: 700; font-size: 14.5px; margin-bottom: 2px; }
-.bk-item__dates { font-size: 13px; color: var(--paper-dim); }
-.bk-item__meta { font-size: 12px; color: var(--paper-faint); margin-top: 2px; }
-.bk-item__right { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; flex-shrink: 0; }
-.bk-item__amount { font-family: var(--font-display); font-size: 15px; font-weight: 700; }
-.bk-item__actions { display: flex; gap: 6px; margin-top: 2px; flex-wrap: wrap; justify-content: flex-end; }
-.bk-action-btn {
-  display: inline-flex; align-items: center; gap: 4px;
-  padding: 5px 10px;
-  background: transparent; border: 1px solid var(--line);
-  border-radius: var(--radius-full);
-  color: var(--paper-dim); font-size: 11.5px; font-weight: 600;
-  font-family: var(--font-body); cursor: pointer; white-space: nowrap;
-  transition: border-color .15s, color .15s;
-}
-.bk-action-btn .icon { width: 12px; height: 12px; }
-.bk-action-btn--edit:hover { border-color: var(--ember); color: var(--paper); }
-.bk-action-btn--cancel:hover { border-color: var(--danger); color: var(--danger); }
-.bk-item__note { font-size: 11px; color: var(--paper-faint); text-align: right; max-width: 150px; margin-top: 2px; }
+.bk-card__top > .badge { justify-self: end; }
+.bk-item__room { font-size: 16px; font-weight: 700; color: #fff; line-height: 1.3; }
+.bk-item__ref  { margin-top: 4px; font-size: 13px; color: #8c8c8c; word-break: break-word; }
+.bk-card__col  { display: flex; flex-direction: column; gap: 4px; }
+.bk-card__label { font-size: 12px; color: #8c8c8c; }
+.bk-item__dates { font-size: 14px; font-weight: 700; color: #fff; }
+
+.bk-card__actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+/* JS removes/replaces .bk-item__actions as a unit, so it must wrap Modify + Cancel but not affect layout */
+.bk-item__actions { display: contents; }
+.bk-item__note { font-size: 12.5px; color: #8c8c8c; }
 .bk-item--flash { animation: bkItemFlash 1.6s ease; }
 @keyframes bkItemFlash {
-  0%   { background: rgba(232,163,61,.18); }
-  100% { background: var(--surface-raised); }
+  0%   { background: rgba(240,177,0,.16); }
+  100% { background: #171717; }
 }
+
+/* Status pills (class names unchanged so existing JS keeps working) */
 .badge {
   display: inline-flex; align-items: center;
-  padding: 3px 9px; border-radius: var(--radius-full);
-  font-size: 11px; font-weight: 700; letter-spacing: .03em;
+  padding: 6px 14px; border-radius: 999px; border: 1px solid transparent;
+  font-size: 12px; font-weight: 700; line-height: 1; white-space: nowrap;
 }
-.badge--green  { background: rgba(40,160,90,.2);  color: #4fd882; }
-.badge--amber  { background: rgba(220,160,40,.2); color: var(--ember-strong); }
-.badge--red    { background: rgba(220,80,60,.2);  color: var(--danger); }
-.badge--blue   { background: rgba(80,140,220,.2); color: #86b8e8; }
-.badge--teal   { background: rgba(30,170,170,.2); color: #5fd8d0; }
-.badge--grey   { background: rgba(140,140,150,.2); color: var(--paper-dim); }
+.badge--green { background: #123a22; border-color: #1b5c36; color: #22c55e; }
+.badge--blue  { background: #1b2b46; border-color: #284a7c; color: #5b9bf5; }
+.badge--amber { background: #3a2a05; border-color: #6b4e0a; color: #f0b100; }
+.badge--red   { background: #3b1414; border-color: #6b2121; color: #f87171; }
+.badge--teal  { background: #0f3333; border-color: #1b5e5e; color: #2dd4bf; }
+.badge--grey  { background: #222;    border-color: #3a3a3a; color: #aaa; }
+
+/* Empty state (no bookings / nothing in this tab) */
+.bkp-empty {
+  text-align: center; padding: 56px 24px;
+  background: #171717; border: 1px dashed #2f2f2f; border-radius: 10px;
+}
+.bkp-empty[hidden] { display: none; }
+.bkp-empty h3 { font-family: var(--font-body); font-size: 17px; font-weight: 700; color: #fff; }
+.bkp-empty p  { margin-top: 6px; font-size: 13.5px; color: #8c8c8c; }
+
+/* "View Details" popup */
+.vm-status { margin-left: auto; }
+#bkViewModal .bk-modal__foot { justify-content: flex-end; }
+.vm-row-value--wrap { max-width: 62%; word-break: break-word; }
 
 /* ---------- Error state ---------- */
 .api-error {
@@ -1123,13 +1214,23 @@ require __DIR__ . '/includes/head.php';
 .rooms-header > div, .rooms-meta { min-width: 0; }
 @media (max-width: 600px) { .rooms-meta { white-space: normal; } }
 
+@media (max-width: 860px) {
+  .bk-item { grid-template-columns: 140px minmax(0, 1fr); gap: 18px; padding: 20px; }
+  .bk-item__img { width: 140px; height: 100px; }
+  .bk-card__top { grid-template-columns: minmax(0, 1fr) auto; }
+  .bk-card__id { grid-column: 1 / -1; }
+}
+
 @media (max-width: 600px) {
   .date-row { grid-template-columns: 1fr; }
   .booking-step__label { display: none; }
-  .bk-item { flex-direction: column; gap: 8px; }
-  .bk-item__img { width: 100%; height: 140px; }
-  .bk-item__right { flex-direction: row; align-items: center; flex-wrap: wrap; }
-  .bk-item__actions { justify-content: flex-start; }
+  .bkp-title { font-size: 26px; }
+  .bkp-tabs { display: flex; width: 100%; }
+  .bkp-tab { flex: 1 1 auto; padding: 9px 8px; font-size: 12px; }
+  .bk-item { grid-template-columns: 1fr; gap: 16px; padding: 18px; }
+  .bk-item__img { width: 100%; height: 170px; }
+  .bk-card__main { gap: 18px; }
+  .bk-card__actions .bk-btn { flex: 1 1 auto; }
   .cal-modal { width: 96vw; }
   .photo-modal { width: 96vw; }
   .photo-modal__nav { width: 32px; height: 32px; }
@@ -1142,12 +1243,20 @@ require __DIR__ . '/includes/head.php';
 <main class="page" id="main-content">
 
     <!-- Page header -->
-    <div class="page-head">
-        <div class="page-head__text">
-            <h1 class="page-head__title">Book a Stay</h1>
-            <p class="page-head__subtitle">Pick a type of accommodation and your dates to see real-time availability.</p>
+    <div class="bkp-head">
+        <div>
+            <h1 class="bkp-title">My Bookings</h1>
+            <p class="bkp-sub">Manage your reservations</p>
         </div>
+        <button type="button" class="bk-btn bk-btn--amber" id="newBookingToggle"
+                aria-expanded="false" aria-controls="newBookingWrap">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+            <span id="newBookingToggleLabel">New Booking</span>
+        </button>
     </div>
+
+    <!-- ===== Book a Stay wizard (hidden until "New Booking" is pressed) ===== -->
+    <div id="newBookingWrap" hidden>
 
     <!-- Step indicator -->
     <div class="booking-steps" id="bookingSteps" aria-label="Booking steps">
@@ -1379,128 +1488,134 @@ require __DIR__ . '/includes/head.php';
             </div>
         </section>
 
-        <!-- ===== My Bookings ===== -->
-        <section class="panel">
-            <div class="panel__head">
-                <h2>My Bookings</h2>
-                <p class="panel__subtitle">Your reservation history.</p>
-            </div>
-
-            <?php if (empty($myBookings)): ?>
-                <?php render_empty_state(
-                    'calendar-check',
-                    'No bookings yet',
-                    'Select your dates above and book your first stay with us.',
-                ); ?>
-            <?php else: ?>
-                <div class="bk-list">
-                    <?php foreach ($myBookings as $bk): ?>
-                        <?php
-                        $checkIn    = date('M j, Y', strtotime($bk['check_in']));
-                        $checkOut   = date('M j, Y', strtotime($bk['check_out']));
-                        $nights     = (int) round((strtotime($bk['check_out']) - strtotime($bk['check_in'])) / 86400);
-                        $isPool     = strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0;
-                        // Stage mirrors what the admin recorded at the front desk.
-                        [$stage, $stageLabel, $stageColour] = bk_stage_badge($bk);
-                        $isActive   = in_array($bk['status'], ['pending', 'confirmed'], true) && $stage !== 'completed';
-                        $isCheckedIn = $stage === 'checked_in';
-                        // Once the admin has checked the guest in, the booking can no longer be edited / cancelled online.
-                        $canModify  = $isActive && !$isCheckedIn && strtotime($bk['check_in']) >= strtotime($today);
-
-                        // Contact details saved with the booking; older bookings fall back to the profile.
-                        if (!empty($bk['guest_name'])) {
-                            $nameParts = preg_split('/\s+/', trim((string) $bk['guest_name']));
-                            $rowLast   = count($nameParts) > 1 ? array_pop($nameParts) : '';
-                            $rowFirst  = implode(' ', $nameParts);
-                        } else {
-                            $rowFirst = (string) $guestProfile['first_name'];
-                            $rowLast  = (string) $guestProfile['last_name'];
-                        }
-                        $rowEmail   = !empty($bk['contact_email']) ? (string) $bk['contact_email'] : (string) $prefillEmail;
-                        $rowPhone   = !empty($bk['contact_phone']) ? (string) $bk['contact_phone'] : (string) $prefillPhone;
-                        $rowAddress = (string) ($bk['contact_address'] ?? '');
-
-                        $companionNamesArr = [];
-                        if (!empty($bk['companion_names'])) {
-                            $decodedNames = json_decode((string) $bk['companion_names'], true);
-                            if (is_array($decodedNames)) {
-                                $companionNamesArr = $decodedNames;
-                            }
-                        }
-                        ?>
-                        <article class="bk-item"
-                                 data-booking-id="<?php echo (int) $bk['id']; ?>"
-                                 data-reference="<?php echo htmlspecialchars($bk['reference']); ?>"
-                                 data-accommodation-id="<?php echo (int) $bk['accommodation_id']; ?>"
-                                 data-room-name="<?php echo htmlspecialchars($bk['room_name']); ?>"
-                                 data-room-type="<?php echo htmlspecialchars($bk['room_type']); ?>"
-                                 data-is-pool="<?php echo $isPool ? '1' : '0'; ?>"
-                                 data-capacity="<?php echo (int) $bk['room_capacity']; ?>"
-                                 data-price="<?php echo (float) $bk['room_price']; ?>"
-                                 data-check-in="<?php echo htmlspecialchars($bk['check_in']); ?>"
-                                 data-check-out="<?php echo htmlspecialchars($bk['check_out']); ?>"
-                                 data-guests="<?php echo (int) $bk['guests_count']; ?>"
-                                 data-notes="<?php echo htmlspecialchars((string) $bk['notes']); ?>"
-                                 data-companion-names="<?php echo htmlspecialchars(json_encode($companionNamesArr, JSON_UNESCAPED_UNICODE)); ?>"
-                                 data-first-name="<?php echo htmlspecialchars($rowFirst); ?>"
-                                 data-last-name="<?php echo htmlspecialchars($rowLast); ?>"
-                                 data-email="<?php echo htmlspecialchars($rowEmail); ?>"
-                                 data-phone="<?php echo htmlspecialchars($rowPhone); ?>"
-                                 data-address="<?php echo htmlspecialchars($rowAddress); ?>"
-                                 data-status="<?php echo htmlspecialchars($bk['status']); ?>"
-                                 data-stage="<?php echo htmlspecialchars($stage); ?>"
-                                 data-image="<?php echo htmlspecialchars((string) $bk['image_filename']); ?>">
-                            <div class="bk-item__img">
-                                <?php if (!empty($bk['image_filename'])): ?>
-                                    <img src="<?php echo htmlspecialchars($imgBase . $bk['image_filename']); ?>"
-                                         alt="<?php echo htmlspecialchars($bk['room_name']); ?>"
-                                         loading="lazy">
-                                <?php else: ?>
-                                    <?php render_icon('bed-double'); ?>
-                                <?php endif; ?>
-                            </div>
-                            <div class="bk-item__ref"><?php echo htmlspecialchars($bk['reference']); ?></div>
-                            <div class="bk-item__body">
-                                <div class="bk-item__room"><?php echo htmlspecialchars($bk['room_name']); ?></div>
-                                <div class="bk-item__dates">
-                                    <?php echo htmlspecialchars($checkIn); ?> → <?php echo htmlspecialchars($checkOut); ?>
-                                </div>
-                                <div class="bk-item__meta">
-                                    <?php echo $nights; ?> night<?php echo $nights !== 1 ? 's' : ''; ?> ·
-                                    <?php echo (int) $bk['guests_count']; ?> guest<?php echo (int) $bk['guests_count'] !== 1 ? 's' : ''; ?>
-                                </div>
-                            </div>
-                            <div class="bk-item__right">
-                                <span class="bk-item__amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></span>
-                                <span class="badge <?php echo booking_status_class($stageColour); ?>">
-                                    <?php echo htmlspecialchars($stageLabel); ?>
-                                </span>
-                                <?php if ($isCheckedIn): ?>
-                                    <span class="bk-item__note">
-                                        Checked in<?php echo !empty($bk['checked_in_at']) ? ' ' . htmlspecialchars(date('M j, g:i A', strtotime($bk['checked_in_at']))) : ''; ?>
-                                    </span>
-                                <?php elseif ($isActive): ?>
-                                    <?php if ($canModify): ?>
-                                        <div class="bk-item__actions">
-                                            <button type="button" class="bk-action-btn bk-action-btn--edit" data-bk-edit>
-                                                <?php render_icon('pencil'); ?> Edit
-                                            </button>
-                                            <button type="button" class="bk-action-btn bk-action-btn--cancel" data-bk-cancel>
-                                                <?php render_icon('x'); ?> Cancel
-                                            </button>
-                                        </div>
-                                    <?php else: ?>
-                                        <span class="bk-item__note">Contact us to modify</span>
-                                    <?php endif; ?>
-                                <?php endif; ?>
-                            </div>
-                        </article>
-                    <?php endforeach; ?>
-                </div>
-            <?php endif; ?>
-        </section>
-
     </div><!-- .content-grid -->
+    </div><!-- #newBookingWrap -->
+
+    <!-- ===== My Bookings: filter tabs + cards ===== -->
+    <div class="bkp-tabs" id="bkTabs" role="tablist" aria-label="Filter bookings">
+        <button type="button" class="bkp-tab" role="tab" data-filter="all"       aria-selected="true">All Bookings</button>
+        <button type="button" class="bkp-tab" role="tab" data-filter="upcoming"  aria-selected="false">Upcoming</button>
+        <button type="button" class="bkp-tab" role="tab" data-filter="past"      aria-selected="false">Past Stays</button>
+        <button type="button" class="bkp-tab" role="tab" data-filter="cancelled" aria-selected="false">Cancelled</button>
+    </div>
+
+    <div class="bk-list" id="bkList">
+        <?php foreach ($myBookings as $bk): ?>
+            <?php
+            $nights     = (int) round((strtotime($bk['check_out']) - strtotime($bk['check_in'])) / 86400);
+            $isPool     = strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0;
+            // Stage mirrors what the admin recorded at the front desk.
+            [$stage, $stageLabel, $stageColour] = bk_stage_badge($bk);
+            $isActive   = in_array($bk['status'], ['pending', 'confirmed'], true) && $stage !== 'completed';
+            $isCheckedIn = $stage === 'checked_in';
+            // Once the admin has checked the guest in, the booking can no longer be edited / cancelled online.
+            $canModify  = $isActive && !$isCheckedIn && strtotime($bk['check_in']) >= strtotime($today);
+            $hasReceipt = $stage !== 'cancelled' && in_array((int) $bk['id'], $receiptBookingIds, true);
+
+            // Contact details saved with the booking; older bookings fall back to the profile.
+            if (!empty($bk['guest_name'])) {
+                $nameParts = preg_split('/\s+/', trim((string) $bk['guest_name']));
+                $rowLast   = count($nameParts) > 1 ? array_pop($nameParts) : '';
+                $rowFirst  = implode(' ', $nameParts);
+            } else {
+                $rowFirst = (string) $guestProfile['first_name'];
+                $rowLast  = (string) $guestProfile['last_name'];
+            }
+            $rowEmail   = !empty($bk['contact_email']) ? (string) $bk['contact_email'] : (string) $prefillEmail;
+            $rowPhone   = !empty($bk['contact_phone']) ? (string) $bk['contact_phone'] : (string) $prefillPhone;
+            $rowAddress = (string) ($bk['contact_address'] ?? '');
+
+            $companionNamesArr = [];
+            if (!empty($bk['companion_names'])) {
+                $decodedNames = json_decode((string) $bk['companion_names'], true);
+                if (is_array($decodedNames)) {
+                    $companionNamesArr = $decodedNames;
+                }
+            }
+            ?>
+            <article class="bk-item"
+                     data-booking-id="<?php echo (int) $bk['id']; ?>"
+                     data-reference="<?php echo htmlspecialchars($bk['reference']); ?>"
+                     data-accommodation-id="<?php echo (int) $bk['accommodation_id']; ?>"
+                     data-room-name="<?php echo htmlspecialchars($bk['room_name']); ?>"
+                     data-room-type="<?php echo htmlspecialchars($bk['room_type']); ?>"
+                     data-is-pool="<?php echo $isPool ? '1' : '0'; ?>"
+                     data-capacity="<?php echo (int) $bk['room_capacity']; ?>"
+                     data-price="<?php echo (float) $bk['room_price']; ?>"
+                     data-total="<?php echo (float) $bk['total_amount']; ?>"
+                     data-check-in="<?php echo htmlspecialchars($bk['check_in']); ?>"
+                     data-check-out="<?php echo htmlspecialchars($bk['check_out']); ?>"
+                     data-guests="<?php echo (int) $bk['guests_count']; ?>"
+                     data-notes="<?php echo htmlspecialchars((string) $bk['notes']); ?>"
+                     data-companion-names="<?php echo htmlspecialchars(json_encode($companionNamesArr, JSON_UNESCAPED_UNICODE)); ?>"
+                     data-first-name="<?php echo htmlspecialchars($rowFirst); ?>"
+                     data-last-name="<?php echo htmlspecialchars($rowLast); ?>"
+                     data-email="<?php echo htmlspecialchars($rowEmail); ?>"
+                     data-phone="<?php echo htmlspecialchars($rowPhone); ?>"
+                     data-address="<?php echo htmlspecialchars($rowAddress); ?>"
+                     data-status="<?php echo htmlspecialchars($bk['status']); ?>"
+                     data-stage="<?php echo htmlspecialchars($stage); ?>"
+                     data-image="<?php echo htmlspecialchars((string) $bk['image_filename']); ?>">
+                <div class="bk-item__img">
+                    <?php if (!empty($bk['image_filename'])): ?>
+                        <img src="<?php echo htmlspecialchars($imgBase . $bk['image_filename']); ?>"
+                             alt="<?php echo htmlspecialchars($bk['room_name']); ?>"
+                             loading="lazy">
+                    <?php else: ?>
+                        <?php render_icon('bed-double'); ?>
+                    <?php endif; ?>
+                </div>
+
+                <div class="bk-card__main">
+                    <div class="bk-card__top">
+                        <div class="bk-card__id">
+                            <div class="bk-item__room"><?php echo htmlspecialchars($bk['room_name']); ?></div>
+                            <div class="bk-item__ref">Reference Number: <?php echo htmlspecialchars($bk['reference']); ?></div>
+                        </div>
+                        <div class="bk-card__col">
+                            <span class="bk-card__label">Check-in</span>
+                            <span class="bk-item__dates"><?php echo htmlspecialchars(date('M j, Y', strtotime($bk['check_in']))); ?></span>
+                        </div>
+                        <span class="badge <?php echo booking_status_class($stageColour); ?>"><?php echo htmlspecialchars($stageLabel); ?></span>
+                    </div>
+
+                    <div class="bk-card__actions">
+                        <button type="button" class="bk-btn bk-btn--amber" data-bk-view>
+                            View Details <?php echo bk_btn_icon('chevron'); ?>
+                        </button>
+
+                        <?php if ($canModify): ?>
+                            <span class="bk-item__actions">
+                                <button type="button" class="bk-btn bk-btn--cream" data-bk-edit>
+                                    <?php echo bk_btn_icon('edit'); ?> Modify
+                                </button>
+                                <button type="button" class="bk-btn bk-btn--red" data-bk-cancel>
+                                    <?php echo bk_btn_icon('trash'); ?> Cancel
+                                </button>
+                            </span>
+                        <?php elseif ($isCheckedIn): ?>
+                            <span class="bk-item__note">
+                                Checked in<?php echo !empty($bk['checked_in_at']) ? ' ' . htmlspecialchars(date('M j, g:i A', strtotime($bk['checked_in_at']))) : ''; ?>
+                            </span>
+                        <?php elseif ($isActive): ?>
+                            <span class="bk-item__note">Contact us to modify</span>
+                        <?php endif; ?>
+
+                        <?php if ($hasReceipt): ?>
+                            <a class="bk-btn bk-btn--cream" href="receipts.php?ref=<?php echo rawurlencode($bk['reference']); ?>">
+                                <?php echo bk_btn_icon('download'); ?> Receipt
+                            </a>
+                        <?php endif; ?>
+                    </div>
+                </div>
+            </article>
+        <?php endforeach; ?>
+    </div>
+
+    <div class="bkp-empty" id="bkEmpty" <?php echo empty($myBookings) ? '' : 'hidden'; ?>>
+        <h3 id="bkEmptyTitle">No bookings yet</h3>
+        <p id="bkEmptyText">Press “New Booking” to reserve your first stay with us.</p>
+    </div>
 
 </main>
 
@@ -1809,6 +1924,32 @@ require __DIR__ . '/includes/head.php';
         <iframe id="tourModalFrame" src="about:blank" title="360 degree room tour" loading="lazy" allow="accelerometer; gyroscope; fullscreen" sandbox="allow-scripts allow-same-origin allow-popups"></iframe>
     </div>
     <div class="tour-modal__caption" id="tourModalCaption"></div>
+</dialog>
+
+<!-- ===== View Details popup (read-only; filled from the card's data-* attributes) ===== -->
+<dialog class="bk-modal" id="bkViewModal" aria-labelledby="bkViewTitle" aria-modal="true">
+    <div id="bkViewModalContent">
+        <div class="bk-modal__head">
+            <h2 id="bkViewTitle">Booking Details</h2>
+            <button type="button" class="bk-modal__close" id="bkViewClose" aria-label="Close">
+                <?php render_icon('x'); ?>
+            </button>
+        </div>
+        <div class="bk-modal__room">
+            <div class="bk-modal__room-img" id="vmImg"></div>
+            <div>
+                <div class="bk-modal__room-name" id="vmRoom">Room</div>
+                <div class="bk-modal__room-type" id="vmType"></div>
+            </div>
+            <span class="vm-status" id="vmStatus"></span>
+        </div>
+        <div class="bk-modal__details" id="vmDetails"></div>
+        <div class="bk-modal__foot">
+            <div class="bk-modal__foot-actions">
+                <button type="button" class="btn--cancel" id="bkViewDone">Close</button>
+            </div>
+        </div>
+    </div>
 </dialog>
 
 <!-- Hidden tokens for JS -->
@@ -3235,23 +3376,16 @@ require __DIR__ . '/includes/head.php';
     elCompanionsList.innerHTML = '';
     refreshDateTriggers();
     setStep(1);
-    document.querySelector('.bk-list') &&
-      document.querySelector('.bk-list').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Collapse the wizard again and show the new booking in the list.
+    if (window.bkCloseWizard) window.bkCloseWizard();
+    var listAfter = document.getElementById('bkTabs') || document.querySelector('.bk-list');
+    if (listAfter) listAfter.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
 
   /* ---- Inject new booking row into My Bookings ---- */
   function injectNewBooking(data, notes, companionNames) {
-    var container = document.querySelector('.bk-list');
-    if (!container) {
-      var panels = document.querySelectorAll('.panel');
-      var panel  = panels[panels.length - 1];
-      if (!panel) return;
-      var emptyState = panel.querySelector('.empty-state');
-      if (emptyState) emptyState.remove();
-      container = document.createElement('div');
-      container.className = 'bk-list';
-      panel.appendChild(container);
-    }
+    var container = document.getElementById('bkList') || document.querySelector('.bk-list');
+    if (!container) return;
 
     var nights = data.nights || 1;
     var guests = data.guests_count || 1;
@@ -3279,13 +3413,15 @@ require __DIR__ . '/includes/head.php';
     art.setAttribute('data-phone', ct.phone || '');
     art.setAttribute('data-address', ct.address || '');
     art.setAttribute('data-status', 'confirmed');
+    art.setAttribute('data-stage', 'upcoming');
+    art.setAttribute('data-total', data.total_amount || 0);
     art.setAttribute('data-image', (room && room.image_filename) ? room.image_filename : '');
 
     var actionsHtml = bkCanModifyClient(data.check_in)
-      ? '<div class="bk-item__actions">' +
-          '<button type="button" class="bk-action-btn bk-action-btn--edit" data-bk-edit>' + pencilIconSmall() + ' Edit</button>' +
-          '<button type="button" class="bk-action-btn bk-action-btn--cancel" data-bk-cancel>' + xIconSmall() + ' Cancel</button>' +
-        '</div>'
+      ? '<span class="bk-item__actions">' +
+          '<button type="button" class="bk-btn bk-btn--cream" data-bk-edit>' + BK_ICON.edit + ' Modify</button>' +
+          '<button type="button" class="bk-btn bk-btn--red" data-bk-cancel>' + BK_ICON.trash + ' Cancel</button>' +
+        '</span>'
       : '<span class="bk-item__note">Contact us to modify</span>';
 
     var imgHtml = (room && room.image_filename)
@@ -3294,20 +3430,26 @@ require __DIR__ . '/includes/head.php';
 
     art.innerHTML =
       '<div class="bk-item__img">' + imgHtml + '</div>' +
-      '<div class="bk-item__ref">' + escHtml(data.reference) + '</div>' +
-      '<div class="bk-item__body">' +
-        '<div class="bk-item__room">' + escHtml(data.room_name) + '</div>' +
-        '<div class="bk-item__dates">' + formatDate(data.check_in) + ' → ' + formatDate(data.check_out) + '</div>' +
-        '<div class="bk-item__meta">' + nights + ' night' + (nights === 1 ? '' : 's') + ' · ' +
-          guests + ' guest' + (guests === 1 ? '' : 's') + '</div>' +
-      '</div>' +
-      '<div class="bk-item__right">' +
-        '<span class="bk-item__amount">₱' + formatNumber(data.total_amount) + '</span>' +
-        '<span class="badge badge--green">Confirmed</span>' +
-        actionsHtml +
+      '<div class="bk-card__main">' +
+        '<div class="bk-card__top">' +
+          '<div class="bk-card__id">' +
+            '<div class="bk-item__room">' + escHtml(data.room_name) + '</div>' +
+            '<div class="bk-item__ref">Reference Number: ' + escHtml(data.reference) + '</div>' +
+          '</div>' +
+          '<div class="bk-card__col">' +
+            '<span class="bk-card__label">Check-in</span>' +
+            '<span class="bk-item__dates">' + formatDate(data.check_in) + '</span>' +
+          '</div>' +
+          '<span class="badge badge--green">Confirmed</span>' +
+        '</div>' +
+        '<div class="bk-card__actions">' +
+          '<button type="button" class="bk-btn bk-btn--amber" data-bk-view>View Details ' + BK_ICON.chevron + '</button>' +
+          actionsHtml +
+        '</div>' +
       '</div>';
 
     container.insertBefore(art, container.firstChild);
+    bkSetFilter('all');
   }
 
   /* ---- Utility ---- */
@@ -3807,8 +3949,11 @@ require __DIR__ . '/includes/head.php';
     item.setAttribute('data-notes', data.notes || '');
     item.setAttribute('data-companion-names', JSON.stringify(data.companion_names || []));
 
+    item.setAttribute('data-total', data.total_amount || 0);
+
+    // The card shows the check-in date; check-out lives in the View Details popup.
     var datesEl = item.querySelector('.bk-item__dates');
-    if (datesEl) datesEl.textContent = formatDate(data.check_in) + ' → ' + formatDate(data.check_out);
+    if (datesEl) datesEl.textContent = formatDate(data.check_in);
 
     var metaEl = item.querySelector('.bk-item__meta');
     if (metaEl) {
@@ -3869,16 +4014,188 @@ require __DIR__ . '/includes/head.php';
       if (actions) actions.remove();
 
       item.setAttribute('data-status', 'cancelled');
+      item.setAttribute('data-stage', 'cancelled');
       item.classList.add('bk-item--flash');
       setTimeout(function () { item.classList.remove('bk-item--flash'); }, 1600);
+      // If a different tab is open (e.g. Upcoming) the card now belongs elsewhere.
+      setTimeout(bkApplyFilter, 900);
     })
     .catch(function () {
       window.alert('Network error. Please try again.');
     });
   }
 
+  /* =============================================================
+     My Bookings page UI: icons, filter tabs, View Details popup,
+     and the "New Booking" toggle that reveals the booking wizard.
+     ============================================================= */
+
+  var BK_ICON = {
+    chevron:  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg>',
+    edit:     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>',
+    trash:    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>'
+  };
+
+  /* ---- "New Booking" toggle (wizard is collapsed by default) ---- */
+  var wizWrap = document.getElementById('newBookingWrap');
+  var wizBtn  = document.getElementById('newBookingToggle');
+  var wizLbl  = document.getElementById('newBookingToggleLabel');
+
+  function setWizardOpen(open, scroll) {
+    if (!wizWrap || !wizBtn) return;
+    wizWrap.hidden = !open;
+    wizBtn.setAttribute('aria-expanded', String(open));
+    if (wizLbl) wizLbl.textContent = open ? 'Close' : 'New Booking';
+    if (open && scroll !== false) wizWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  if (wizBtn) {
+    wizBtn.addEventListener('click', function () { setWizardOpen(wizWrap.hidden); });
+  }
+  window.bkCloseWizard = function () { setWizardOpen(false); };
+
+  // Deep links: bookings.php?new=1 or ?type=rooms open the wizard straight away.
+  try {
+    var qs = new URLSearchParams(window.location.search);
+    if (qs.has('new') || qs.has('type')) setWizardOpen(true, false);
+  } catch (err) { /* very old browser: wizard stays collapsed */ }
+
+  /* ---- Filter tabs ---- */
+  var bkListEl  = document.getElementById('bkList');
+  var bkTabsEl  = document.getElementById('bkTabs');
+  var bkEmptyEl = document.getElementById('bkEmpty');
+  var bkFilter  = 'all';
+
+  var BK_EMPTY = {
+    none:      ['No bookings yet',       'Press “New Booking” to reserve your first stay with us.'],
+    upcoming:  ['No upcoming bookings',  'Your confirmed and in-progress stays will show up here.'],
+    past:      ['No past stays yet',     'Completed stays will appear here after check-out.'],
+    cancelled: ['No cancelled bookings', 'Bookings you cancel will be listed here.']
+  };
+
+  // upcoming + checked_in -> "Upcoming", completed -> "Past Stays"
+  function bkGroupOf(stage) {
+    if (stage === 'cancelled') return 'cancelled';
+    if (stage === 'completed') return 'past';
+    return 'upcoming';
+  }
+
+  function bkApplyFilter() {
+    if (!bkListEl) return;
+    var items = bkListEl.querySelectorAll('.bk-item');
+    var shown = 0;
+    for (var i = 0; i < items.length; i++) {
+      var ok = bkFilter === 'all' || bkGroupOf(items[i].getAttribute('data-stage') || 'upcoming') === bkFilter;
+      items[i].hidden = !ok;
+      if (ok) shown++;
+    }
+    if (!bkEmptyEl) return;
+    if (shown === 0) {
+      var msg = items.length === 0 ? BK_EMPTY.none : (BK_EMPTY[bkFilter] || BK_EMPTY.none);
+      document.getElementById('bkEmptyTitle').textContent = msg[0];
+      document.getElementById('bkEmptyText').textContent  = msg[1];
+      bkEmptyEl.hidden = false;
+    } else {
+      bkEmptyEl.hidden = true;
+    }
+  }
+
+  function bkSetFilter(f) {
+    bkFilter = f;
+    if (bkTabsEl) {
+      var tabs = bkTabsEl.querySelectorAll('.bkp-tab');
+      for (var i = 0; i < tabs.length; i++) {
+        tabs[i].setAttribute('aria-selected', tabs[i].getAttribute('data-filter') === f ? 'true' : 'false');
+      }
+    }
+    bkApplyFilter();
+  }
+
+  if (bkTabsEl) {
+    bkTabsEl.addEventListener('click', function (e) {
+      var tab = e.target.closest && e.target.closest('.bkp-tab');
+      if (tab) bkSetFilter(tab.getAttribute('data-filter') || 'all');
+    });
+  }
+  bkApplyFilter();
+
+  /* ---- View Details popup ---- */
+  var vmModal  = document.getElementById('bkViewModal');
+  var vmBody   = document.getElementById('vmDetails');
+
+  function vmRow(label, value, extraClass) {
+    return '<div class="bk-detail-row' + (extraClass ? ' ' + extraClass : '') + '">' +
+      '<span class="bk-detail-row__label">' + escHtml(label) + '</span>' +
+      '<span class="bk-detail-row__value vm-row-value--wrap">' + escHtml(value) + '</span>' +
+    '</div>';
+  }
+
+  function bkOpenViewModal(item) {
+    if (!vmModal || !vmBody) return;
+    var d = item.dataset;
+
+    var nights = calcNights(d.checkIn, d.checkOut);
+    var guests = parseInt(d.guests, 10) || 1;
+    var fullName = ((d.firstName || '') + ' ' + (d.lastName || '')).replace(/\s+/g, ' ').trim();
+    var companions = [];
+    try { companions = JSON.parse(d.companionNames || '[]') || []; } catch (err) { companions = []; }
+
+    document.getElementById('vmRoom').textContent = d.roomName || 'Room';
+    document.getElementById('vmType').textContent = d.roomType || '';
+
+    var imgBox = item.querySelector('.bk-item__img');
+    document.getElementById('vmImg').innerHTML = imgBox ? imgBox.innerHTML : bedIconLarge();
+
+    var statusBox = document.getElementById('vmStatus');
+    statusBox.innerHTML = '';
+    var badge = item.querySelector('.badge');
+    if (badge) statusBox.appendChild(badge.cloneNode(true));
+
+    var html = '';
+    html += vmRow('Reference', d.reference || '—');
+    html += '<div class="bk-detail-divider"></div>';
+    html += vmRow('Check-in',  formatDate(d.checkIn)  || '—');
+    html += vmRow('Check-out', formatDate(d.checkOut) || '—');
+    html += vmRow('Duration',  nights > 0 ? nights + ' night' + (nights === 1 ? '' : 's') : 'Same day');
+    html += vmRow('Guests',    guests + ' guest' + (guests === 1 ? '' : 's'));
+    html += '<div class="bk-detail-divider"></div>';
+    html += vmRow('Guest name', fullName || '—');
+    html += vmRow('Email', d.email || '—');
+    html += vmRow('Phone', d.phone || '—');
+    if (d.address) html += vmRow('Address', d.address);
+    if (companions.length) html += vmRow('Additional guests', companions.join(', '));
+    if (d.notes) html += vmRow('Notes', d.notes);
+    html += vmRow('Payment', 'Cash on arrival');
+    html += '<div class="bk-detail-divider"></div>';
+    html += '<div class="bk-detail-row bk-detail-row--total">' +
+              '<span class="bk-detail-row__label">Total</span>' +
+              '<span class="bk-detail-row__value">₱' + formatNumber(d.total || 0) + '</span>' +
+            '</div>';
+    vmBody.innerHTML = html;
+
+    if (typeof vmModal.showModal === 'function') vmModal.showModal();
+    else vmModal.setAttribute('open', '');
+  }
+
+  function bkCloseViewModal() {
+    if (!vmModal) return;
+    if (typeof vmModal.close === 'function') vmModal.close();
+    else vmModal.removeAttribute('open');
+  }
+  if (vmModal) {
+    document.getElementById('bkViewClose').addEventListener('click', bkCloseViewModal);
+    document.getElementById('bkViewDone').addEventListener('click', bkCloseViewModal);
+    // click on the dark backdrop closes it
+    vmModal.addEventListener('click', function (e) { if (e.target === vmModal) bkCloseViewModal(); });
+  }
+
   /* ---- Delegate clicks from the My Bookings list (covers rows injected later too) ---- */
   document.addEventListener('click', function (e) {
+    var viewBtn = e.target.closest && e.target.closest('[data-bk-view]');
+    if (viewBtn) {
+      var viewItem = viewBtn.closest('.bk-item');
+      if (viewItem) bkOpenViewModal(viewItem);
+      return;
+    }
     var editBtn = e.target.closest && e.target.closest('[data-bk-edit]');
     if (editBtn) {
       var editItem = editBtn.closest('.bk-item');

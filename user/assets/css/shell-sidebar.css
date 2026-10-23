@@ -1,0 +1,234 @@
+/* =====================================================================
+   shell-sidebar.css — sidebar app shell (top bar + left sidebar)
+   Loaded by includes/head.php only when a page sets $useSidebarShell.
+   Everything is scoped to body.has-sidebar, so other pages are untouched.
+   ===================================================================== */
+
+body.has-sidebar:not(.standalone) {
+  --shell-bg:      #000;
+  --shell-main:    #0a0a0a;
+  --shell-line:    #1f1f1f;
+  --shell-amber:   #f0b100;
+  --shell-amber-bg:#251b03;
+  --shell-red:     #ef4444;
+  --shell-side-w:  248px;
+  --shell-top-h:   68px;
+
+  display: grid;
+  grid-template-columns: var(--shell-side-w) minmax(0, 1fr);
+  grid-template-rows: var(--shell-top-h) 1fr;
+  grid-template-areas:
+    "top  top"
+    "side main";
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--shell-main);
+}
+
+/* Icons: inline SVG that follows the text colour */
+.shell-icon { width: 20px; height: 20px; flex: none; display: block; }
+
+/* ---------- Top bar ---------- */
+.shell-top {
+  grid-area: top;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 24px;
+  background: var(--shell-bg);
+  border-bottom: 1px solid var(--shell-line);
+}
+.shell-top__left,
+.shell-top__right { display: flex; align-items: center; gap: 16px; min-width: 0; }
+
+.shell-brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.shell-brand__logo {
+  width: 40px; height: 40px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 10px;
+  background: var(--shell-amber);
+  color: #1a1200;
+}
+.shell-brand__logo .shell-icon { width: 24px; height: 24px; }
+.shell-brand__text { display: flex; flex-direction: column; line-height: 1.15; min-width: 0; }
+.shell-brand__name {
+  font-family: var(--font-body);
+  font-size: 19px; font-weight: 800; letter-spacing: -0.01em;
+  color: #fff;
+}
+.shell-brand__tagline {
+  font-size: 11px; font-weight: 600;
+  color: var(--shell-amber);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
+/* Bell */
+.shell-bell {
+  position: relative;
+  width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  border: 0; border-radius: 50%;
+  background: transparent;
+  color: #fff;
+  transition: background .15s;
+}
+.shell-bell:hover { background: #151515; }
+.shell-bell .topbar__badge {
+  top: 8px; right: 9px;
+  min-width: 0; width: 9px; height: 9px; padding: 0;
+  background: var(--shell-amber);
+  border: 2px solid var(--shell-bg);
+  font-size: 0;
+}
+
+/* Avatar + name */
+.shell-user {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 6px 4px 4px;
+  border-radius: 999px;
+  color: #fff;
+  transition: background .15s;
+}
+.shell-user:hover { background: #151515; }
+.shell-user__avatar {
+  width: 36px; height: 36px; flex: none;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%; overflow: hidden;
+  background: #1c1c1c; border: 1px solid #2c2c2c;
+  color: var(--shell-amber);
+  font-size: 13px; font-weight: 700;
+}
+.shell-user__avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.shell-user__avatar .shell-icon { width: 18px; height: 18px; }
+.shell-user__name { font-size: 14px; font-weight: 600; white-space: nowrap; }
+
+/* ---------- Sidebar ---------- */
+.shell-side {
+  grid-area: side;
+  position: sticky;
+  top: var(--shell-top-h);
+  align-self: start;
+  height: calc(100vh - var(--shell-top-h));
+  height: calc(100dvh - var(--shell-top-h));
+  display: flex; flex-direction: column; justify-content: space-between;
+  background: var(--shell-bg);
+  border-right: 1px solid var(--shell-line);
+  overflow-y: auto;
+}
+.shell-side__nav { display: flex; flex-direction: column; gap: 6px; padding: 16px 12px; }
+
+.shell-side__link {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px; font-weight: 500;
+  color: #e7e7e7;
+  transition: background .15s, color .15s;
+}
+.shell-side__link:hover { background: #121212; color: #fff; }
+.shell-side__link.is-active {
+  background: var(--shell-amber-bg);
+  color: var(--shell-amber);
+  font-weight: 700;
+}
+
+.shell-side__foot { padding: 12px; border-top: 1px solid var(--shell-line); }
+.shell-side__logout {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  font-size: 14px; font-weight: 600;
+  color: var(--shell-red);
+  transition: background .15s;
+}
+.shell-side__logout:hover { background: rgba(239, 68, 68, .1); }
+
+.shell-scrim {
+  position: fixed; inset: 0; z-index: 140;
+  background: rgba(0, 0, 0, .6);
+}
+.shell-scrim[hidden] { display: none; }
+
+/* Hamburger — tablet / phone only */
+.shell-burger {
+  display: none;
+  width: 40px; height: 40px; flex: none;
+  align-items: center; justify-content: center;
+  padding: 0;
+  border: 1px solid #262626; border-radius: 10px;
+  background: transparent; color: #fff;
+}
+.shell-burger__bar,
+.shell-burger__bar::before,
+.shell-burger__bar::after {
+  display: block; width: 18px; height: 2px; border-radius: 2px;
+  background: currentColor;
+}
+.shell-burger__bar { position: relative; }
+.shell-burger__bar::before,
+.shell-burger__bar::after { content: ''; position: absolute; left: 0; }
+.shell-burger__bar::before { top: -6px; }
+.shell-burger__bar::after  { top: 6px; }
+.shell-burger[aria-expanded="true"] { color: var(--shell-amber); border-color: var(--shell-amber); }
+
+/* ---------- Main column ---------- */
+body.has-sidebar main.page {
+  grid-area: main;
+  max-width: 1280px;
+  margin: 0;
+  padding: 32px 40px 64px;
+  min-width: 0;
+}
+
+/* The bell dropdown keeps its existing look (style.css) — just anchor it right. */
+body.has-sidebar .topbar__notif-panel { z-index: 150; }
+
+/* ---------- Tablet / phone: sidebar becomes a slide-in drawer ---------- */
+@media (max-width: 900px) {
+  body.has-sidebar:not(.standalone) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "top"
+      "main";
+  }
+  .shell-burger { display: flex; }
+  .shell-side {
+    position: fixed;
+    top: 0; left: 0; bottom: 0;
+    z-index: 150;
+    width: min(82vw, 290px);
+    height: 100vh; height: 100dvh;
+    padding-top: env(safe-area-inset-top, 0);
+    transform: translateX(-100%);
+    visibility: hidden;
+    transition: transform .22s ease, visibility 0s linear .22s;
+  }
+  .shell-side.is-open {
+    transform: none;
+    visibility: visible;
+    transition: transform .22s ease;
+  }
+  html.shell-lock { overflow: hidden; }
+  .shell-top { padding: 0 14px; }
+  body.has-sidebar main.page { padding: 24px 16px 56px; }
+
+  /* Notifications: full-width sheet under the bar (same as the original header) */
+  body.has-sidebar .topbar__notif { position: static; }
+  body.has-sidebar .topbar__notif-panel { top: calc(100% + 8px); left: 12px; right: 12px; width: auto; }
+}
+
+@media (max-width: 520px) {
+  .shell-brand__tagline { display: none; }
+  .shell-user__name { display: none; }
+}
+
+@media print {
+  .shell-top, .shell-side, .shell-scrim { display: none !important; }
+  body.has-sidebar:not(.standalone) { display: block; }
+}

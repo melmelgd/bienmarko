@@ -53,7 +53,6 @@ function icon_paths(): array
         'check'         => '<polyline points="4 12.5 9.5 18 20 6"></polyline>',
         'trash'         => '<polyline points="4 7 20 7"></polyline><path d="M9 7V4.5A1.5 1.5 0 0 1 10.5 3h3A1.5 1.5 0 0 1 15 4.5V7"></path><path d="M6.5 7 7.3 19.5A2 2 0 0 0 9.3 21h5.4a2 2 0 0 0 2-1.8L17.5 7"></path>',
         'eye'           => '<path d="M1.5 12S5.5 5 12 5s10.5 7 10.5 7-4 7-10.5 7S1.5 12 1.5 12z"></path><circle cx="12" cy="12" r="3"></circle>',
-        'palm'          => '<img src="../logo/palm-tree.png" alt="Palm icon" width="24" height="24"/>',
     ];
 }
 
@@ -64,6 +63,14 @@ function icon_paths(): array
  */
 function icon(string $name, string $class = 'icon'): string
 {
+    /* The palm logo is a PNG, not an SVG path. An <img> can't live inside
+       an <svg>: the browser ejects it and leaves an empty 20px <svg> beside
+       it, which pushes the logo off-center. So return a plain <img> here. */
+    if ($name === 'palm') {
+        return '<img src="../logo/palm-tree.png" alt="Palm icon" width="24" height="24" '
+             . 'style="display:block;width:24px;height:24px;object-fit:contain;">';
+    }
+
     $paths = icon_paths();
     $inner = $paths[$name] ?? '<circle cx="12" cy="12" r="9"></circle>';
     $safeClass = htmlspecialchars($class, ENT_QUOTES, 'UTF-8');

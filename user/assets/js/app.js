@@ -417,10 +417,14 @@ function initProfileForm() {
         var user = result.data.user || {};
         showFormStatus(status, 'Changes saved.', false);
 
-        var usernameEl = document.querySelector('.topbar__username');
-        if (usernameEl && user.name) usernameEl.textContent = user.name;
+        // Works for both the sidebar shell (.shell-user__*) and the old topbar (.topbar__*).
+        if (user.name) {
+          document.querySelectorAll('.shell-user__name, .topbar__username').forEach(function (el) {
+            el.textContent = user.name;
+          });
+        }
 
-        document.querySelectorAll('.topbar__avatar').forEach(function (el) {
+        document.querySelectorAll('.shell-user__avatar, .topbar__avatar').forEach(function (el) {
           if (user.avatar) {
             el.innerHTML = '<img src="' + user.avatar + '" alt="">';
           } else if (user.initials) {

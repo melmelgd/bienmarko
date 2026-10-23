@@ -23,6 +23,47 @@ function fb_ok(array $data = []): never
     exit;
 }
 
+/** How long after sending a guest may still edit their feedback (24 hours). */
+const FB_EDIT_WINDOW_SECONDS = 86400;
+
+/**
+ * When true, an edited review goes back to the admin's moderation queue
+ * (unpublished + unread) so a guest cannot swap an approved review for
+ * different text that was never reviewed. Set to false to keep an
+ * approved review published after it is edited.
+ */
+const FB_EDIT_REQUIRES_REMODERATION = true;
+
+/**
+ * Validates rating / category / message exactly like a new submission.
+ * Exits with a 422 JSON error on the first problem.
+ *
+ * @return array{0:int,1:string,2:string} [rating, category, message]
+ */
+function fb_read_fields(array $input): array
+{
+    $rating = filter_var($input['rating'] ?? null, FILTER_VALIDATE_INT);
+    if ($rating === false || $rating < 1 || $rating > 5) {
+        fb_fail(422, 'Please choose a rating from 1 to 5 stars.');
+    }
+
+    $allowedCategories = ['general', 'room', 'service', 'cleanliness', 'other'];
+    $category = (string) ($input['category'] ?? 'general');
+    if (!in_array($category, $allowedCategories, true)) {
+        fb_fail(422, 'Please choose a valid category.');
+    }
+
+    $message = trim((string) ($input['message'] ?? ''));
+    if ($message === '') {
+        fb_fail(422, 'Please share a few words about your stay.');
+    }
+    if (mb_strlen($message) > 2000) {
+        fb_fail(422, 'Feedback is too long (max 2000 characters).');
+    }
+
+    return [(int) $rating, $category, $message];
+}
+
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') !== 'POST') {
     http_response_code(405);
     header('Allow: POST');
@@ -68,6 +109,8 @@ function fb_ensure_table(PDO $pdo): void
     $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_id` INT UNSIGNED NULL DEFAULT NULL AFTER `booking_id`");
     $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_type` VARCHAR(100) NULL DEFAULT NULL AFTER `accommodation_id`");
     $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_name` VARCHAR(150) NULL DEFAULT NULL AFTER `accommodation_type`");
+    /* Set when the guest edits their feedback (NULL = never edited). */
+    $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `updated_at` DATETIME NULL DEFAULT NULL AFTER `created_at`");
 }
 
 $pdo = bienmarko_db();
@@ -79,6 +122,77 @@ if ($guestId < 1) {
 }
 
 $action = (string) ($input['action'] ?? '');
+
+/* ------------------------------------------------------------------
+   Edit an already-sent feedback — only within 24 hours of sending it.
+   The age is measured in SQL (NOW() vs created_at) so it never depends
+   on PHP's timezone, and the row is locked while it is checked + saved.
+------------------------------------------------------------------ */
+if ($action === 'update') {
+    $feedbackId = filter_var($input['feedback_id'] ?? null, FILTER_VALIDATE_INT);
+    if ($feedbackId === false || $feedbackId < 1) {
+        fb_fail(422, 'We could not tell which feedback you want to edit.');
+    }
+
+    [$rating, $category, $message] = fb_read_fields($input);
+
+    try {
+        $pdo->beginTransaction();
+
+        $stmt = $pdo->prepare(
+            'SELECT id, TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age_seconds
+             FROM feedback
+             WHERE id = :id AND guest_id = :gid
+             LIMIT 1 FOR UPDATE'
+        );
+        $stmt->execute(['id' => $feedbackId, 'gid' => $guestId]);
+        $row = $stmt->fetch();
+
+        if (!$row) {
+            $pdo->rollBack();
+            fb_fail(404, 'We could not find that feedback on your account.');
+        }
+
+        $ageSeconds = max(0, (int) $row['age_seconds']);
+        if ($ageSeconds >= FB_EDIT_WINDOW_SECONDS) {
+            $pdo->rollBack();
+            fb_fail(403, 'You can only edit feedback within 24 hours of sending it, and that time has passed.');
+        }
+
+        $set = 'rating = :rating, category = :category, message = :message, updated_at = NOW()';
+        if (FB_EDIT_REQUIRES_REMODERATION) {
+            $set .= ', is_published = 0, is_read = 0';
+        }
+
+        $stmt = $pdo->prepare("UPDATE feedback SET {$set} WHERE id = :id AND guest_id = :gid");
+        $stmt->execute([
+            'rating'   => $rating,
+            'category' => $category,
+            'message'  => $message,
+            'id'       => $feedbackId,
+            'gid'      => $guestId,
+        ]);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
+        error_log('[feedback-edit] ' . $e->getMessage());
+        fb_fail(500, 'Could not save your changes. Please try again.');
+    }
+
+    fb_ok([
+        'feedback' => [
+            'id'           => (int) $feedbackId,
+            'rating'       => $rating,
+            'category'     => $category,
+            'message'      => $message,
+            'edited'       => true,
+            'seconds_left' => max(0, FB_EDIT_WINDOW_SECONDS - $ageSeconds),
+        ],
+    ]);
+}
 
 if ($action !== 'submit') {
     fb_fail(400, 'Unknown action.');

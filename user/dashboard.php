@@ -369,7 +369,7 @@ require __DIR__ . '/includes/head.php';
         </div>
         <div class="hero__actions">
             <a href="user-guide.php" class="btn btn--ghost"><?php render_icon('circle-help'); ?> User Guide</a>
-            <a href="bookings.php"   class="btn btn--primary"><?php render_icon('calendar-plus'); ?> Book Now</a>
+            <a href="bookings.php?new=1" class="btn btn--primary"><?php render_icon('calendar-plus'); ?> Book Now</a>
         </div>
     </section>
 
@@ -472,7 +472,7 @@ require __DIR__ . '/includes/head.php';
                     'No upcoming stay yet',
                     'Once you book a stay with us, the details will show up here.',
                     'Book Now',
-                    'bookings.php'
+                    'bookings.php?new=1'
                 ); ?>
             <?php endif; ?>
         </section>
@@ -480,7 +480,7 @@ require __DIR__ . '/includes/head.php';
         <!-- Quick actions -->
         <aside class="panel quick-actions">
             <h2>Quick Actions</h2>
-            <a href="bookings.php" class="quick-action">
+            <a href="bookings.php?new=1" class="quick-action">
                 <span class="quick-action__icon"><?php render_icon('calendar-plus'); ?></span>
                 Make New Booking
             </a>
