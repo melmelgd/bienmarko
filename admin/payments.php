@@ -96,7 +96,7 @@ $currentPage = max(1, (int) ($_GET['page'] ?? 1));
 ------------------------------------------------------------------ */
 // Total outstanding (confirmed bookings without full payment)
 $stmtOutstanding = $pdo->query(
-    "SELECT COALESCE(SUM(b.total_amount), 0)
+    "SELECT COALESCE(SUM(GREATEST(b.total_amount - COALESCE(p.total_paid, 0), 0)), 0)
      FROM bookings b
      LEFT JOIN payments p ON p.booking_id = b.id
      WHERE b.status IN ('confirmed','pending')
@@ -622,7 +622,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     <?php else: ?>
                         <?php foreach ($rows as $row): ?>
                             <?php $payStatus = $row['payment_status'] ?? 'unpaid'; ?>
-                            <tr onclick="openBilling(<?php echo (int) $row['booking_id']; ?>)">
+                            <tr data-bid="<?php echo (int) $row['booking_id']; ?>" onclick="openBilling(<?php echo (int) $row['booking_id']; ?>)">
                                 <td>
                                     <div class="td-guest"><?php echo htmlspecialchars(pm_name($row), ENT_QUOTES, 'UTF-8'); ?></div>
                                     <?php $em = pm_email($row); if ($em): ?>
@@ -643,22 +643,22 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                 <td><?php echo date('M j, Y', strtotime($row['check_in'])); ?></td>
                                 <td><?php echo date('M j, Y', strtotime($row['check_out'])); ?></td>
                                 <td><?php echo booking_status_badge($row['booking_status']); ?></td>
-                                <td class="td-amount">₱<?php echo number_format((float) $row['booking_total'], 2); ?></td>
-                                <td class="td-amount">
+                                <td class="td-amount js-total">₱<?php echo number_format((float) $row['booking_total'], 2); ?></td>
+                                <td class="td-amount js-paid">
                                     <?php if ($row['pay_id']): ?>
                                         ₱<?php echo number_format((float) $row['total_paid'], 2); ?>
                                     <?php else: ?>
                                         <span style="color:var(--text-tertiary);">—</span>
                                     <?php endif; ?>
                                 </td>
-                                <td><?php echo pay_status_badge($payStatus); ?></td>
+                                <td class="js-status"><?php echo pay_status_badge($payStatus); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
                                         <button class="btn-sm btn-sm--gold" onclick="openBilling(<?php echo (int) $row['booking_id']; ?>)">
                                             <?php echo icon('wallet', 'icon-sm'); ?> Billing
                                         </button>
                                         <?php if ($row['pay_id']): ?>
-                                            <button class="btn-sm" onclick="openReceipt(<?php echo (int) $row['booking_id']; ?>)">
+                                            <button class="btn-sm" data-receipt="1" onclick="openReceipt(<?php echo (int) $row['booking_id']; ?>)">
                                                 <?php echo icon('calendar', 'icon-sm'); ?> Receipt
                                             </button>
                                         <?php endif; ?>
@@ -819,8 +819,13 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                 <div class="modal-section-title">Payment</div>
                 <div class="form-row">
                     <div class="form-group">
-                        <label class="form-label">Amount Paid (₱)</label>
+                        <label class="form-label">Previously Paid (₱)</label>
+                        <input class="form-input" type="text" id="fPrevPaid" readonly placeholder="₱0.00">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Amount Paying Now (₱)</label>
                         <input class="form-input" type="number" id="fTotalPaid" min="0" step="0.01" oninput="recalc()" placeholder="0.00">
+                        <span class="form-hint" id="payNowHint" style="font-size:11px;color:var(--text-tertiary);">Enter only the money received today. It is added to what was already paid.</span>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Payment Method</label>
@@ -829,17 +834,21 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                             <option value="gcash">GCash</option>
                         </select>
                     </div>
-                    <div class="form-group full">
-                        <label class="form-label">Notes</label>
-                        <input class="form-input" type="text" id="fPayNotes" placeholder="Payment notes…">
-                    </div>
                     <div class="form-group">
                         <label class="form-label">Payment Status</label>
                         <input class="form-input" type="text" id="fPayStatus" readonly placeholder="Auto-computed">
                     </div>
                     <div class="form-group">
+                        <label class="form-label">Total Paid After This Payment</label>
+                        <input class="form-input" type="text" id="fPaidTotal" readonly placeholder="₱0.00">
+                    </div>
+                    <div class="form-group">
                         <label class="form-label">Balance Remaining</label>
                         <input class="form-input" type="text" id="fBalance" readonly placeholder="₱0.00">
+                    </div>
+                    <div class="form-group full">
+                        <label class="form-label">Notes</label>
+                        <input class="form-input" type="text" id="fPayNotes" placeholder="Payment notes…">
                     </div>
                 </div>
             </div>
@@ -966,7 +975,10 @@ function openBilling(bid) {
         : (r.discount_percent > 0 ? r.guests_count : 0);
     document.getElementById('fDiscountGuests').value = dg > 0 ? String(dg) : '';
     document.getElementById('fDiscountReason').value = r.discount_reason || '';
-    document.getElementById('fTotalPaid').value      = r.total_paid > 0 ? r.total_paid.toFixed(2) : '';
+    /* "Amount Paying Now" always starts empty — the money already received is
+       shown separately and is added to, never overwritten. */
+    document.getElementById('fPrevPaid').value       = BillingCalc.peso(r.total_paid || 0);
+    document.getElementById('fTotalPaid').value      = '';
     document.getElementById('fPayMethod').value      = r.pay_method || 'cash';
     document.getElementById('fPayNotes').value       = r.pay_notes || '';
 
@@ -1012,6 +1024,28 @@ document.getElementById('billingModal').addEventListener('click', function (e) {
 */
 function pctLabel(p) { return BillingCalc.pctLabel(p); }
 
+/* Money already received (saved) + money being received now.
+   Done in whole centavos so 500.10 + 1499.90 is exactly 2000.00.
+   An empty / invalid "paying now" value is passed through untouched so the
+   calculator can report it. */
+function readAmountPaid() {
+    var r       = activeBid ? rowMap[activeBid] : null;
+    var prevC   = Math.round(((r && r.total_paid) || 0) * 100);
+    var nowRaw  = document.getElementById('fTotalPaid').value;
+    if (nowRaw === null || String(nowRaw).trim() === '') return prevC / 100;
+    var now = Number(nowRaw);
+    if (!isFinite(now) || now < 0) return nowRaw;       // let BillingCalc flag it
+    return (prevC + Math.round(now * 100)) / 100;
+}
+
+/* Money being received in this transaction only (what the server adds). */
+function readPayNow() {
+    var raw = document.getElementById('fTotalPaid').value;
+    if (raw === null || String(raw).trim() === '') return 0;
+    var n = Number(raw);
+    return (isFinite(n) && n > 0) ? Math.round(n * 100) / 100 : 0;
+}
+
 function readBillingInputs() {
     var r = activeBid ? rowMap[activeBid] : null;
     return {
@@ -1021,7 +1055,7 @@ function readBillingInputs() {
         total_guests:      r ? r.guests_count : 0,
         discount_percent:  document.getElementById('fDiscount').value,
         discount_guests:   document.getElementById('fDiscountGuests').value,
-        amount_paid:       document.getElementById('fTotalPaid').value
+        amount_paid:       readAmountPaid()
     };
 }
 
@@ -1059,12 +1093,33 @@ function recalc() {
         setText('discHint', 'Number of guests who get the discount');
         document.getElementById('fPayStatus').value = '—';
         document.getElementById('fBalance').value   = '—';
+        document.getElementById('fPaidTotal').value = '—';
         saveBtn.disabled = true;
         return;
     }
 
-    errBox.style.display = 'none';
-    saveBtn.disabled = billSaving;
+    /* A payment can't be bigger than what is still owed (final amount − already paid). */
+    var rowNow    = activeBid ? rowMap[activeBid] : null;
+    var prevPaid  = (rowNow && rowNow.total_paid) || 0;
+    var payNow    = readPayNow();
+    var remaining = Math.max(0, Math.round(c.final_amount * 100) - Math.round(prevPaid * 100)) / 100;
+    if (Math.round(payNow * 100) > Math.round(remaining * 100)) {
+        errBox.innerHTML = '';
+        var ulOver = document.createElement('ul');
+        var liOver = document.createElement('li');
+        liOver.textContent = 'Payment of ' + BillingCalc.peso(payNow) +
+            ' is more than the remaining balance of ' + BillingCalc.peso(remaining) + '.';
+        ulOver.appendChild(liOver);
+        errBox.appendChild(ulOver);
+        errBox.style.display = '';
+        saveBtn.disabled = true;
+    } else {
+        errBox.style.display = 'none';
+        saveBtn.disabled = billSaving;
+    }
+    setText('payNowHint', remaining > 0
+        ? 'Still owed before this payment: ' + BillingCalc.peso(remaining) + '. Enter only the money received today.'
+        : 'Nothing left to pay on this booking.');
 
     var peso = BillingCalc.peso;
     var gc   = c.total_guests;
@@ -1118,7 +1173,45 @@ function recalc() {
 
     /* Payment */
     document.getElementById('fPayStatus').value = c.payment_status.charAt(0).toUpperCase() + c.payment_status.slice(1);
+    document.getElementById('fPaidTotal').value = peso(c.amount_paid);   // previous + paying now
     document.getElementById('fBalance').value   = peso(c.balance);
+}
+
+/* ---------- Update the table row after a save (no page reload) ---------- */
+function updateRowAfterSave(bid, r, b) {
+    var tr = document.querySelector('tr[data-bid="' + bid + '"]');
+    if (!tr) return;
+
+    var totalCell = tr.querySelector('.js-total');
+    if (totalCell && b.final_amount > 0) {
+        r.booking_total = b.final_amount;
+        totalCell.textContent = '₱' + fmt(b.final_amount);
+    }
+
+    var paidCell = tr.querySelector('.js-paid');
+    if (paidCell) paidCell.textContent = '₱' + fmt(r.total_paid || 0);
+
+    var statusCell = tr.querySelector('.js-status');
+    if (statusCell) {
+        var map = { unpaid: ['pb--red', 'Unpaid'], partial: ['pb--amber', 'Partial'], paid: ['pb--green', 'Paid'] };
+        var m = map[r.payment_status] || ['pb--grey', cap(r.payment_status)];
+        statusCell.innerHTML = '';
+        var span = document.createElement('span');
+        span.className = 'pb ' + m[0];
+        span.textContent = m[1];
+        statusCell.appendChild(span);
+    }
+
+    /* First payment on this booking: the row had no Receipt button yet */
+    var actions = tr.querySelector('.td-actions');
+    if (actions && !actions.querySelector('[data-receipt]')) {
+        var btn = document.createElement('button');
+        btn.className = 'btn-sm';
+        btn.setAttribute('data-receipt', '1');
+        btn.textContent = 'Receipt';
+        btn.onclick = function () { openReceipt(bid); };
+        actions.appendChild(btn);
+    }
 }
 
 /* ---------- Save billing ---------- */
@@ -1151,7 +1244,7 @@ function saveBilling() {
         discount_guests:  c.discount_guests,
         discount:         c.total_discount,
         discount_reason:  document.getElementById('fDiscountReason').value,
-        total_paid:       c.amount_paid,
+        payment_amount:   readPayNow(),     // ONLY this payment; the server adds it to the saved total
         payment_method:   document.getElementById('fPayMethod').value,
         payment_status:   c.payment_status,
         notes:            document.getElementById('fPayNotes').value,
@@ -1188,6 +1281,11 @@ function saveBilling() {
             r.pay_notes        = document.getElementById('fPayNotes').value;
             r.pay_id           = data.pay_id || r.pay_id || 1;
 
+            /* Show the new running total and clear "paying now" so the next
+               payment is entered on its own. */
+            document.getElementById('fPrevPaid').value  = BillingCalc.peso(r.total_paid || 0);
+            document.getElementById('fTotalPaid').value = '';
+
             if (Math.abs(b.final_amount - c.final_amount) >= 0.005) {
                 toast('Saved. The server calculated ' + BillingCalc.peso(b.final_amount) +
                       ' (screen showed ' + BillingCalc.peso(c.final_amount) + '). The saved amount is the correct one.', 'error');
@@ -1197,6 +1295,10 @@ function saveBilling() {
             document.getElementById('receiptBtn').style.display = '';
             document.getElementById('billLegacyNote').style.display = 'none';
             done();
+
+            /* Partial / unpaid: keep the modal open (so "View Receipt" stays
+               available) and update this booking's table row in place. */
+            updateRowAfterSave(activeBid, r, b);
 
             if (b.payment_status === 'paid') {
                 setTimeout(function () { window.location.reload(); }, 1000);

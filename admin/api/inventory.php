@@ -16,7 +16,15 @@
  * Connected to Expenses: when stock is added (initial quantity on create,
  * or a higher quantity on update) and the request has record_expense=true,
  * a 'Supplies' expense (units added x cost per unit) is written to the
- * `expenses` table in the same transaction. See includes/expense-link.php.
+ * `expenses` table in the same transaction. On update, every expense this
+ * item already created is also re-priced to the item's current cost per
+ * unit (and name), so Inventory and Expenses never disagree.
+ * See includes/expense-link.php.
+ *
+ * Total vs remaining: `quantity` is the REMAINING stock (it goes down when
+ * stock is used). `total_quantity` is every unit ever received (starting
+ * quantity + restocks) and is never lowered by usage, so the page can show
+ * a Total Cost (total_quantity x cost_per_unit) that stays put.
  *
  * Stock status (In Stock / Low Stock / Out of Stock) is never stored —
  * it's derived from quantity vs. min_stock_level wherever it's shown.
@@ -79,6 +87,22 @@ $pdo->exec("
         CONSTRAINT `fk_inv_log_item` FOREIGN KEY (`item_id`) REFERENCES `inventory_items`(`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ");
+
+/* Total (original) quantity — every unit ever received: the starting quantity
+   plus all restocks. Using stock never lowers it, so "Total Cost" stays fixed
+   while "Remaining" goes down. Added once; existing items are filled in from
+   their stock log (positive entries), and never below their current quantity. */
+if (!$pdo->query("SHOW COLUMNS FROM `inventory_items` LIKE 'total_quantity'")->fetch()) {
+    $pdo->exec("ALTER TABLE `inventory_items` ADD COLUMN `total_quantity` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `quantity`");
+    $pdo->exec(
+        "UPDATE `inventory_items` i
+            SET i.total_quantity = GREATEST(
+                i.quantity,
+                COALESCE((SELECT SUM(l.change_qty) FROM `inventory_logs` l
+                           WHERE l.item_id = i.id AND l.change_qty > 0), 0)
+            )"
+    );
+}
 
 /* Expenses table + link columns, so purchases can be recorded as expenses */
 $pdo->exec("
@@ -170,14 +194,15 @@ if ($action === 'create') {
 
         $ins = $pdo->prepare(
             "INSERT INTO inventory_items
-                (name, category, quantity, min_stock_level, cost_per_unit, expiration_date)
+                (name, category, quantity, total_quantity, min_stock_level, cost_per_unit, expiration_date)
              VALUES
-                (:name, :category, :qty, :min, :cost, :exp)"
+                (:name, :category, :qty, :tqty, :min, :cost, :exp)"
         );
         $ins->execute([
             'name'     => $data['name'],
             'category' => $data['category'],
             'qty'      => $data['quantity'],
+            'tqty'     => $data['quantity'],   // starting quantity = total received so far
             'min'      => $data['min_stock_level'],
             'cost'     => $data['cost_per_unit'],
             'exp'      => $data['expiration_date'],
@@ -219,7 +244,7 @@ if ($action === 'update') {
         inv_fail('Invalid item.');
     }
 
-    $existingStmt = $pdo->prepare('SELECT quantity FROM inventory_items WHERE id = :id');
+    $existingStmt = $pdo->prepare('SELECT quantity, total_quantity FROM inventory_items WHERE id = :id');
     $existingStmt->execute(['id' => $itemId]);
     $existing = $existingStmt->fetch();
     if (!$existing) {
@@ -230,6 +255,15 @@ if ($action === 'update') {
 
     $recordExpense = !empty($body['record_expense']);
 
+    /* Remaining went up = a restock, so the total received goes up by the same
+       amount. Remaining going down (usage) leaves the total untouched. The
+       total can never be smaller than what is on hand. */
+    $diffQty  = $data['quantity'] - (int) $existing['quantity'];
+    $newTotal = max(
+        (int) $existing['total_quantity'] + max(0, $diffQty),
+        $data['quantity']
+    );
+
     try {
         $pdo->beginTransaction();
 
@@ -238,6 +272,7 @@ if ($action === 'update') {
                 name             = :name,
                 category         = :category,
                 quantity         = :qty,
+                total_quantity   = :tqty,
                 min_stock_level  = :min,
                 cost_per_unit    = :cost,
                 expiration_date  = :exp
@@ -247,11 +282,19 @@ if ($action === 'update') {
             'name'     => $data['name'],
             'category' => $data['category'],
             'qty'      => $data['quantity'],
+            'tqty'     => $newTotal,
             'min'      => $data['min_stock_level'],
             'cost'     => $data['cost_per_unit'],
             'exp'      => $data['expiration_date'],
             'id'       => $itemId,
         ]);
+
+        /* Keep the expenses this item already created in step with its
+           (possibly new) cost per unit and name — before a new restock
+           expense is added below, which is already at the new price. */
+        $expensesUpdated = expense_link_sync_item(
+            $pdo, $itemId, $data['name'], $data['cost_per_unit']
+        );
 
         $diff      = $data['quantity'] - (int) $existing['quantity'];
         $expenseId = 0;
@@ -271,7 +314,11 @@ if ($action === 'update') {
         }
 
         $pdo->commit();
-        inv_ok(['id' => $itemId, 'expense_id' => $expenseId]);
+        inv_ok([
+            'id'               => $itemId,
+            'expense_id'       => $expenseId,
+            'expenses_updated' => $expensesUpdated,
+        ]);
 
     } catch (\Throwable $e) {
         if ($pdo->inTransaction()) {

@@ -18,6 +18,12 @@
  *   final amount due   = accommodation fee + extra guest fees
  *                        + other charges − total discount
  *
+ * PARTIAL PAYMENTS: the browser sends `payment_amount` = the money received
+ * in THIS transaction only. The server adds it to the total already saved
+ * for the booking (payments.total_paid), so 500 now + 1,500 later = 2,000
+ * and the status moves partial -> paid. A payment larger than the remaining
+ * balance is rejected.
+ *
  *   POST { action: "save_payment", ... } — upsert a payment record
  * -----------------------------------------------------------------------
  */
@@ -128,6 +134,28 @@ if ($action === 'save_payment') {
         exit;
     }
 
+    /* Lock + read the payment record so the amount already paid is the
+       server's own figure (never the browser's) and two quick saves can't
+       both add to the same old total. */
+    $pdo->beginTransaction();
+    $existing = $pdo->prepare("SELECT id, total_paid FROM payments WHERE booking_id = :bid FOR UPDATE");
+    $existing->execute(['bid' => $bookingId]);
+    $existingRow = $existing->fetch(PDO::FETCH_ASSOC) ?: null;
+    $payId       = $existingRow ? (int) $existingRow['id'] : null;
+    $priorPaidC  = $existingRow ? bienmarko_billing_half_up((float) $existingRow['total_paid'] * 100) : 0;
+
+    /* Money received in THIS transaction (blank = 0, e.g. only editing fees) */
+    [$payNowC, $payErr] = bienmarko_billing_money($body['payment_amount'] ?? 0, 'Payment amount');
+    if ($payErr) {
+        $pdo->rollBack();
+        http_response_code(422);
+        echo json_encode(['success' => false, 'error' => $payErr, 'errors' => [$payErr]]);
+        exit;
+    }
+
+    /* Running total = what was already paid + what is being paid now */
+    $newPaidTotal = bienmarko_billing_pesos($priorPaidC + $payNowC);
+
     /* Authoritative calculation + validation (same algorithm as billing-calc.js) */
     $calc = bienmarko_billing_calculate([
         'accommodation_fee' => $body['room_fee']         ?? 0,
@@ -136,15 +164,28 @@ if ($action === 'save_payment') {
         'total_guests'      => $bk['guests_count']       ?? 0,
         'discount_percent'  => $body['discount_percent'] ?? 0,
         'discount_guests'   => $body['discount_guests']  ?? 0,
-        'amount_paid'       => $body['total_paid']       ?? 0,
+        'amount_paid'       => $newPaidTotal,
     ]);
     if (!$calc['ok']) {
+        $pdo->rollBack();
         http_response_code(422);
         echo json_encode([
             'success' => false,
             'error'   => implode(' ', $calc['errors']),
             'errors'  => $calc['errors'],
         ]);
+        exit;
+    }
+
+    /* A new payment can't be larger than what is still owed. */
+    $finalC           = bienmarko_billing_half_up($calc['final_amount'] * 100);
+    $remainingBeforeC = max(0, $finalC - $priorPaidC);
+    if ($payNowC > $remainingBeforeC) {
+        $pdo->rollBack();
+        $msg = 'Payment of ₱' . number_format($payNowC / 100, 2)
+             . ' is more than the remaining balance of ₱' . number_format($remainingBeforeC / 100, 2) . '.';
+        http_response_code(422);
+        echo json_encode(['success' => false, 'error' => $msg, 'errors' => [$msg]]);
         exit;
     }
 
@@ -156,7 +197,8 @@ if ($action === 'save_payment') {
     $discountGuests = $calc['discount_guests'];
     $discount       = $calc['total_discount'];
     $finalTotal     = $calc['final_amount'];
-    $totalPaid      = $calc['amount_paid'];
+    $totalPaid      = $calc['amount_paid'];      // running total (previous + this payment)
+    $paymentNow     = bienmarko_billing_pesos($payNowC);
     $paymentStatus  = $calc['payment_status'];   // never trusted from the browser
 
     /* Diagnostic only: the browser's own preview should always match. */
@@ -171,12 +213,8 @@ if ($action === 'save_payment') {
     $paidAt = ($paymentStatus === 'paid') ? date('Y-m-d H:i:s') : null;
 
     try {
-        /* Upsert: update if payment record exists, else insert */
-        $existing = $pdo->prepare("SELECT id FROM payments WHERE booking_id = :bid");
-        $existing->execute(['bid' => $bookingId]);
-        $existingRow = $existing->fetch(PDO::FETCH_ASSOC) ?: null;
-        $payId = $existingRow ? (int) $existingRow['id'] : null;
-
+        /* Upsert: update if payment record exists, else insert
+           ($payId was looked up (and locked) above) */
         if ($payId) {
             /* UPDATE */
             $upd = $pdo->prepare(
@@ -254,6 +292,8 @@ if ($action === 'save_payment') {
             )->execute(['bid' => $bookingId]);
         }
 
+        $pdo->commit();
+
         /* Notifications — admin bell + the guest's own account */
         try {
             $bkInfo = $pdo->prepare("SELECT reference, guest_id FROM bookings WHERE id = :id");
@@ -267,20 +307,26 @@ if ($action === 'save_payment') {
                  VALUES (:bid, 'payment', :msg)"
             )->execute([
                 'bid' => $bookingId,
-                'msg' => "Payment recorded for booking {$ref}: ₱" . number_format($totalPaid, 2) . " ({$paymentStatus}).",
+                'msg' => $paymentNow > 0
+                    ? "Payment of ₱" . number_format($paymentNow, 2) . " recorded for booking {$ref} — total paid ₱"
+                        . number_format($totalPaid, 2) . " of ₱" . number_format($finalTotal, 2) . " ({$paymentStatus})."
+                    : "Billing updated for booking {$ref}: ₱" . number_format($totalPaid, 2)
+                        . " paid of ₱" . number_format($finalTotal, 2) . " ({$paymentStatus}).",
             ]);
 
             /* Push the same update to the guest's own account, if the
                booking belongs to a registered user and money was
                actually recorded (skip zero-amount billing edits). */
-            if ($totalPaid > 0) {
+            if ($paymentNow > 0) {
                 if ($paymentStatus === 'paid') {
-                    $guestMsg = "Your payment of ₱" . number_format($totalPaid, 2)
-                        . " for booking {$ref} has been received in full. Your receipt is ready to view.";
+                    $guestMsg = "Your payment of ₱" . number_format($paymentNow, 2)
+                        . " for booking {$ref} has been received. Your booking is now fully paid (₱"
+                        . number_format($totalPaid, 2) . "). Your receipt is ready to view.";
                 } else {
                     $balance  = max(0.0, $finalTotal - $totalPaid);
-                    $guestMsg = "A partial payment of ₱" . number_format($totalPaid, 2)
-                        . " was recorded for booking {$ref}. Remaining balance: ₱" . number_format($balance, 2) . ".";
+                    $guestMsg = "A partial payment of ₱" . number_format($paymentNow, 2)
+                        . " was recorded for booking {$ref}. Total paid so far: ₱" . number_format($totalPaid, 2)
+                        . ". Remaining balance: ₱" . number_format($balance, 2) . ".";
                 }
                 pay_notify_guest($pdo, $refGuest, $bookingId, $guestMsg);
             }
@@ -317,6 +363,9 @@ if ($action === 'save_payment') {
         ]);
 
     } catch (\Throwable $e) {
+        if ($pdo->inTransaction()) {
+            $pdo->rollBack();
+        }
         error_log('[payments api] ' . $e->getMessage());
         echo json_encode(['success' => false, 'error' => 'A database error occurred. Please try again.']);
     }

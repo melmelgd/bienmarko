@@ -157,6 +157,7 @@ $offset              = ($currentPage - 1) * $perPage;
 $stmtRecent = $pdo->prepare(
     "SELECT b.id, b.reference, b.check_in, b.check_out,
             b.guests_count, b.status, b.total_amount, b.created_at,
+            b.checked_in_at, b.checked_out_at,
             a.name   AS room_name,
             a.type   AS room_type,
             g.first_name, g.last_name, g.email AS reg_email,
@@ -209,6 +210,29 @@ function admin_badge(string $status): string
     ];
     $b = $map[$status] ?? ['class' => 'ab--grey', 'label' => ucfirst($status)];
     return '<span class="ab ' . $b['class'] . '">' . htmlspecialchars($b['label'], ENT_QUOTES, 'UTF-8') . '</span>';
+}
+
+/**
+ * Status badge for the Recent Bookings table — Upcoming, Checked-in,
+ * Completed or Cancelled.
+ *
+ * Uses the SAME stage rule as admin/bookings.php (bk_stage() in
+ * includes/booking-stay.php), which goes by the front-desk check-in /
+ * check-out the admin confirmed. The raw bookings.status column is NOT
+ * used for this label: Payments sets it to 'completed' as soon as a
+ * booking is fully paid, even though the guest has not arrived yet, which
+ * made this table say "Completed" while the Bookings page said "Upcoming".
+ */
+function dash_stage_badge(array $bk): string
+{
+    $map = [
+        'upcoming'   => ['ab--amber', 'Upcoming'],
+        'checked_in' => ['ab--green', 'Checked-in'],
+        'completed'  => ['ab--blue',  'Completed'],
+        'cancelled'  => ['ab--red',   'Cancelled'],
+    ];
+    [$cls, $lbl] = $map[bk_stage($bk)];
+    return '<span class="ab ' . $cls . '">' . $lbl . '</span>';
 }
 
 /**
@@ -585,7 +609,7 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
                                 <td><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></td>
                                 <td><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></td>
                                 <td><?php echo (int) $bk['guests_count']; ?></td>
-                                <td><?php echo admin_badge($bk['status']); ?></td>
+                                <td><?php echo dash_stage_badge($bk); ?></td>
                                 <td class="td-amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></td>
                             </tr>
                         <?php endforeach; ?>

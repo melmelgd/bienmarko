@@ -294,7 +294,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 
         <?php if (empty($feedbackRows)): ?>
             <?php render_table_empty(
-                ['Guest', 'Rating', 'Category', 'Message', 'Date', 'Status', 'Actions'],
+                ['Guest', 'Rating', 'Category', 'Message', 'Date Submitted', 'Status', 'Actions'],
                 'message',
                 'No feedback found',
                 $totalFeedback === 0
@@ -310,7 +310,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                             <th>Rating</th>
                             <th>Category</th>
                             <th>Message</th>
-                            <th>Date</th>
+                            <th>Date Submitted</th>
                             <th>Status</th>
                             <th>Actions</th>
                         </tr>
@@ -325,7 +325,10 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                 <td><?php echo fb_admin_stars((int) $row['rating']); ?></td>
                                 <td><span class="category-badge"><?php echo htmlspecialchars(fb_admin_category_label($row['category'])); ?></span></td>
                                 <td class="td-message"><?php echo htmlspecialchars($row['message']); ?></td>
-                                <td><?php echo date('M j, Y', strtotime($row['created_at'])); ?></td>
+                                <td class="td-date">
+                                    <?php echo date('M j, Y', strtotime($row['created_at'])); ?>
+                                    <div class="td-sub"><?php echo date('g:i A', strtotime($row['created_at'])); ?></div>
+                                </td>
                                 <td>
                                     <div class="status-stack">
                                         <span class="ab <?php echo $row['is_read'] ? 'ab--grey' : 'ab--red'; ?>" id="fb-status-<?php echo (int) $row['id']; ?>">

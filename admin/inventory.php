@@ -6,7 +6,10 @@
  * other resort supplies: stock levels, minimum-stock alerts, per-unit
  * cost, and expiration dates. Admins can add, view, and edit items
  * (deleting is disabled). Adding stock can be recorded automatically
- * as a 'Supplies' expense — see includes/expense-link.php. Stock status (In Stock / Low Stock / Out of Stock) is computed
+ * as a 'Supplies' expense — see includes/expense-link.php. The table shows
+ * Total Quantity (everything ever received), Remaining Quantity (what is
+ * left) and Total Cost (total quantity x cost per unit — it does not drop
+ * when stock is used). Stock status (In Stock / Low Stock / Out of Stock) is computed
  * from quantity vs. minimum stock level rather than stored, so it's
  * always correct after any edit.
  * -----------------------------------------------------------------------
@@ -57,6 +60,22 @@ $pdo->exec("
         CONSTRAINT `fk_inv_log_item` FOREIGN KEY (`item_id`) REFERENCES `inventory_items`(`id`) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ");
+
+/* Total (original) quantity — every unit ever received: the starting quantity
+   plus all restocks. Using stock never lowers it, so "Total Cost" stays fixed
+   while "Remaining" goes down. Added once; existing items are filled in from
+   their stock log (positive entries), and never below their current quantity. */
+if (!$pdo->query("SHOW COLUMNS FROM `inventory_items` LIKE 'total_quantity'")->fetch()) {
+    $pdo->exec("ALTER TABLE `inventory_items` ADD COLUMN `total_quantity` INT UNSIGNED NOT NULL DEFAULT 0 AFTER `quantity`");
+    $pdo->exec(
+        "UPDATE `inventory_items` i
+            SET i.total_quantity = GREATEST(
+                i.quantity,
+                COALESCE((SELECT SUM(l.change_qty) FROM `inventory_logs` l
+                           WHERE l.item_id = i.id AND l.change_qty > 0), 0)
+            )"
+    );
+}
 
 /* Expenses table + link columns so stock purchases can be logged as expenses */
 $pdo->exec("
@@ -192,7 +211,10 @@ foreach ($stmt->fetchAll() as $r) {
     if ($filterStatus !== '' && $status !== $filterStatus) {
         continue;
     }
-    $r['status'] = $status;
+    $r['status']         = $status;
+    /* Total received can never be less than what is on hand */
+    $r['total_quantity'] = max((int) ($r['total_quantity'] ?? 0), (int) $r['quantity']);
+    $r['total_cost']     = round($r['total_quantity'] * (float) $r['cost_per_unit'], 2);
     $rows[] = $r;
 }
 
@@ -207,6 +229,8 @@ $rowsJson = json_encode(array_map(function ($r) {
         'name'            => $r['name'],
         'category'        => $r['category'],
         'quantity'        => (int) $r['quantity'],
+        'total_quantity'  => (int) $r['total_quantity'],
+        'total_cost'      => (float) $r['total_cost'],
         'min_stock_level' => (int) $r['min_stock_level'],
         'cost_per_unit'   => (float) $r['cost_per_unit'],
         'expiration_date' => $r['expiration_date'],
@@ -390,9 +414,10 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     <tr>
                         <th>Item Name</th>
                         <th>Category</th>
-                        <th>Quantity</th>
+                        <th>Total Qty</th>
+                        <th>Remaining</th>
                         <th>Min Stock</th>
-                        <th>Cost</th>
+                        <th>Total Cost</th>
                         <th>Status</th>
                         <th>Actions</th>
                     </tr>
@@ -400,7 +425,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                 <tbody>
                     <?php if (empty($rows)): ?>
                         <tr>
-                            <td colspan="7">
+                            <td colspan="8">
                                 <?php
                                     $hasFilters = ($filterSearch !== '' || $filterCategory !== '' || $filterStatus !== '');
                                     render_empty_state(
@@ -413,13 +438,16 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         </tr>
                     <?php else: ?>
                         <?php foreach ($rows as $row): ?>
-                            <?php $value = ((int) $row['quantity']) * ((float) $row['cost_per_unit']); ?>
                             <tr onclick="openView(<?php echo (int) $row['id']; ?>)">
                                 <td class="td-name"><?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?></td>
                                 <td class="td-sub"><?php echo htmlspecialchars($row['category'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><?php echo (int) $row['total_quantity']; ?> units</td>
                                 <td><?php echo (int) $row['quantity']; ?> units</td>
                                 <td><?php echo (int) $row['min_stock_level']; ?> units</td>
-                                <td class="td-amount">₱<?php echo number_format($value, 2); ?></td>
+                                <td class="td-amount">
+                                    ₱<?php echo number_format((float) $row['total_cost'], 2); ?>
+                                    <div class="td-sub" style="font-size:11px;font-weight:400;">₱<?php echo number_format((float) $row['cost_per_unit'], 2); ?> / unit</div>
+                                </td>
                                 <td><?php echo inv_status_badge($row['status']); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
@@ -460,14 +488,16 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
             <div class="detail-box">
                 <div class="detail-row"><span class="detail-row-label">Item Name:</span><span class="detail-row-value" id="vName">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Category:</span><span class="detail-row-value" id="vCategory">—</span></div>
-                <div class="detail-row"><span class="detail-row-label">Quantity:</span><span class="detail-row-value" id="vQuantity">—</span></div>
+                <div class="detail-row"><span class="detail-row-label">Total Quantity:</span><span class="detail-row-value" id="vTotalQuantity">—</span></div>
+                <div class="detail-row"><span class="detail-row-label">Remaining Quantity:</span><span class="detail-row-value" id="vQuantity">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Min. Stock Level:</span><span class="detail-row-value" id="vMinStock">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Cost per Unit:</span><span class="detail-row-value" id="vCost">—</span></div>
+                <div class="detail-row"><span class="detail-row-label">Total Cost:</span><span class="detail-row-value" id="vTotalCost">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Expiration Date:</span><span class="detail-row-value" id="vExpiry">—</span></div>
             </div>
             <div class="detail-box">
                 <div class="modal-section-title">Current Status</div>
-                <div class="detail-row"><span class="detail-row-label">Current Quantity</span><span class="detail-row-value" id="vCurQuantity">—</span></div>
+                <div class="detail-row"><span class="detail-row-label">Remaining Quantity</span><span class="detail-row-value" id="vCurQuantity">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Min Stock</span><span class="detail-row-value" id="vCurMinStock">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Status</span><span id="vCurStatus">—</span></div>
             </div>
@@ -510,8 +540,9 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         </select>
                     </div>
                     <div class="form-group">
-                        <label class="form-label" for="fQuantity">Quantity <span style="color:var(--red)">*</span></label>
+                        <label class="form-label" for="fQuantity" id="fQuantityLabel">Quantity <span style="color:var(--red)">*</span></label>
                         <input class="form-input" type="number" id="fQuantity" min="0" step="1" value="0" required>
+                        <span class="form-hint" id="qtyHint">Units received. This becomes the Total Quantity.</span>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="fMinStock">Minimum Stock Level <span style="color:var(--red)">*</span></label>
@@ -598,9 +629,11 @@ function openView(id) {
 
     document.getElementById('vName').textContent     = r.name;
     document.getElementById('vCategory').textContent = r.category;
+    document.getElementById('vTotalQuantity').textContent = r.total_quantity + ' Units';
     document.getElementById('vQuantity').textContent = r.quantity + ' Units';
     document.getElementById('vMinStock').textContent = r.min_stock_level + ' Units';
     document.getElementById('vCost').textContent      = '₱' + fmt(r.cost_per_unit);
+    document.getElementById('vTotalCost').textContent = '₱' + fmt(r.total_cost);
     document.getElementById('vExpiry').textContent    = fmtDate(r.expiration_date);
 
     document.getElementById('vCurQuantity').textContent = r.quantity + ' Units';
@@ -630,26 +663,44 @@ function updateExpenseHint() {
     if (editingId && rowMap[editingId]) added = qty - rowMap[editingId].quantity;
     var hint = document.getElementById('expenseHint');
     var box  = document.getElementById('fRecordExpense');
+    var syncNote = '';
+    if (editingId && rowMap[editingId] &&
+        (Math.round(cost * 100) !== Math.round(rowMap[editingId].cost_per_unit * 100) ||
+         document.getElementById('fName').value.trim() !== rowMap[editingId].name)) {
+        syncNote = ' Expense records already created for this item will be updated to the new ' +
+                   (Math.round(cost * 100) !== Math.round(rowMap[editingId].cost_per_unit * 100) ? 'cost' : 'name') + '.';
+    }
     if (added > 0 && cost > 0) {
         hint.textContent = 'Will record a Supplies expense of \u20B1' + fmt(added * cost) +
-                           ' (' + added + ' unit' + (added === 1 ? '' : 's') + ' \u00D7 \u20B1' + fmt(cost) + ').';
+                           ' (' + added + ' unit' + (added === 1 ? '' : 's') + ' \u00D7 \u20B1' + fmt(cost) + ').' + syncNote;
         box.disabled = false;
     } else {
         hint.textContent = editingId
             ? 'Only recorded when the quantity is increased (a restock).'
             : 'Only recorded when the starting quantity and cost are above zero.';
+        hint.textContent += syncNote;
         box.disabled = true;
     }
 }
-['fQuantity', 'fCost'].forEach(function (id) {
+['fQuantity', 'fCost', 'fName'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', updateExpenseHint);
 });
+
+/* Quantity field wording: starting stock when adding, remaining stock when editing */
+function setQtyLabels(isEdit, r) {
+    document.getElementById('fQuantityLabel').innerHTML = (isEdit ? 'Remaining Quantity' : 'Quantity') +
+        ' <span style="color:var(--red)">*</span>';
+    document.getElementById('qtyHint').textContent = isEdit
+        ? 'Total received so far: ' + r.total_quantity + '. Raising this counts as a restock (adds to the total); lowering it records usage.'
+        : 'Units received. This becomes the Total Quantity.';
+}
 
 function openAdd() {
     editingId = null;
     document.getElementById('itemForm').reset();
     document.getElementById('fRecordExpense').checked = true;
     updateExpenseHint();
+    setQtyLabels(false, null);
     document.getElementById('formTitle').textContent    = 'Add New Item';
     document.getElementById('formSubtitle').textContent = 'Add a new item to your inventory.';
     document.getElementById('formIconBox').innerHTML    = <?php echo json_encode(icon('plus', 'icon-sm')); ?>;
@@ -672,6 +723,7 @@ function openEdit(id) {
     document.getElementById('fRecordExpense').checked = true;
     updateExpenseHint();
 
+    setQtyLabels(true, r);
     document.getElementById('formTitle').textContent    = 'Edit Item';
     document.getElementById('formSubtitle').textContent = 'Update inventory item details.';
     document.getElementById('formIconBox').innerHTML    = <?php echo json_encode(icon('edit', 'icon-sm')); ?>;
@@ -742,6 +794,7 @@ function submitItemForm(e) {
         if (data.success) {
             var msg = editingId ? 'Item updated successfully!' : 'Item added successfully!';
             if (data.expense_id) msg += ' Expense recorded.';
+            if (data.expenses_updated) msg += ' ' + data.expenses_updated + ' linked expense record' + (data.expenses_updated === 1 ? '' : 's') + ' updated.';
             toast(msg, 'success');
             setTimeout(function () { window.location.reload(); }, 700);
         } else {

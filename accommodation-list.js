@@ -110,7 +110,7 @@ document.addEventListener("DOMContentLoaded", () => {
             );
 
             if (!availableItems.length) {
-                showMessage(`There are no ${label} marked as available right now. Please check back soon or contact us.`);
+                showMessage(`NO AVAILABLE ${label}.`);
                 return;
             }
 

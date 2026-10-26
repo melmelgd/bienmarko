@@ -201,7 +201,7 @@ document.addEventListener("DOMContentLoaded", () => {
         );
 
         if (!candidates.length) {
-            showResults(`No ${label} were found that can accommodate ${guestsWanted}+ guest${guestsWanted === 1 ? "" : "s"}.`);
+            showResults(`NO AVAILABLE ${label}.`);
             return;
         }
 

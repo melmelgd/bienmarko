@@ -10,6 +10,14 @@
  * admin/feedback.php, and never exposes a guest's email, phone, or
  * full last name — first name plus last initial only (e.g. "Mariel D."),
  * matching how testimonials have always been presented on this page.
+ *
+ * Each testimonial also carries the date the guest submitted the feedback
+ * (feedback.created_at — NOT the date an admin published it):
+ *   date        ISO date, e.g. "2026-10-26"
+ *   date_label  display text, e.g. "Oct 26, 2026"
+ * and `context` now reads "<Category> · <date>" (e.g. "Room & Amenities ·
+ * Oct 26, 2026"), so the date shows up on the page wherever the category
+ * line is already displayed, with no change needed in script.js.
  * -----------------------------------------------------------------------
  */
 
@@ -42,7 +50,7 @@ $pdo->exec(
 $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `is_published` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `is_read`");
 
 $stmt = $pdo->query(
-    "SELECT f.rating, f.category, f.message,
+    "SELECT f.rating, f.category, f.message, f.created_at,
             g.first_name, g.last_name
      FROM feedback f
      LEFT JOIN guests g ON g.id = f.guest_id
@@ -69,11 +77,19 @@ foreach ($rows as $row) {
         $displayName = 'Verified Guest';
     }
 
+    /* The day the guest gave the feedback */
+    $ts        = strtotime((string) $row['created_at']);
+    $dateIso   = $ts ? date('Y-m-d', $ts) : '';
+    $dateLabel = $ts ? date('M j, Y', $ts) : '';
+    $category  = $categoryLabels[$row['category']] ?? 'General';
+
     $testimonials[] = [
-        'rating'  => (int) $row['rating'],
-        'message' => $row['message'],
-        'name'    => $displayName,
-        'context' => $categoryLabels[$row['category']] ?? 'General',
+        'rating'     => (int) $row['rating'],
+        'message'    => $row['message'],
+        'name'       => $displayName,
+        'context'    => $dateLabel !== '' ? $category . ' · ' . $dateLabel : $category,
+        'date'       => $dateIso,
+        'date_label' => $dateLabel,
     ];
 }
 
