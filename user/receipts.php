@@ -161,7 +161,7 @@ require __DIR__ . '/includes/head.php';
     min-width: 140px; text-align: center;
 }
 .rc-item__paid-label { font-size: 12px; color: #8c8c8c; }
-.rc-item__amount { font-size: 19px; font-weight: 700; color: #f0b100; }
+.rc-item__amount { font-size: 19px; font-weight: 700; color: #e8a33d; }
 .rc-item__actions { display: flex; flex-wrap: wrap; gap: 10px; flex: none; }
 .rc-btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 8px;
@@ -172,7 +172,7 @@ require __DIR__ . '/includes/head.php';
 .rc-btn:hover { filter: brightness(1.12); }
 .rc-btn:active { transform: scale(.98); }
 .rc-btn svg { width: 15px; height: 15px; flex: none; }
-.rc-btn--amber { background: #f0b100; color: #1a1200; }
+.rc-btn--amber { background: #e8a33d; color: #1a1200; }
 .rc-btn--navy  { background: #1b2433; color: #fff; }
 
 .rc-badge {
