@@ -202,13 +202,13 @@ require __DIR__ . '/includes/head.php';
 .rc-overlay.is-open { opacity: 1; pointer-events: auto; }
 .rc-box {
     background: #fff; border-radius: var(--radius-lg); width: 100%; max-width: 360px;
-    padding: 30px 28px; font-family: 'Courier New', monospace; color: #111;
+    padding: 30px 28px; font-family: var(--font-body); color: #111;
     transform: scale(.95); transition: transform .2s;
     max-height: 90vh; overflow-y: auto;
 }
 .rc-overlay.is-open .rc-box { transform: scale(1); }
 .rc-box__logo   { text-align: center; margin-bottom: 14px; }
-.rc-box__name   { font-family: 'Georgia', serif; font-size: 17px; font-weight: 700; color: #8b6914; }
+.rc-box__name   { font-family: var(--font-display); font-size: 17px; font-weight: 700; color: #8b6914; }
 .rc-box__sub    { font-size: 11px; color: #666; margin-top: 2px; }
 .rc-box__title  { text-align: center; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
 .rc-box__ref    { text-align: center; font-size: 11px; background: #f5f5f5; padding: 6px; border-radius: 4px; margin: 10px 0; letter-spacing: .04em; }

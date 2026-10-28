@@ -786,11 +786,11 @@ require __DIR__ . '/includes/head.php';
 .bk-btn:hover { filter: brightness(1.08); }
 .bk-btn:active { transform: scale(.98); }
 .bk-btn svg { width: 15px; height: 15px; flex: none; }
-.bk-btn--amber { background: #f0b100; color: #1a1200; }
+.bk-btn--amber { background: #e8a33d; color: #1a1200; }
 .bk-btn--cream { background: #fff7e0; color: #1a1200; }
 .bk-btn--red   { background: #e11d1d; color: #fff; }
 .bk-btn--ghost { background: transparent; color: #fff; border: 1px solid #2f2f2f; }
-.bk-btn--ghost:hover { border-color: #f0b100; filter: none; }
+.bk-btn--ghost:hover { border-color: #e8a33d; filter: none; }
 
 /* Filter tabs */
 .bkp-tabs {
@@ -808,7 +808,7 @@ require __DIR__ . '/includes/head.php';
   transition: background .15s, color .15s;
 }
 .bkp-tab:hover { background: #171717; }
-.bkp-tab[aria-selected="true"] { background: #f0b100; color: #1a1200; }
+.bkp-tab[aria-selected="true"] { background: #e8a33d; color: #1a1200; }
 
 /* New-booking wizard (collapsed until "New Booking" is pressed) */
 #newBookingWrap { margin-bottom: 32px; }

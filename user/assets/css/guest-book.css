@@ -1,5 +1,3 @@
-
-
 :root {
     --black:      #050505;
     --panel:      #0d0d0d;
@@ -12,8 +10,8 @@
     --danger:     #e05252;
     --danger-bg:  rgba(224,82,82,0.1);
     --serif:      "Cormorant Garamond", Georgia, serif;
-    --sans:       "Inter", Arial, sans-serif;
-    --script:     "Great Vibes", cursive;
+    --sans:       "Montserrat", Arial, sans-serif;
+    --script:     "Cormorant Garamond", Georgia, serif;
     --header-h:   72px;
     --form-max:   760px;
 }

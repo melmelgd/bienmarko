@@ -8,8 +8,8 @@ body.has-sidebar:not(.standalone) {
   --shell-bg:      #000;
   --shell-main:    #0a0a0a;
   --shell-line:    #1f1f1f;
-  --shell-amber:   #f0b100;
-  --shell-amber-bg:#251b03;
+  --shell-amber:   #e8a33d;
+  --shell-amber-bg:#231809;
   --shell-red:     #ef4444;
   --shell-side-w:  248px;
   --shell-top-h:   68px;
