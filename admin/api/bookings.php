@@ -40,6 +40,9 @@ try {
 // Adds bookings.checked_in_at / checked_out_at if they don't exist yet.
 bk_stay_migrate($pdo);
 
+// Adds bookings.pool_session ('day' | 'night') for Swimming Pool bookings.
+bk_pool_session_migrate($pdo);
+
 /* ================================================================
    GET ?action=availability — read-only lookup used by the New/Edit
    Booking date pickers to grey out already-reserved dates before the
@@ -76,7 +79,7 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
     // booking currently being edited, if any) — the client turns this
     // into a per-date "blocked" map. Cancelled bookings free up their
     // dates and are intentionally excluded.
-    $sql    = "SELECT check_in, check_out, guests_count FROM bookings
+    $sql    = "SELECT check_in, check_out, guests_count, pool_session FROM bookings
                WHERE accommodation_id = :aid
                  AND status IN ('confirmed','pending')";
     $params = ['aid' => $accommodationId];
@@ -101,6 +104,8 @@ if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'GET') {
                 'check_in'     => $r['check_in'],
                 'check_out'    => $r['check_out'],
                 'guests_count' => (int) $r['guests_count'],
+                // 'day' | 'night' | null (null = old pool booking, blocks both sessions)
+                'pool_session' => $r['pool_session'] ?: null,
             ];
         }, $rows),
     ]);
@@ -162,6 +167,32 @@ if ($action === 'check_in' || $action === 'check_out') {
     $isIn      = ($action === 'check_in');
     $fromStage = $isIn ? 'upcoming'   : 'checked_in';
     $column    = $isIn ? 'checked_in_at' : 'checked_out_at';
+
+    /* Check-out is refused until the booking is fully paid. Enforced here
+       (not just by the disabled button) so a stale page, a second admin or a
+       hand-made request can't check a guest out with money still owed.
+       Only checked when the booking really is Checked-in; any other stage
+       falls through to the stage message below. */
+    if (!$isIn) {
+        $stageRow = $pdo->prepare("SELECT status, checked_in_at, checked_out_at FROM bookings WHERE id = :id");
+        $stageRow->execute(['id' => $id]);
+        $stageRow = $stageRow->fetch();
+
+        if ($stageRow && bk_stage($stageRow) === 'checked_in') {
+            $pay = bk_payment_state($pdo, $id);
+            if (!$pay['fully_paid']) {
+                $owed = number_format($pay['balance'], 2);
+                echo json_encode([
+                    'success' => false,
+                    'refresh' => true,
+                    'error'   => $pay['has_record']
+                        ? "Can't check out yet — this booking still has an unpaid balance of ₱{$owed}. Record the payment in Payments first."
+                        : "Can't check out yet — no payment has been recorded for this booking (₱{$owed} due). Record the payment in Payments first.",
+                ]);
+                exit;
+            }
+        }
+    }
 
     $upd = $pdo->prepare(
         "UPDATE bookings SET {$column} = :now
@@ -368,9 +399,22 @@ if ($action === 'create') {
     // regardless of which portal created the booking.
     $isPool = strcasecmp(trim((string) $room['type']), 'Swimming Pool') === 0;
 
+    // Pool bookings are for the DAY or the NIGHT session. Each session has
+    // its own capacity, so a day booking never blocks a night booking.
+    $poolSession = null;
+    if ($isPool) {
+        $poolSession = strtolower(trim((string) ($body['pool_session'] ?? '')));
+        if (!in_array($poolSession, BK_POOL_SESSIONS, true)) {
+            echo json_encode(['success' => false, 'error' => 'Please choose Day or Night for the swimming pool.']);
+            exit;
+        }
+    }
+
     $nights = max(1, (int) ceil((strtotime($checkOut) - strtotime($checkIn)) / 86400));
+    // Pool = price per PERSON (every guest pays the full pool price) for
+    // each day booked. Every other accommodation = price per night.
     $total  = $isPool
-        ? round((float) $room['price'] * $guestsCount, 2)
+        ? round((float) $room['price'] * $guestsCount * $nights, 2)
         : round((float) $room['price'] * $nights, 2);
 
     /* --- Conflict / capacity check (row-level lock) --- */
@@ -381,11 +425,12 @@ if ($action === 'create') {
                 "SELECT COALESCE(SUM(guests_count), 0) FROM bookings
                  WHERE accommodation_id = :aid
                    AND status IN ('confirmed','pending')
+                   AND " . bk_pool_session_sql() . "
                    AND check_in  < :co
                    AND check_out > :ci
                  FOR UPDATE"
             );
-            $conflict->execute(['aid' => $accommodationId, 'ci' => $checkIn, 'co' => $checkOut]);
+            $conflict->execute(['aid' => $accommodationId, 'psess' => $poolSession, 'ci' => $checkIn, 'co' => $checkOut]);
             $bookedGuests = (int) $conflict->fetchColumn();
 
             if ($bookedGuests + $guestsCount > (int) $room['capacity']) {
@@ -394,8 +439,8 @@ if ($action === 'create') {
                 echo json_encode([
                     'success' => false,
                     'error'   => $remaining > 0
-                        ? "Only {$remaining} pool slot(s) left for the selected dates."
-                        : 'The swimming pool is fully booked for the selected dates.',
+                        ? "Only {$remaining} pool slot(s) left for the {$poolSession} session on the selected dates."
+                        : "The swimming pool is fully booked for the {$poolSession} session on the selected dates.",
                 ]);
                 exit;
             }
@@ -429,13 +474,16 @@ if ($action === 'create') {
             "INSERT INTO bookings
                 (accommodation_id, guest_id, reference, check_in, check_out,
                  guests_count, status, total_amount,
-                 guest_name, email, phone, address, payment_method, booking_type, notes, companion_names)
+                 guest_name, email, phone, address, payment_method, booking_type, notes, companion_names,
+                 pool_session)
              VALUES
                 (:aid, NULL, :ref, :ci, :co,
                  :gc, 'confirmed', :total,
-                 :gname, :email, :phone, :addr, :pm, 'guest', :notes, :companion_names)"
+                 :gname, :email, :phone, :addr, :pm, 'guest', :notes, :companion_names,
+                 :psess)"
         );
         $ins->execute([
+            'psess'           => $poolSession,
             'aid'             => $accommodationId,
             'ref'             => $ref,
             'ci'              => $checkIn,
@@ -567,9 +615,22 @@ if ($action === 'update') {
 
     $isPool = strcasecmp(trim((string) $room['type']), 'Swimming Pool') === 0;
 
+    // Pool bookings are for the DAY or the NIGHT session (see create).
+    // An old pool booking with no session on file must be given one the
+    // first time it is edited.
+    $poolSession = null;
+    if ($isPool) {
+        $poolSession = strtolower(trim((string) ($body['pool_session'] ?? $existing['pool_session'] ?? '')));
+        if (!in_array($poolSession, BK_POOL_SESSIONS, true)) {
+            echo json_encode(['success' => false, 'error' => 'Please choose Day or Night for the swimming pool.']);
+            exit;
+        }
+    }
+
     $nights = max(1, (int) ceil((strtotime($checkOut) - strtotime($checkIn)) / 86400));
+    // Pool = price per PERSON for each day booked; everything else per night.
     $total  = $isPool
-        ? round((float) $room['price'] * $guestsCount, 2)
+        ? round((float) $room['price'] * $guestsCount * $nights, 2)
         : round((float) $room['price'] * $nights, 2);
 
     /* --- Conflict / capacity check, excluding this booking itself --- */
@@ -581,11 +642,12 @@ if ($action === 'update') {
                  WHERE accommodation_id = :aid
                    AND id != :id
                    AND status IN ('confirmed','pending')
+                   AND " . bk_pool_session_sql() . "
                    AND check_in  < :co
                    AND check_out > :ci
                  FOR UPDATE"
             );
-            $conflict->execute(['aid' => $accommodationId, 'id' => $id, 'ci' => $checkIn, 'co' => $checkOut]);
+            $conflict->execute(['aid' => $accommodationId, 'id' => $id, 'psess' => $poolSession, 'ci' => $checkIn, 'co' => $checkOut]);
             $bookedGuests = (int) $conflict->fetchColumn();
 
             if ($bookedGuests + $guestsCount > (int) $room['capacity']) {
@@ -594,8 +656,8 @@ if ($action === 'update') {
                 echo json_encode([
                     'success' => false,
                     'error'   => $remaining > 0
-                        ? "Only {$remaining} pool slot(s) left for the selected dates."
-                        : 'The swimming pool is fully booked for the selected dates.',
+                        ? "Only {$remaining} pool slot(s) left for the {$poolSession} session on the selected dates."
+                        : "The swimming pool is fully booked for the {$poolSession} session on the selected dates.",
                 ]);
                 exit;
             }
@@ -630,10 +692,12 @@ if ($action === 'update') {
                 address          = :addr,
                 payment_method   = :pm,
                 notes            = :notes,
-                companion_names  = :companion_names
+                companion_names  = :companion_names,
+                pool_session     = :psess
              WHERE id = :id"
         );
         $upd->execute([
+            'psess'           => $poolSession,
             'aid'             => $accommodationId,
             'ci'              => $checkIn,
             'co'              => $checkOut,

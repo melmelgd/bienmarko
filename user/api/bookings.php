@@ -362,6 +362,28 @@ function bk_sanitize_companion_names($raw): ?string
     return $names ? json_encode(array_values($names), JSON_UNESCAPED_UNICODE) : null;
 }
 
+/**
+ * Every companion name is one more person on the booking (the booker is
+ * always guest #1), so the stored guest count must never be lower than
+ * 1 + the number of names. Guards against a client submitting a stale
+ * guest count (e.g. 1) alongside several names — which left the admin
+ * seeing a single guest and, for the per-person Swimming Pool, under-billing
+ * and under-counting pool capacity. Passes through `false` (invalid input)
+ * untouched so the normal validation still rejects it.
+ *
+ * @param int|false $guestsCount
+ * @return int|false
+ */
+function bk_guests_for_companions($guestsCount, ?string $companionNamesJson)
+{
+    if ($guestsCount === false || $guestsCount === null) {
+        return $guestsCount;
+    }
+    $names = $companionNamesJson !== null ? json_decode($companionNamesJson, true) : [];
+    $named = is_array($names) ? count($names) : 0;
+    return max((int) $guestsCount, 1 + $named);
+}
+
 // ---- Action: availability ---------------------------------------------------
 
 /**
@@ -811,6 +833,7 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
     $guestsCount     = filter_var($input['guests_count'] ?? 1, FILTER_VALIDATE_INT);
     $notes           = trim((string) ($input['notes'] ?? ''));
     $companionNames  = bk_sanitize_companion_names($input['companion_names'] ?? null);
+    $guestsCount     = bk_guests_for_companions($guestsCount, $companionNames);
 
     if (!$checkIn || !$checkOut) {
         bk_fail(400, 'Please provide both check-in and check-out dates.');
@@ -1028,6 +1051,7 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
     $guestsCount    = filter_var($input['guests_count'] ?? 1, FILTER_VALIDATE_INT);
     $notes          = trim((string) ($input['notes'] ?? ''));
     $companionNames = bk_sanitize_companion_names($input['companion_names'] ?? null);
+    $guestsCount    = bk_guests_for_companions($guestsCount, $companionNames);
 
     if (!$checkIn || !$checkOut) {
         bk_fail(400, 'Please provide both check-in and check-out dates.');

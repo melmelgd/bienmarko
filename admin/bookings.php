@@ -63,6 +63,9 @@ $pdo->exec("
 // Manual front-desk check-in / check-out timestamps (see booking-stay.php).
 bk_stay_migrate($pdo);
 
+// Swimming Pool Day / Night session column (bookings.pool_session).
+bk_pool_session_migrate($pdo);
+
 // Optional: if the bookings table ever gets a `check_in_time` column, the
 // Upcoming / All sorts use it as the tie-breaker between guests arriving on
 // the same date (earliest first) and it is shown next to the date. Today the
@@ -180,6 +183,7 @@ $sql = "SELECT
             b.guest_name, b.email AS guest_book_email,
             b.phone AS guest_phone, b.address AS guest_address,
             b.companion_names,
+            b.pool_session,
             b.created_at,
             a.name AS room_name, a.type AS room_type, a.price AS room_price,
             g.first_name, g.last_name, g.email AS reg_email, g.phone AS reg_phone
@@ -383,6 +387,11 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .btn-danger:hover { background: var(--red); color: #fff; }
 .btn-success   { background: var(--emerald-bg); color: var(--emerald); border-color: var(--emerald); }
 .btn-success:hover { background: var(--emerald); color: #fff; }
+/* Check-out locked until the booking is fully paid */
+.btn-success:disabled, .btn-success:disabled:hover { opacity: .45; cursor: not-allowed; background: var(--emerald-bg); color: var(--emerald); }
+.btn-sm--success:disabled, .btn-sm--success:disabled:hover { opacity: .45; cursor: not-allowed; background: var(--emerald-bg); color: var(--emerald); }
+.stay-notice--unpaid { border-color: var(--red); background: var(--red-bg); }
+.stay-notice--unpaid .stay-notice-warn { color: var(--red); }
 .btn-blue      { background: var(--blue-bg); color: var(--blue); border-color: var(--blue); }
 .btn-blue:hover { background: var(--blue); color: #fff; }
 
@@ -480,8 +489,13 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 
 <?php
 /* Pass bookings to JS as JSON for the detail modal */
-$bookingsJson = json_encode(array_map(function ($bk) use ($today) {
+$bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
     $stage = bk_stage($bk);
+    // Payment state (same rule as the API): a guest can only be checked out
+    // once the booking is fully paid.
+    $pay = $stage === 'checked_in'
+        ? bk_payment_state($pdo, (int) $bk['id'])
+        : ['has_record' => false, 'billed' => 0.0, 'paid' => 0.0, 'balance' => 0.0, 'fully_paid' => false];
     // Same rules the old page used: only confirmed/pending bookings can be
     // edited or cancelled. New: once a guest has checked in, the booking can
     // still be edited (e.g. a stay extension) but can no longer be cancelled.
@@ -497,6 +511,10 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
         'stage'        => $stage,
         'can_check_in'  => $stage === 'upcoming',
         'can_check_out' => $stage === 'checked_in',
+        'pay_blocked'   => $stage === 'checked_in' && !$pay['fully_paid'],
+        'pay_has_record'=> $pay['has_record'],
+        'pay_balance'   => number_format($pay['balance'], 2),
+        'pay_paid'      => number_format($pay['paid'], 2),
         'can_cancel'    => $stage === 'upcoming' && $live,
         'can_edit'      => in_array($stage, ['upcoming', 'checked_in'], true) && $live,
         'can_restore'   => $stage === 'cancelled',
@@ -518,6 +536,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
         'guest_phone'  => bk_phone($bk),
         'guest_address'=> $bk['guest_address'] ?? '',
         'is_pool'      => strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0,
+        'pool_session' => $bk['pool_session'] ?? '',
         'companion_names' => (function ($raw) {
             if (!$raw) {
                 return [];
@@ -631,6 +650,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                             $email    = bk_email($bk);
                             $phone    = bk_phone($bk);
                             $timeLbl  = bk_time_label($bk);
+                            $rowPay   = $stage === 'checked_in' ? bk_payment_state($pdo, $bid) : null;
                         ?>
                             <tr data-id="<?php echo $bid; ?>" onclick="openDetail(<?php echo $bid; ?>)">
                                 <td>
@@ -647,6 +667,9 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
 
                                 <td>
                                     <div><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></div>
+                                    <?php if (strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0): ?>
+                                        <span class="chip <?php echo ($bk['pool_session'] ?? '') === 'night' ? 'chip--blue' : 'chip--gold'; ?>"><?php echo htmlspecialchars(bk_pool_session_label($bk['pool_session'] ?? '') ?: 'Day & Night', ENT_QUOTES, 'UTF-8'); ?></span>
+                                    <?php endif; ?>
                                     <?php if ($timeLbl): ?><div class="td-sub"><?php echo $timeLbl; ?></div><?php endif; ?>
                                     <?php if ($stage === 'upcoming') echo bk_date_chip($bk['check_in'], $today, 'Overdue'); ?>
                                 </td>
@@ -662,6 +685,11 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                                         <?php if ($stage === 'upcoming'): ?>
                                             <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest in">
                                                 <?php echo icon('calendar-check', 'icon-sm'); ?> Check-in
+                                            </button>
+                                        <?php elseif ($stage === 'checked_in' && $rowPay && !$rowPay['fully_paid']): ?>
+                                            <button class="btn-sm btn-sm--success" type="button" disabled aria-disabled="true"
+                                                    title="Unpaid balance of ₱<?php echo number_format($rowPay['balance'], 2); ?> — record the payment in Payments before checking out">
+                                                <?php echo icon('logout', 'icon-sm'); ?> Check-out
                                             </button>
                                         <?php elseif ($stage === 'checked_in'): ?>
                                             <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest out">
@@ -749,8 +777,12 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                         <span class="detail-label">Check-out</span>
                         <span class="detail-value" id="dCheckOut">—</span>
                     </div>
+                    <div class="detail-row" id="dSessionRow" style="display:none;">
+                        <span class="detail-label">Pool Session</span>
+                        <span class="detail-value" id="dSession">—</span>
+                    </div>
                     <div class="detail-row">
-                        <span class="detail-label">Nights</span>
+                        <span class="detail-label" id="dNightsLabel">Nights</span>
                         <span class="detail-value" id="dNights">—</span>
                     </div>
                     <div class="detail-row">
@@ -859,8 +891,15 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                                 <?php endforeach; ?>
                             </select>
                             <span class="form-label" id="nbPoolHint" style="display:none;color:var(--gold-400);margin-top:4px;">
-                                This is a Swimming Pool — priced per person, and shared by other bookings up to its capacity for the same dates.
+                                This is a Swimming Pool — every guest pays the full per-person price, and the pool is shared by other bookings up to its capacity for the same dates and session.
                             </span>
+                        </div>
+                        <div class="form-group full" id="nbSessionGroup" style="display:none;">
+                            <label class="form-label">Pool Session <span style="color:var(--red)">*</span></label>
+                            <select class="form-input" name="pool_session" id="nbPoolSession">
+                                <option value="day">Day</option>
+                                <option value="night">Night</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Check-in <span style="color:var(--red)">*</span></label>
@@ -979,8 +1018,16 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today) {
                                 <?php endforeach; ?>
                             </select>
                             <span class="form-label" id="edPoolHint" style="display:none;color:var(--gold-400);margin-top:4px;">
-                                This is a Swimming Pool — priced per person, and shared by other bookings up to its capacity for the same dates.
+                                This is a Swimming Pool — every guest pays the full per-person price, and the pool is shared by other bookings up to its capacity for the same dates and session.
                             </span>
+                        </div>
+                        <div class="form-group full" id="edSessionGroup" style="display:none;">
+                            <label class="form-label">Pool Session <span style="color:var(--red)">*</span></label>
+                            <select class="form-input" name="pool_session" id="edPoolSession">
+                                <option value="">— Select Day or Night —</option>
+                                <option value="day">Day</option>
+                                <option value="night">Night</option>
+                            </select>
                         </div>
                         <div class="form-group">
                             <label class="form-label">Check-in <span style="color:var(--red)">*</span></label>
@@ -1100,7 +1147,12 @@ function openDetail(id) {
     document.getElementById('dRoomType').textContent  = b.room_type;
     document.getElementById('dCheckIn').textContent   = fmtDate(b.check_in) + (b.check_in_time ? ' · ' + b.check_in_time : '');
     document.getElementById('dCheckOut').textContent  = fmtDate(b.check_out);
-    document.getElementById('dNights').textContent    = nights + ' night' + (nights === 1 ? '' : 's');
+    document.getElementById('dNightsLabel').textContent = b.is_pool ? 'Days' : 'Nights';
+    document.getElementById('dNights').textContent    = b.is_pool
+        ? (nights + ' day' + (nights === 1 ? '' : 's'))
+        : (nights + ' night' + (nights === 1 ? '' : 's'));
+    document.getElementById('dSessionRow').style.display = b.is_pool ? '' : 'none';
+    document.getElementById('dSession').textContent   = b.pool_session ? cap(b.pool_session) + ' session' : 'Day & Night (booked before sessions existed)';
     document.getElementById('dGuests').textContent    = b.guests_count;
     document.getElementById('dRoomRateLabel').textContent = b.is_pool ? 'Rate / Person' : 'Room Rate / Night';
     document.getElementById('dRoomPrice').textContent = '₱' + b.room_price + (b.is_pool ? ' / person' : ' / night');
@@ -1141,7 +1193,15 @@ function openDetail(id) {
         btns += '<button class="btn btn-success" id="stayBtn" onclick="stayAction(' + b.id + ',\'check_in\')">Confirm Check-in</button>';
     }
     if (b.can_check_out) {
-        btns += '<button class="btn btn-success" id="stayBtn" onclick="stayAction(' + b.id + ',\'check_out\')">Confirm Check-out</button>';
+        if (b.pay_blocked) {
+            // Not fully paid: the button is locked (the API refuses it too).
+            btns += '<button class="btn btn-success" id="stayBtn" type="button" disabled aria-disabled="true" ' +
+                    'title="Unpaid balance of ₱' + b.pay_balance + ' — record the payment first">Confirm Check-out</button>';
+            btns += '<a class="btn btn-blue" style="text-decoration:none;" href="payments.php?search=' +
+                    encodeURIComponent(b.reference) + '">Go to Payments</a>';
+        } else {
+            btns += '<button class="btn btn-success" id="stayBtn" onclick="stayAction(' + b.id + ',\'check_out\')">Confirm Check-out</button>';
+        }
     }
     if (b.can_edit) {
         btns += '<button class="btn btn-blue" onclick="openEdit(' + b.id + ')">Edit Booking</button>';
@@ -1193,7 +1253,15 @@ function renderStayNotice(b) {
         if (b.check_out < TODAY) {
             out += '<span class="stay-notice-warn">Expected check-out was ' + fmtDate(b.check_out) + ' — this guest is past their scheduled departure.</span>';
         }
-        el.className += ' stay-notice--depart';
+        if (b.pay_blocked) {
+            out += '<span class="stay-notice-warn">' + (b.pay_has_record
+                ? 'Unpaid balance: ₱' + b.pay_balance + ' (₱' + b.pay_paid + ' paid so far).'
+                : 'No payment recorded yet — ₱' + b.pay_balance + ' due.') +
+                ' Check-out is locked until the booking is fully paid. Record the payment in Payments first.</span>';
+            el.className += ' stay-notice--unpaid';
+        } else {
+            el.className += ' stay-notice--depart';
+        }
         el.innerHTML = out;
         el.style.display = '';
     }
@@ -1292,6 +1360,7 @@ function calcTotal() {
     var companionsInput = document.getElementById('nbCompanionNames');
 
     poolHint.style.display = isPool ? '' : 'none';
+    document.getElementById('nbSessionGroup').style.display = isPool ? '' : 'none';
 
     if (opt && opt.value && cap > 1) {
         companionsGroup.style.display = '';
@@ -1313,7 +1382,9 @@ function calcTotal() {
     if (nights < 1) { document.getElementById('nbTotal').value = ''; return; }
 
     var guests = Math.max(1, parseInt(guestsEl.value, 10) || 1);
-    var total  = isPool ? (guests * price) : (nights * price);
+    // Pool: EVERY guest pays the full per-person price (5 guests x ₱150 = ₱750),
+    // for each day booked. Other accommodations: price per night.
+    var total  = isPool ? (guests * price * nights) : (nights * price);
 
     document.getElementById('nbTotal').value = '₱' + total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -1356,7 +1427,12 @@ function nbFormatDisplay(iso) {
 function nbBuildBookedMap() {
     var map = {};
     if (!nbAvailability) return map;
+    var wantedSession = document.getElementById('nbPoolSession').value; // 'day' | 'night'
     nbAvailability.bookings.forEach(function (b) {
+        // Swimming Pool: Day and Night are separate. A booking only counts
+        // against the session being booked; an old booking with no session
+        // (null) blocks both.
+        if (nbAvailability.isPool && b.pool_session && b.pool_session !== wantedSession) return;
         var cur = nbParseISO(b.check_in);
         var end = nbParseISO(b.check_out);
         while (cur < end) {
@@ -1629,6 +1705,11 @@ function nbRevalidateSelection() {
     }
 }
 document.getElementById('nbGuestsCount').addEventListener('input', nbRevalidateSelection);
+// Switching Day <-> Night changes which bookings block the calendar.
+document.getElementById('nbPoolSession').addEventListener('change', function () {
+    nbRevalidateSelection();
+    calcTotal();
+});
 
 // If the modal is reopened with an accommodation already selected
 // (e.g. it was left mid-fill), make sure availability data is current.
@@ -1717,6 +1798,8 @@ function openEdit(id) {
     document.getElementById('edNotes').value         = b.notes || '';
     document.getElementById('edCompanionNames').value = (b.companion_names || []).join('\n');
     document.getElementById('edAccomSelect').value   = b.accommodation_id;
+    // Old pool bookings have no session yet -> blank, the admin must pick one.
+    document.getElementById('edPoolSession').value   = b.pool_session || '';
 
     edCalcTotal();
     closeDetail();
@@ -1745,6 +1828,8 @@ function edCalcTotal() {
     var companionsInput = document.getElementById('edCompanionNames');
 
     poolHint.style.display = isPool ? '' : 'none';
+    document.getElementById('edSessionGroup').style.display = isPool ? '' : 'none';
+    document.getElementById('edPoolSession').required = isPool;
 
     if (opt && opt.value && cap > 1) {
         companionsGroup.style.display = '';
@@ -1765,11 +1850,13 @@ function edCalcTotal() {
     if (nights < 1) { document.getElementById('edTotal').value = ''; return; }
 
     var guests = Math.max(1, parseInt(guestsEl.value, 10) || 1);
-    var total  = isPool ? (guests * price) : (nights * price);
+    // Pool: every guest pays the full per-person price, for each day booked.
+    var total  = isPool ? (guests * price * nights) : (nights * price);
 
     document.getElementById('edTotal').value = '₱' + total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 document.getElementById('edAccomSelect').addEventListener('change', edCalcTotal);
+document.getElementById('edPoolSession').addEventListener('change', edCalcTotal);
 document.getElementById('edGuestsCount').addEventListener('input', edCalcTotal);
 document.getElementById('edCheckIn').addEventListener('change', function () {
     var co = document.getElementById('edCheckOut');

@@ -800,6 +800,7 @@ require __DIR__ . '/includes/head.php';
   overflow-x: auto; scrollbar-width: none;
 }
 .bkp-tabs::-webkit-scrollbar { display: none; }
+.bkp-tabs[hidden] { display: none !important; }   /* hidden while the New Booking wizard is open */
 .bkp-tab {
   border: 0; background: transparent; color: #fff;
   padding: 9px 20px; border-radius: 999px;
@@ -3063,6 +3064,11 @@ require __DIR__ . '/includes/head.php';
     // stepper in Step 1 doesn't know which room will be picked, so this is
     // the first point a mismatch can be caught and corrected.
     var capacity = parseInt(room.capacity, 10) || 1;
+    // Swimming Pool is shared between bookings, so only the slots still free
+    // for the chosen dates can be booked (names added below count against them).
+    if (room.is_pool && room.remaining_capacity !== null && room.remaining_capacity !== undefined) {
+      capacity = Math.max(1, Math.min(capacity, parseInt(room.remaining_capacity, 10) || 0));
+    }
     var capacityAdjusted = false;
     if (currentGuests > capacity) {
       currentGuests = capacity;
@@ -3096,6 +3102,7 @@ require __DIR__ . '/includes/head.php';
     }
 
     setupCompanionFields(capacity, currentGuests);
+    syncGuestsFromCompanions();
 
     setStep(3);
   }
@@ -3165,12 +3172,35 @@ require __DIR__ . '/includes/head.php';
     removeBtn.addEventListener('click', function () {
       row.remove();
       refreshAddCompanionBtnState();
+      syncGuestsFromCompanions();
     });
 
     row.appendChild(input);
     row.appendChild(removeBtn);
     elCompanionsList.appendChild(row);
     refreshAddCompanionBtnState();
+    syncGuestsFromCompanions();
+  }
+
+  /* Every name row is one more person — the booker is always guest #1 — so
+     the guest count sent with the booking (and, for the per-person Swimming
+     Pool, the price) has to follow the rows. Without this the booking was
+     saved as a single guest and the admin only ever saw one person. */
+  function syncGuestsFromCompanions() {
+    if (!pendingBooking) return;
+
+    var guests = elCompanionsList.children.length + 1;
+    var room   = pendingBooking.room;
+
+    pendingBooking.guests = guests;
+    if (room.is_pool) {
+      pendingBooking.totalFormatted = '₱' + formatNumber((parseFloat(room.price) || 0) * guests);
+    } else {
+      pendingBooking.totalFormatted = room.total_formatted;
+    }
+
+    document.getElementById('s3Guests').textContent = guests + ' guest' + (guests === 1 ? '' : 's');
+    document.getElementById('s3Total').textContent  = pendingBooking.totalFormatted;
   }
 
   function refreshAddCompanionBtnState() {
@@ -3211,9 +3241,12 @@ require __DIR__ . '/includes/head.php';
     }
 
     elCompanionsField.hidden = false;
-    elCompanionsHint.textContent = 'This room fits up to ' + capacity + ' guest' +
-      (capacity === 1 ? '' : 's') + ' — add up to ' + companionMax + ' more name' +
-      (companionMax === 1 ? '' : 's') + ' below.';
+    var hintIsPool = !!(pendingBooking && pendingBooking.room && pendingBooking.room.is_pool);
+    elCompanionsHint.textContent = (hintIsPool
+        ? 'Up to ' + capacity + ' guest' + (capacity === 1 ? '' : 's') + ' can book the pool for your dates'
+        : 'This room fits up to ' + capacity + ' guest' + (capacity === 1 ? '' : 's')) +
+      ' — add up to ' + companionMax + ' more name' + (companionMax === 1 ? '' : 's') +
+      ' below. Each name you add counts as one more guest' + (hintIsPool ? ' and is billed per person.' : '.');
 
     resetCompanionRows(Math.max(0, guests - 1));
   }
@@ -3232,9 +3265,9 @@ require __DIR__ . '/includes/head.php';
     document.getElementById('bkDetailCheckIn').textContent  = formatDate(currentCheckIn);
     document.getElementById('bkDetailCheckOut').textContent = formatDate(currentCheckOut);
     document.getElementById('bkDetailNights').textContent   = pendingBooking.nights + ' night' + (pendingBooking.nights === 1 ? '' : 's');
-    document.getElementById('bkDetailGuests').textContent   = currentGuests + ' guest' + (currentGuests === 1 ? '' : 's');
+    document.getElementById('bkDetailGuests').textContent   = pendingBooking.guests + ' guest' + (pendingBooking.guests === 1 ? '' : 's');
     document.getElementById('bkDetailRate').textContent     = room.price_formatted + '/' + (room.is_pool ? 'person' : 'night');
-    document.getElementById('bkDetailTotal').textContent    = room.total_formatted;
+    document.getElementById('bkDetailTotal').textContent    = pendingBooking.totalFormatted || room.total_formatted;
 
     var imgWrap = document.getElementById('bkModalImg');
     imgWrap.innerHTML = '';
@@ -3591,12 +3624,27 @@ require __DIR__ . '/includes/head.php';
     removeBtn.addEventListener('click', function () {
       row.remove();
       editRefreshAddCompanionBtnState();
+      editSyncGuestsFromRows(true);
     });
 
     row.appendChild(input);
     row.appendChild(removeBtn);
     editCompanionsList.appendChild(row);
     editRefreshAddCompanionBtnState();
+    editSyncGuestsFromRows(false);
+  }
+
+  /* Every name row is one more person (the booker is guest #1), so adding a
+     row raises the guest count when needed and removing one lowers it —
+     keeps the saved guest count (and the pool's per-person total) in step
+     with the names instead of staying at whatever the stepper showed. */
+  function editSyncGuestsFromRows(removed) {
+    var minGuests = editCompanionsList.children.length + 1;
+    var g = removed ? Math.max(1, editState.guests - 1) : editState.guests;
+    g = Math.min(Math.max(g, minGuests), editState.capacity);
+    editState.guests = g;
+    editGuestsDisplayEl.textContent = g;
+    editRefreshTotalPreview();
   }
 
   function editRefreshAddCompanionBtnState() {
@@ -3625,7 +3673,8 @@ require __DIR__ . '/includes/head.php';
     editCompanionsField.hidden = false;
     editCompanionsHint.textContent = 'This room fits up to ' + editState.capacity + ' guest' +
       (editState.capacity === 1 ? '' : 's') + ' — add up to ' + editState.companionMax + ' more name' +
-      (editState.companionMax === 1 ? '' : 's') + ' below.';
+      (editState.companionMax === 1 ? '' : 's') + ' below. Each name you add counts as one more guest' +
+      (editState.isPool ? ' and is billed per person.' : '.');
 
     var names = Array.isArray(seedNames) ? seedNames.slice(0, editState.companionMax) : [];
     var seedCount = Math.min(Math.max(names.length, Math.max(0, editState.guests - 1)), editState.companionMax);
@@ -4044,6 +4093,9 @@ require __DIR__ . '/includes/head.php';
   function setWizardOpen(open, scroll) {
     if (!wizWrap || !wizBtn) return;
     wizWrap.hidden = !open;
+    // Hide the All Bookings / Upcoming / Past Stays / Cancelled tabs while booking
+    var tabsBar = document.getElementById('bkTabs');
+    if (tabsBar) tabsBar.hidden = open;
     wizBtn.setAttribute('aria-expanded', String(open));
     if (wizLbl) wizLbl.textContent = open ? 'Close' : 'New Booking';
     if (open && scroll !== false) wizWrap.scrollIntoView({ behavior: 'smooth', block: 'start' });

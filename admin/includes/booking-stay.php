@@ -77,6 +77,51 @@ function bk_stay_migrate(PDO $pdo): void
 }
 
 /**
+ * Swimming Pool sessions — a pool booking is for the DAY session or the
+ * NIGHT session. The same date can have one booking set for each session,
+ * and each session has its own capacity.
+ *
+ * Stored in bookings.pool_session ('day' | 'night'). It is NULL for every
+ * non-pool booking, and for pool bookings made before this feature
+ * existed — those old bookings are treated as occupying BOTH sessions, so
+ * nothing already on the books can be double-booked.
+ *
+ * Additive, idempotent migration — safe to run on every request.
+ */
+const BK_POOL_SESSIONS = ['day', 'night'];
+
+function bk_pool_session_migrate(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
+    if (!$pdo->query("SHOW COLUMNS FROM `bookings` LIKE 'pool_session'")->fetch()) {
+        $pdo->exec("ALTER TABLE `bookings` ADD COLUMN `pool_session` VARCHAR(10) NULL DEFAULT NULL");
+    }
+}
+
+/** 'day' -> 'Day', 'night' -> 'Night', anything else -> '' */
+function bk_pool_session_label(?string $session): string
+{
+    $s = strtolower(trim((string) $session));
+    return $s === 'day' ? 'Day' : ($s === 'night' ? 'Night' : '');
+}
+
+/**
+ * SQL condition (uses the named parameter :psess) matching every booking
+ * that occupies the given pool session: same session, or an old pool
+ * booking with no session recorded (it blocks both).
+ */
+function bk_pool_session_sql(string $alias = ''): string
+{
+    $p = $alias === '' ? '' : $alias . '.';
+    return "({$p}pool_session IS NULL OR {$p}pool_session = :psess)";
+}
+
+/**
  * SQL condition (no parameters) matching one stage.
  *
  * @param string $stage  upcoming | checked_in | completed | cancelled
@@ -111,4 +156,68 @@ function bk_stage(array $row): string
         return 'checked_in';
     }
     return 'upcoming';
+}
+
+
+/**
+ * Payment state of one booking, read from the same `payments` row that
+ * Payments & Billing saves (so this page, the API and the Payments page can
+ * never disagree about what "fully paid" means).
+ *
+ *   billed  = room fee + extra guest fee + other charges - discount
+ *   paid    = payments.total_paid (running total of every payment recorded)
+ *   balance = billed - paid (never negative)
+ *
+ * A booking is fully paid only when a billing record exists AND paid >= billed.
+ * No billing record yet  => NOT fully paid (the admin has not billed it), and
+ * the balance falls back to bookings.total_amount.
+ * A stay that is free after a 100% discount (billed = 0) counts as fully paid
+ * once its billing record has been saved.
+ *
+ * @return array{has_record: bool, billed: float, paid: float, balance: float, fully_paid: bool}
+ */
+function bk_payment_state(PDO $pdo, int $bookingId): array
+{
+    $state = ['has_record' => false, 'billed' => 0.0, 'paid' => 0.0, 'balance' => 0.0, 'fully_paid' => false];
+
+    try {
+        $st = $pdo->prepare(
+            "SELECT b.total_amount,
+                    p.id AS pay_id, p.room_fee, p.extra_guest_fee, p.other_charges,
+                    p.discount, p.total_paid
+               FROM bookings b
+               LEFT JOIN payments p ON p.booking_id = b.id
+              WHERE b.id = :id"
+        );
+        $st->execute(['id' => $bookingId]);
+        $r = $st->fetch(PDO::FETCH_ASSOC);
+    } catch (\Throwable $e) {
+        // e.g. the payments table doesn't exist yet -> nothing has been paid.
+        error_log('[booking-stay] payment lookup failed: ' . $e->getMessage());
+        return $state;
+    }
+    if (!$r) {
+        return $state;
+    }
+
+    $cents = static function ($v): int {
+        return (int) round(round((float) $v, 4) * 100);
+    };
+
+    if (empty($r['pay_id'])) {
+        $billedC = max(0, $cents($r['total_amount']));
+        $state['billed']  = $billedC / 100;
+        $state['balance'] = $billedC / 100;
+        return $state;
+    }
+
+    $billedC = max(0, $cents($r['room_fee']) + $cents($r['extra_guest_fee']) + $cents($r['other_charges']) - $cents($r['discount']));
+    $paidC   = $cents($r['total_paid']);
+
+    $state['has_record'] = true;
+    $state['billed']     = $billedC / 100;
+    $state['paid']       = $paidC / 100;
+    $state['balance']    = max(0, $billedC - $paidC) / 100;
+    $state['fully_paid'] = $paidC >= $billedC;
+    return $state;
 }

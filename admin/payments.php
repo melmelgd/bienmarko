@@ -17,6 +17,7 @@ bienmarko_require_role('admin');
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/ui.php';
 require_once __DIR__ . '/includes/billing-calc.php';
+require_once __DIR__ . '/includes/booking-stay.php';
 
 $active_page        = 'payments';
 $page_title         = 'Payments & Billing';
@@ -27,6 +28,9 @@ $show_period_toggle = false;
 $pdo   = bienmarko_db();
 $today = date('Y-m-d');
 $csrf  = bienmarko_csrf_token();
+
+// Swimming Pool Day / Night session column (bookings.pool_session).
+bk_pool_session_migrate($pdo);
 
 /* ------------------------------------------------------------------
    Ensure payments table exists
@@ -184,6 +188,7 @@ $sql = "SELECT
             b.reference,
             b.check_in, b.check_out,
             b.guests_count,
+            b.pool_session,
             b.status        AS booking_status,
             b.total_amount  AS booking_total,
             b.payment_method AS booking_pm,
@@ -284,6 +289,14 @@ $rowsJson = json_encode(array_map(function ($r) {
         (strtotime($r['check_out']) - strtotime($r['check_in'])) / 86400
     ));
     $payStatus = $r['payment_status'] ?? 'unpaid';
+    $isPool    = strcasecmp(trim((string) $r['room_type']), 'Swimming Pool') === 0;
+    /* Default accommodation fee when no bill has been saved yet:
+         Swimming Pool -> price PER PERSON x number of guests x days
+                          (5 guests at ₱150 = ₱750: every guest pays the full price)
+         Everything else -> price x nights                                    */
+    $defaultFee = $isPool
+        ? round((float) $r['room_price'] * (int) $r['guests_count'] * $nights, 2)
+        : round((float) $r['room_price'] * $nights, 2);
     return [
         'booking_id'      => (int) $r['booking_id'],
         'reference'       => $r['reference'],
@@ -296,12 +309,14 @@ $rowsJson = json_encode(array_map(function ($r) {
         'room_name'       => $r['room_name'],
         'room_type'       => $r['room_type'],
         'room_price'      => (float) $r['room_price'],
+        'is_pool'         => $isPool,
+        'pool_session'    => $r['pool_session'] ?? '',
         'guest_name'      => pm_name($r),
         'guest_email'     => pm_email($r),
         'guest_phone'     => pm_phone($r),
         'booking_type'    => $r['booking_type'],
         'pay_id'          => $r['pay_id'] ? (int) $r['pay_id'] : null,
-        'room_fee'        => $r['room_fee']        !== null ? (float) $r['room_fee']        : round((float) $r['room_price'] * $nights, 2),
+        'room_fee'        => $r['room_fee']        !== null ? (float) $r['room_fee']        : $defaultFee,
         'extra_guest_fee' => $r['extra_guest_fee'] !== null ? (float) $r['extra_guest_fee'] : 0.0,
         'other_charges'   => $r['other_charges']   !== null ? (float) $r['other_charges']   : 0.0,
         'discount'        => $r['discount']         !== null ? (float) $r['discount']         : 0.0,
@@ -697,7 +712,8 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     <div><span style="color:var(--text-secondary);">Room:</span>  <strong id="billRoom">—</strong></div>
                     <div><span style="color:var(--text-secondary);">Check-in:</span> <span id="billCI">—</span></div>
                     <div><span style="color:var(--text-secondary);">Check-out:</span> <span id="billCO">—</span></div>
-                    <div><span style="color:var(--text-secondary);">Nights:</span> <span id="billNights">—</span></div>
+                    <div><span style="color:var(--text-secondary);" id="billNightsLabel">Nights:</span> <span id="billNights">—</span></div>
+                    <div id="billSessionWrap" style="display:none;"><span style="color:var(--text-secondary);">Pool session:</span> <strong id="billSession">—</strong></div>
                     <div><span style="color:var(--text-secondary);">Guests:</span> <span id="billGuests">—</span></div>
                 </div>
             </div>
@@ -709,6 +725,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     <div class="form-group">
                         <label class="form-label">Accommodation / Room Fee (₱)</label>
                         <input class="form-input" type="number" id="fRoomFee" min="0" step="0.01" oninput="recalc()" placeholder="0.00">
+                        <span class="form-label" id="fRoomFeeHint" style="display:none;color:var(--gold-400);font-weight:500;margin-top:4px;"></span>
                     </div>
                     <div class="form-group">
                         <label class="form-label">Extra Guest Fee (₱)</label>
@@ -879,7 +896,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
         <div class="receipt-row"><span class="receipt-row-label">Room</span>       <span class="receipt-row-value" id="rcRoom">—</span></div>
         <div class="receipt-row"><span class="receipt-row-label">Check-in</span>   <span class="receipt-row-value" id="rcCI">—</span></div>
         <div class="receipt-row"><span class="receipt-row-label">Check-out</span>  <span class="receipt-row-value" id="rcCO">—</span></div>
-        <div class="receipt-row"><span class="receipt-row-label">Nights</span>     <span class="receipt-row-value" id="rcNights">—</span></div>
+        <div class="receipt-row"><span class="receipt-row-label" id="rcNightsLabel">Nights</span>     <span class="receipt-row-value" id="rcNights">—</span></div>
         <hr class="receipt-divider">
         <div class="receipt-row"><span class="receipt-row-label">Room Fee</span>           <span class="receipt-row-value" id="rcRoomFee">—</span></div>
         <div class="receipt-row"><span class="receipt-row-label">Extra Guest Fee</span>    <span class="receipt-row-value" id="rcExtraGuest">—</span></div>
@@ -960,8 +977,25 @@ function openBilling(bid) {
     document.getElementById('billRoom').textContent      = r.room_name + ' (' + r.room_type + ')';
     document.getElementById('billCI').textContent        = fmtDate(r.check_in);
     document.getElementById('billCO').textContent        = fmtDate(r.check_out);
-    document.getElementById('billNights').textContent    = r.nights + ' night' + (r.nights === 1 ? '' : 's');
+    document.getElementById('billNightsLabel').textContent = r.is_pool ? 'Days:' : 'Nights:';
+    document.getElementById('billNights').textContent    = r.is_pool
+        ? (r.nights + ' day' + (r.nights === 1 ? '' : 's'))
+        : (r.nights + ' night' + (r.nights === 1 ? '' : 's'));
+    document.getElementById('billSessionWrap').style.display = r.is_pool ? '' : 'none';
+    document.getElementById('billSession').textContent   = r.pool_session
+        ? (r.pool_session.charAt(0).toUpperCase() + r.pool_session.slice(1))
+        : 'Day & Night';
     document.getElementById('billGuests').textContent    = r.guests_count;
+    /* Swimming Pool: every guest pays the full per-person price. */
+    var feeHint = document.getElementById('fRoomFeeHint');
+    if (r.is_pool) {
+        feeHint.textContent = 'Pool is per person: ' + BillingCalc.peso(r.room_price) + ' × ' + r.guests_count +
+            ' guest' + (r.guests_count === 1 ? '' : 's') + (r.nights > 1 ? ' × ' + r.nights + ' days' : '') +
+            ' = ' + BillingCalc.peso(r.room_price * r.guests_count * r.nights);
+        feeHint.style.display = '';
+    } else {
+        feeHint.style.display = 'none';
+    }
     document.getElementById('fDiscountGuests').max       = r.guests_count; // cannot exceed total guests
 
     document.getElementById('fRoomFee').value        = r.room_fee.toFixed(2);
@@ -1334,7 +1368,10 @@ function buildReceipt(r) {
     document.getElementById('rcRoom').textContent         = r.room_name;
     document.getElementById('rcCI').textContent           = fmtDate(r.check_in);
     document.getElementById('rcCO').textContent           = fmtDate(r.check_out);
-    document.getElementById('rcNights').textContent       = r.nights + ' night' + (r.nights === 1 ? '' : 's');
+    document.getElementById('rcNightsLabel').textContent  = r.is_pool ? 'Days' : 'Nights';
+    document.getElementById('rcNights').textContent       = r.is_pool
+        ? (r.nights + ' day' + (r.nights === 1 ? '' : 's') + (r.pool_session ? ' (' + r.pool_session + ' session)' : ''))
+        : (r.nights + ' night' + (r.nights === 1 ? '' : 's'));
     document.getElementById('rcRoomFee').textContent      = '₱' + fmt(rf);
     document.getElementById('rcExtraGuest').textContent   = '₱' + fmt(eg);
     document.getElementById('rcOtherCharges').textContent = '₱' + fmt(oc);
