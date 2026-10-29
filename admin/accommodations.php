@@ -559,7 +559,7 @@ require_once __DIR__ . '/includes/ui.php';
 
           <div class="field">
             <label class="field-label" for="accCapacity">Capacity (guests)</label>
-            <input type="number" id="accCapacity" name="capacity" min="1" max="50" step="1" value="1" required>
+            <input type="number" id="accCapacity" name="capacity" min="1" step="1" value="1" required>
           </div>
         </div>
 

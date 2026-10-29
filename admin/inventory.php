@@ -203,7 +203,7 @@ if ($filterSearch !== '') {
 }
 $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
-$stmt = $pdo->prepare("SELECT * FROM inventory_items {$whereSql} ORDER BY name ASC");
+$stmt = $pdo->prepare("SELECT * FROM inventory_items {$whereSql} ORDER BY created_at DESC, id DESC");
 $stmt->execute($params);
 $rows = [];
 foreach ($stmt->fetchAll() as $r) {
@@ -539,10 +539,25 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                             <?php endforeach; ?>
                         </select>
                     </div>
-                    <div class="form-group">
+                    <!-- Add mode: starting quantity -->
+                    <div class="form-group" id="qtyGroup">
                         <label class="form-label" for="fQuantity" id="fQuantityLabel">Quantity <span style="color:var(--red)">*</span></label>
                         <input class="form-input" type="number" id="fQuantity" min="0" step="1" value="0" required>
                         <span class="form-hint" id="qtyHint">Units received. This becomes the Total Quantity.</span>
+                    </div>
+                    <!-- Edit mode: units restocked / units used -->
+                    <div class="form-group" id="addQtyGroup" style="display:none;">
+                        <label class="form-label" for="fAddQty">Add Quantity</label>
+                        <input class="form-input" type="number" id="fAddQty" min="0" step="1" value="0">
+                        <span class="form-hint" id="addQtyHint">New units received. Added to the Remaining and Total Quantity.</span>
+                    </div>
+                    <div class="form-group" id="usedQtyGroup" style="display:none;">
+                        <label class="form-label" for="fUsedQty">Used Quantity</label>
+                        <input class="form-input" type="number" id="fUsedQty" min="0" step="1" value="0">
+                        <span class="form-hint">Units used or taken out. Subtracted from the Remaining Quantity.</span>
+                    </div>
+                    <div class="form-group full" id="qtyPreviewGroup" style="display:none;">
+                        <span class="form-hint" id="qtyPreview" style="font-weight:600;"></span>
                     </div>
                     <div class="form-group">
                         <label class="form-label" for="fMinStock">Minimum Stock Level <span style="color:var(--red)">*</span></label>
@@ -657,10 +672,10 @@ function updateFromView() {
 
 /* ---------- Add / Edit modal ---------- */
 function updateExpenseHint() {
-    var qty   = parseInt(document.getElementById('fQuantity').value, 10) || 0;
     var cost  = parseFloat(document.getElementById('fCost').value) || 0;
-    var added = qty;
-    if (editingId && rowMap[editingId]) added = qty - rowMap[editingId].quantity;
+    var added = editingId
+        ? (parseInt(document.getElementById('fAddQty').value, 10) || 0)
+        : (parseInt(document.getElementById('fQuantity').value, 10) || 0);
     var hint = document.getElementById('expenseHint');
     var box  = document.getElementById('fRecordExpense');
     var syncNote = '';
@@ -676,23 +691,48 @@ function updateExpenseHint() {
         box.disabled = false;
     } else {
         hint.textContent = editingId
-            ? 'Only recorded when the quantity is increased (a restock).'
+            ? 'Only recorded when an Add Quantity is entered (a restock).'
             : 'Only recorded when the starting quantity and cost are above zero.';
         hint.textContent += syncNote;
         box.disabled = true;
     }
 }
-['fQuantity', 'fCost', 'fName'].forEach(function (id) {
+['fQuantity', 'fCost', 'fName', 'fAddQty'].forEach(function (id) {
     document.getElementById(id).addEventListener('input', updateExpenseHint);
 });
+['fAddQty', 'fUsedQty'].forEach(function (id) {
+    document.getElementById(id).addEventListener('input', updateQtyPreview);
+});
 
-/* Quantity field wording: starting stock when adding, remaining stock when editing */
+/* Live preview of the remaining stock after saving (edit mode only) */
+function updateQtyPreview() {
+    var el = document.getElementById('qtyPreview');
+    if (!editingId || !rowMap[editingId]) { el.textContent = ''; return; }
+    var r    = rowMap[editingId];
+    var add  = parseInt(document.getElementById('fAddQty').value, 10)  || 0;
+    var used = parseInt(document.getElementById('fUsedQty').value, 10) || 0;
+    var next = r.quantity + add - used;
+    if (next < 0) {
+        el.textContent = 'Used quantity is more than the stock available (' + (r.quantity + add) + ').';
+        el.style.color = 'var(--red)';
+    } else {
+        el.textContent = 'Remaining: ' + r.quantity + ' \u2192 ' + next + ' units  (Total received: ' +
+                         (r.total_quantity + add) + ')';
+        el.style.color = '';
+    }
+}
+
+/* Quantity fields: a single starting Quantity when adding; Add / Used Quantity when editing */
 function setQtyLabels(isEdit, r) {
-    document.getElementById('fQuantityLabel').innerHTML = (isEdit ? 'Remaining Quantity' : 'Quantity') +
-        ' <span style="color:var(--red)">*</span>';
-    document.getElementById('qtyHint').textContent = isEdit
-        ? 'Total received so far: ' + r.total_quantity + '. Raising this counts as a restock (adds to the total); lowering it records usage.'
-        : 'Units received. This becomes the Total Quantity.';
+    document.getElementById('qtyGroup').style.display        = isEdit ? 'none' : '';
+    document.getElementById('addQtyGroup').style.display     = isEdit ? '' : 'none';
+    document.getElementById('usedQtyGroup').style.display    = isEdit ? '' : 'none';
+    document.getElementById('qtyPreviewGroup').style.display = isEdit ? '' : 'none';
+    if (isEdit) {
+        document.getElementById('fAddQty').value  = 0;
+        document.getElementById('fUsedQty').value = 0;
+        updateQtyPreview();
+    }
 }
 
 function openAdd() {
@@ -716,7 +756,6 @@ function openEdit(id) {
 
     document.getElementById('fName').value     = r.name;
     document.getElementById('fCategory').value = r.category;
-    document.getElementById('fQuantity').value = r.quantity;
     document.getElementById('fMinStock').value = r.min_stock_level;
     document.getElementById('fCost').value     = r.cost_per_unit.toFixed(2);
     document.getElementById('fExpiry').value   = r.expiration_date || '';
@@ -756,13 +795,25 @@ function submitItemForm(e) {
     var name     = document.getElementById('fName').value.trim();
     var category = document.getElementById('fCategory').value;
     var quantity = parseInt(document.getElementById('fQuantity').value, 10);
+    var addQty   = parseInt(document.getElementById('fAddQty').value, 10);
+    var usedQty  = parseInt(document.getElementById('fUsedQty').value, 10);
     var minStock = parseInt(document.getElementById('fMinStock').value, 10);
     var cost     = parseFloat(document.getElementById('fCost').value);
     var expiry   = document.getElementById('fExpiry').value;
 
     if (!name)                              { showFormAlert('Item name is required.'); return; }
     if (!category)                          { showFormAlert('Please select a category.'); return; }
-    if (isNaN(quantity) || quantity < 0)    { showFormAlert('Quantity must be zero or more.'); return; }
+    if (!editingId && (isNaN(quantity) || quantity < 0)) { showFormAlert('Quantity must be zero or more.'); return; }
+    if (editingId) {
+        if (isNaN(addQty))  addQty  = 0;
+        if (isNaN(usedQty)) usedQty = 0;
+        if (addQty < 0)     { showFormAlert('Add quantity must be zero or more.'); return; }
+        if (usedQty < 0)    { showFormAlert('Used quantity must be zero or more.'); return; }
+        if (usedQty > rowMap[editingId].quantity + addQty) {
+            showFormAlert('Used quantity is more than the stock available (' + (rowMap[editingId].quantity + addQty) + ').');
+            return;
+        }
+    }
     if (isNaN(minStock) || minStock < 0)    { showFormAlert('Minimum stock level must be zero or more.'); return; }
     if (isNaN(cost) || cost < 0)            { showFormAlert('Cost per unit must be zero or more.'); return; }
     if (!expiry)                            { showFormAlert('Expiration date is required.'); return; }
@@ -776,13 +827,18 @@ function submitItemForm(e) {
         csrf_token:       CSRF,
         name:             name,
         category:         category,
-        quantity:         quantity,
         min_stock_level:  minStock,
         cost_per_unit:    cost,
         expiration_date:  expiry,
         record_expense:   document.getElementById('fRecordExpense').checked
     };
-    if (editingId) payload.id = editingId;
+    if (editingId) {
+        payload.id            = editingId;
+        payload.add_quantity  = addQty;
+        payload.used_quantity = usedQty;
+    } else {
+        payload.quantity = quantity;
+    }
 
     fetch('api/inventory.php', {
         method: 'POST',

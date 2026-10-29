@@ -132,6 +132,14 @@ try {
              ADD COLUMN IF NOT EXISTS `booking_type`   ENUM('registered','guest') NOT NULL DEFAULT 'registered'"
     );
 
+    // Older installs may have created payment_method as ENUM('cash') only,
+    // in which case ADD COLUMN IF NOT EXISTS above is a no-op and a GCash
+    // booking would fail to insert. Widening the ENUM is safe to re-run.
+    $pdo->exec(
+        "ALTER TABLE `bookings`
+         MODIFY COLUMN `payment_method` ENUM('cash','gcash') NULL DEFAULT 'cash'"
+    );
+
     // Companion / guest-mate names — surfaced in the UI for Swimming Pool
     // bookings (a group can list who's coming), stored as a JSON array.
     // Same additive, information_schema-agnostic pattern as the columns
@@ -231,10 +239,11 @@ if (mb_strlen($requests) > 500) {
     $fieldErrors['requests'] = 'Special requests must be 500 characters or fewer.';
 }
 
-if (!in_array($paymentMethod, ['cash'], true)) {
-    // The resort currently accepts cash only; anything else submitted
-    // (tampered request, stale client, etc.) silently falls back to cash
-    // rather than being rejected outright.
+if (!in_array($paymentMethod, ['cash', 'gcash'], true)) {
+    // The resort accepts cash and GCash (both collected in person at
+    // check-in or check-out); anything else submitted (tampered request,
+    // stale client, etc.) silently falls back to cash rather than being
+    // rejected outright.
     $paymentMethod = 'cash';
 }
 

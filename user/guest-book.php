@@ -344,7 +344,7 @@ function gb_e(string $s): string {
                 <span class="gb-section-num">3</span>
                 Payment Method
             </h2>
-            <p class="gb-section-note">Payment is collected in cash upon check-in or check-out.</p>
+            <p class="gb-section-note">Payment is collected in cash or via GCash upon check-in or check-out.</p>
 
             <div class="gb-payment-options" role="group" aria-label="Payment method">
                 <label class="gb-payment-card">
@@ -353,6 +353,14 @@ function gb_e(string $s): string {
                         <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"></rect><path d="M2 10h20M6 14h2"></path></svg>
                         <strong>Cash</strong>
                         <span>Pay in person at check-in or check-out</span>
+                    </span>
+                </label>
+                <label class="gb-payment-card">
+                    <input type="radio" name="payment_method" value="gcash">
+                    <span class="gb-payment-card-inner">
+                        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="2" width="12" height="20" rx="2"></rect><path d="M11 18h2"></path></svg>
+                        <strong>GCash</strong>
+                        <span>Pay via GCash at check-in or check-out</span>
                     </span>
                 </label>
             </div>

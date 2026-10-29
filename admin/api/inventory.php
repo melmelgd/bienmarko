@@ -7,14 +7,18 @@
  * anything submitted is looked at. Every request is POST with a JSON
  * body and an `action` field selecting what happens:
  *
- *   action=create - insert a new inventory item
- *   action=update - update an existing item by id
+ *   action=create - insert a new inventory item (starting `quantity`)
+ *   action=update - update an existing item by id. Stock is changed with
+ *                   `add_quantity` (units newly received) and
+ *                   `used_quantity` (units used / taken out); the new
+ *                   remaining stock is worked out here from what is in the
+ *                   database: remaining + add - used.
  *
  * Deleting inventory items is intentionally not supported (stock history
  * and the linked expense records must stay intact).
  *
  * Connected to Expenses: when stock is added (initial quantity on create,
- * or a higher quantity on update) and the request has record_expense=true,
+ * or an add_quantity on update) and the request has record_expense=true,
  * a 'Supplies' expense (units added x cost per unit) is written to the
  * `expenses` table in the same transaction. On update, every expense this
  * item already created is also re-priced to the item's current cost per
@@ -31,8 +35,8 @@
  *
  * Every quantity change is written to `inventory_logs` so the Monthly
  * Usage stat on the page can be computed rather than hand-typed:
- *   - a positive delta (restock) is logged with reason 'restock'
- *   - a negative delta (stock drawn down) is logged with reason 'usage'
+ *   - add_quantity (restock) is logged with reason 'restock'
+ *   - used_quantity (stock drawn down) is logged with reason 'usage'
  *   - the initial quantity on create is logged with reason 'initial'
  *     (not counted as usage)
  * -----------------------------------------------------------------------
@@ -133,11 +137,26 @@ function inv_ok(array $data = []): never
 }
 
 /**
+ * A blank / missing value counts as 0. Anything else must be a whole
+ * number, zero or more.
+ */
+function inv_whole_number(mixed $value, string $label): int
+{
+    if ($value === null || $value === '') {
+        return 0;
+    }
+    if (!is_numeric($value) || (float) $value < 0 || (float) $value != floor((float) $value)) {
+        inv_fail($label . ' must be a whole number, zero or more.');
+    }
+    return (int) $value;
+}
+
+/**
  * Shared field validation for create + update. Fails the request out
  * (via inv_fail) on the first problem found; otherwise returns clean,
  * correctly-typed data ready to bind into a query.
  */
-function inv_validate(array $body): array
+function inv_validate(array $body, bool $withQuantity = true): array
 {
     $name = trim((string) ($body['name'] ?? ''));
     if ($name === '' || mb_strlen($name) > 150) {
@@ -149,10 +168,15 @@ function inv_validate(array $body): array
         inv_fail('Please select a valid category.');
     }
 
-    if (!isset($body['quantity']) || !is_numeric($body['quantity']) || (int) $body['quantity'] < 0) {
-        inv_fail('Quantity must be zero or more.');
+    /* On update the quantity is not sent — stock moves through add_quantity /
+       used_quantity instead (see inv_whole_number + the update action). */
+    $quantity = 0;
+    if ($withQuantity) {
+        if (!isset($body['quantity']) || !is_numeric($body['quantity']) || (int) $body['quantity'] < 0) {
+            inv_fail('Quantity must be zero or more.');
+        }
+        $quantity = (int) $body['quantity'];
     }
-    $quantity = (int) $body['quantity'];
 
     if (!isset($body['min_stock_level']) || !is_numeric($body['min_stock_level']) || (int) $body['min_stock_level'] < 0) {
         inv_fail('Minimum stock level must be zero or more.');
@@ -244,28 +268,43 @@ if ($action === 'update') {
         inv_fail('Invalid item.');
     }
 
-    $existingStmt = $pdo->prepare('SELECT quantity, total_quantity FROM inventory_items WHERE id = :id');
-    $existingStmt->execute(['id' => $itemId]);
-    $existing = $existingStmt->fetch();
-    if (!$existing) {
+    $existsStmt = $pdo->prepare('SELECT id FROM inventory_items WHERE id = :id');
+    $existsStmt->execute(['id' => $itemId]);
+    if (!$existsStmt->fetch()) {
         inv_fail('Item not found.');
     }
 
-    $data = inv_validate($body);
+    $data    = inv_validate($body, false);
+    $addQty  = inv_whole_number($body['add_quantity']  ?? 0, 'Add quantity');
+    $usedQty = inv_whole_number($body['used_quantity'] ?? 0, 'Used quantity');
 
     $recordExpense = !empty($body['record_expense']);
 
-    /* Remaining went up = a restock, so the total received goes up by the same
-       amount. Remaining going down (usage) leaves the total untouched. The
-       total can never be smaller than what is on hand. */
-    $diffQty  = $data['quantity'] - (int) $existing['quantity'];
-    $newTotal = max(
-        (int) $existing['total_quantity'] + max(0, $diffQty),
-        $data['quantity']
-    );
-
     try {
         $pdo->beginTransaction();
+
+        /* Lock the row and read the CURRENT stock, so the new remaining is
+           worked out from the database, not from a page that may be stale. */
+        $lock = $pdo->prepare('SELECT quantity, total_quantity FROM inventory_items WHERE id = :id FOR UPDATE');
+        $lock->execute(['id' => $itemId]);
+        $current = $lock->fetch();
+        if (!$current) {
+            $pdo->rollBack();
+            inv_fail('Item not found.');
+        }
+
+        $currentQty = (int) $current['quantity'];
+        $available  = $currentQty + $addQty;
+        if ($usedQty > $available) {
+            $pdo->rollBack();
+            inv_fail('Used quantity is more than the stock available (' . $available . ').');
+        }
+
+        /* Remaining = what is on hand + newly added - used. The total received
+           only ever goes up (by the added units) and can never be smaller than
+           what is on hand. */
+        $newQty   = $available - $usedQty;
+        $newTotal = max((int) $current['total_quantity'] + $addQty, $newQty);
 
         $upd = $pdo->prepare(
             "UPDATE inventory_items SET
@@ -281,7 +320,7 @@ if ($action === 'update') {
         $upd->execute([
             'name'     => $data['name'],
             'category' => $data['category'],
-            'qty'      => $data['quantity'],
+            'qty'      => $newQty,
             'tqty'     => $newTotal,
             'min'      => $data['min_stock_level'],
             'cost'     => $data['cost_per_unit'],
@@ -296,26 +335,33 @@ if ($action === 'update') {
             $pdo, $itemId, $data['name'], $data['cost_per_unit']
         );
 
-        $diff      = $data['quantity'] - (int) $existing['quantity'];
         $expenseId = 0;
-        if ($diff !== 0) {
-            $reason = $diff > 0 ? 'restock' : 'usage';
+
+        /* Units added = a restock (and a purchase, if the box is ticked). */
+        if ($addQty > 0) {
             $pdo->prepare(
-                "INSERT INTO inventory_logs (item_id, change_qty, reason) VALUES (:id, :q, :reason)"
-            )->execute(['id' => $itemId, 'q' => $diff, 'reason' => $reason]);
+                "INSERT INTO inventory_logs (item_id, change_qty, reason) VALUES (:id, :q, 'restock')"
+            )->execute(['id' => $itemId, 'q' => $addQty]);
             $logId = (int) $pdo->lastInsertId();
 
-            /* Only a restock (more units) is a purchase; usage is not an expense. */
-            if ($diff > 0 && $recordExpense) {
+            if ($recordExpense) {
                 $expenseId = expense_link_record_purchase(
-                    $pdo, $itemId, $logId, $data['name'], $diff, $data['cost_per_unit']
+                    $pdo, $itemId, $logId, $data['name'], $addQty, $data['cost_per_unit']
                 );
             }
+        }
+
+        /* Units used = stock drawn down; usage is not an expense. */
+        if ($usedQty > 0) {
+            $pdo->prepare(
+                "INSERT INTO inventory_logs (item_id, change_qty, reason) VALUES (:id, :q, 'usage')"
+            )->execute(['id' => $itemId, 'q' => -$usedQty]);
         }
 
         $pdo->commit();
         inv_ok([
             'id'               => $itemId,
+            'quantity'         => $newQty,
             'expense_id'       => $expenseId,
             'expenses_updated' => $expensesUpdated,
         ]);

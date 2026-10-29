@@ -522,7 +522,7 @@ body.reveal-ready [data-reveal].is-visible {
     margin: 25px auto 0;
     color: var(--muted);
     font-family: var(--serif);
-    font-size: 40px;
+    font-size: 25px;
 }
 
 .center-button { margin-top: 60px; text-align: center; }

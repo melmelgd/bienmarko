@@ -261,8 +261,8 @@ function acc_validate_fields(array $post): array
     }
 
     $capacity = filter_var($post['capacity'] ?? null, FILTER_VALIDATE_INT);
-    if ($capacity === false || $capacity < 1 || $capacity > 50) {
-        $errors[] = 'Capacity must be a whole number between 1 and 50.';
+    if ($capacity === false || $capacity < 1) {
+        $errors[] = 'Capacity must be a whole number of 1 or more.';
     }
 
     $price = filter_var($post['price'] ?? null, FILTER_VALIDATE_FLOAT);
