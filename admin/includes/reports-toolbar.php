@@ -148,18 +148,55 @@ function render_reports_topbar_controls(?string $reportSlug, array $period): str
  * the topbar on every sub-report page (Financial, Performance, Guest
  * Insights, Inventory) — small enough to not warrant its own file, but
  * factored out since all four pages render it identically.
+ *
+ * "Print" no longer calls window.print() on the dark dashboard screen.
+ * It opens report-print.php, a purpose-built, paper-ready version of the
+ * same report (letterhead, period, only the figures an admin needs on
+ * paper) for the SAME period currently selected on screen. The report and
+ * period are worked out here from the current page + query string, so
+ * the four report pages keep calling render_reports_subheader() with no
+ * arguments, exactly as before. Pass them explicitly to override.
  */
-function render_reports_subheader(): string
+function render_reports_subheader(?string $reportSlug = null, ?array $period = null): string
 {
+    if ($reportSlug === null) {
+        $slugByPage = [
+            'report-financial.php'      => 'financial',
+            'report-performance.php'    => 'performance',
+            'report-guest-insights.php' => 'guest-insights',
+            'report-inventory.php'      => 'inventory',
+        ];
+        $reportSlug = $slugByPage[basename($_SERVER['PHP_SELF'])] ?? null;
+    }
+    if ($period === null && function_exists('reports_resolve_period')) {
+        $period = reports_resolve_period($_GET);
+    }
+
+    $printHref = null;
+    if ($reportSlug !== null && $period !== null) {
+        $printHref = 'report-print.php?report=' . urlencode($reportSlug)
+                   . '&period=' . urlencode($period['period'])
+                   . '&start='  . urlencode($period['start'])
+                   . '&end='    . urlencode($period['end'])
+                   . '&autoprint=1';
+    }
+
     ob_start();
     ?>
     <div class="rpt-subheader">
         <a href="report.php" class="rpt-back-link">
             <?php echo rpt_icon('chevron-left', 'icon-sm'); ?> Back to Reports Overview
         </a>
-        <button type="button" class="btn btn-secondary rpt-print-btn" onclick="window.print()">
-            <?php echo rpt_icon('printer', 'icon-sm'); ?> Print
-        </button>
+        <?php if ($printHref !== null): ?>
+            <a href="<?php echo htmlspecialchars($printHref, ENT_QUOTES, 'UTF-8'); ?>"
+               class="btn btn-secondary rpt-print-btn" target="_blank" rel="noopener">
+                <?php echo rpt_icon('printer', 'icon-sm'); ?> Print
+            </a>
+        <?php else: ?>
+            <button type="button" class="btn btn-secondary rpt-print-btn" onclick="window.print()">
+                <?php echo rpt_icon('printer', 'icon-sm'); ?> Print
+            </button>
+        <?php endif; ?>
     </div>
     <?php
     return ob_get_clean();

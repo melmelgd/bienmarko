@@ -288,9 +288,9 @@ function reports_financial_data(PDO $pdo, string $start, string $end): array
 
     $profit = $revenue - $expenses;
 
-    /* Revenue grouped by accommodation TYPE */
+    /* Revenue grouped by accommodation TYPE (with the number of bookings) */
     $stmt = $pdo->prepare(
-        "SELECT a.type AS label, COALESCE(SUM(b.total_amount),0) AS amount
+        "SELECT a.type AS label, COUNT(*) AS bookings, COALESCE(SUM(b.total_amount),0) AS amount
          FROM bookings b JOIN accommodations a ON a.id = b.accommodation_id
          WHERE b.status IN ($inStatuses) AND b.check_in BETWEEN :s AND :e
          GROUP BY a.type ORDER BY amount DESC"
@@ -298,45 +298,74 @@ function reports_financial_data(PDO $pdo, string $start, string $end): array
     $stmt->execute(['s' => $start, 'e' => $end]);
     $byType = $stmt->fetchAll();
 
-    /* Revenue grouped by individual accommodation NAME (top performers) */
+    /* Revenue grouped by individual accommodation (name + its type + bookings) */
     $stmt = $pdo->prepare(
-        "SELECT a.name AS label, COALESCE(SUM(b.total_amount),0) AS amount
+        "SELECT a.name AS label, a.type AS type, COUNT(*) AS bookings,
+                COALESCE(SUM(b.total_amount),0) AS amount
          FROM bookings b JOIN accommodations a ON a.id = b.accommodation_id
          WHERE b.status IN ($inStatuses) AND b.check_in BETWEEN :s AND :e
-         GROUP BY a.id, a.name ORDER BY amount DESC"
+         GROUP BY a.id, a.name, a.type ORDER BY amount DESC"
     );
     $stmt->execute(['s' => $start, 'e' => $end]);
     $byAccommodation = $stmt->fetchAll();
 
-    /* Payment collection status */
+    /* Payment collection — measured over the SAME bookings that make up
+       Revenue above (Confirmed + Completed, check-in inside the period),
+       so Revenue, Collected and Outstanding always describe one set of
+       bookings.
+         collected   = money actually received so far (payments.total_paid,
+                       which already accumulates partial payments)
+         outstanding = what is still owed: billed amount minus what was
+                       received, never below zero — the same formula the
+                       Payments page uses for its "Outstanding Balance".
+       A booking with no payments row yet is simply unpaid. */
     $stmt = $pdo->prepare(
-        "SELECT COALESCE(SUM(p.total_paid),0) AS amt, COUNT(*) AS cnt
-         FROM payments p JOIN bookings b ON b.id = p.booking_id
-         WHERE p.payment_status = 'paid' AND b.check_in BETWEEN :s AND :e"
-    );
-    $stmt->execute(['s' => $start, 'e' => $end]);
-    $paidRow = $stmt->fetch();
-
-    $stmt = $pdo->prepare(
-        "SELECT COALESCE(SUM(b.total_amount),0) AS amt, COUNT(*) AS cnt
+        "SELECT COUNT(*) AS bookings,
+                COALESCE(SUM(COALESCE(p.total_paid, 0)), 0) AS collected,
+                COALESCE(SUM(GREATEST(b.total_amount - COALESCE(p.total_paid, 0), 0)), 0) AS outstanding,
+                COALESCE(SUM(CASE WHEN COALESCE(p.total_paid, 0) > 0 THEN 1 ELSE 0 END), 0) AS received_cnt,
+                COALESCE(SUM(CASE WHEN b.total_amount - COALESCE(p.total_paid, 0) > 0.004 THEN 1 ELSE 0 END), 0) AS balance_cnt,
+                COALESCE(SUM(CASE WHEN p.payment_status = 'paid' THEN 1 ELSE 0 END), 0) AS fully_paid_cnt,
+                COALESCE(SUM(CASE WHEN p.payment_status = 'partial' THEN 1 ELSE 0 END), 0) AS partial_cnt,
+                COALESCE(SUM(CASE WHEN p.id IS NULL OR p.payment_status = 'unpaid' THEN 1 ELSE 0 END), 0) AS unpaid_cnt
          FROM bookings b LEFT JOIN payments p ON p.booking_id = b.id
-         WHERE b.status IN ('confirmed','pending')
-           AND (p.payment_status IS NULL OR p.payment_status != 'paid')
-           AND b.check_in BETWEEN :s AND :e"
+         WHERE b.status IN ($inStatuses) AND b.check_in BETWEEN :s AND :e"
     );
     $stmt->execute(['s' => $start, 'e' => $end]);
-    $pendingRow = $stmt->fetch();
+    $pay = $stmt->fetch();
+
+    /* Expenses grouped by category (so the printed report can show WHERE
+       the money went, not just the total) */
+    $stmt = $pdo->prepare(
+        "SELECT category AS label, COUNT(*) AS entries, COALESCE(SUM(amount),0) AS amount
+         FROM expenses WHERE expense_date BETWEEN :s AND :e
+         GROUP BY category ORDER BY amount DESC"
+    );
+    $stmt->execute(['s' => $start, 'e' => $end]);
+    $expensesByCategory = $stmt->fetchAll();
 
     return [
-        'revenue'         => $revenue,
-        'expenses'        => $expenses,
-        'profit'          => $profit,
-        'byType'          => $byType,
-        'byAccommodation' => $byAccommodation,
-        'paidTotal'       => (float) $paidRow['amt'],
-        'paidCount'       => (int) $paidRow['cnt'],
-        'pendingTotal'    => (float) $pendingRow['amt'],
-        'pendingCount'    => (int) $pendingRow['cnt'],
+        'revenue'            => $revenue,
+        'expenses'           => $expenses,
+        'profit'             => $profit,
+        'byType'             => $byType,
+        'byAccommodation'    => $byAccommodation,
+        'expensesByCategory' => $expensesByCategory,
+
+        'bookingCount'       => (int) $pay['bookings'],
+        'collected'          => (float) $pay['collected'],
+        'outstanding'        => (float) $pay['outstanding'],
+        'fullyPaidCount'     => (int) $pay['fully_paid_cnt'],
+        'partialCount'       => (int) $pay['partial_cnt'],
+        'unpaidCount'        => (int) $pay['unpaid_cnt'],
+
+        /* Existing keys used by report-financial.php and reports-export.php
+           ("Paid" / "Pending"). Same names, now backed by the corrected
+           figures: Paid = money received, Pending = balance still owed. */
+        'paidTotal'          => (float) $pay['collected'],
+        'paidCount'          => (int) $pay['received_cnt'],
+        'pendingTotal'       => (float) $pay['outstanding'],
+        'pendingCount'       => (int) $pay['balance_cnt'],
     ];
 }
 
@@ -413,17 +442,24 @@ function reports_performance_data(PDO $pdo, string $start, string $end): array
         $vals = $occupancy[$t];
         $avg  = array_sum($vals) / 12;
 
+        /* A run beats the current best if it is longer, or equally long
+           but busier overall — so two one-month "peaks" resolve to the
+           busier month instead of simply the earlier one. */
+        $runTotal = fn(array $run) => array_sum(array_map(fn($m) => $vals[$m], $run));
+        $beats    = fn(array $run, array $best) => count($run) > count($best)
+            || (count($run) === count($best) && count($run) > 0 && $runTotal($run) > $runTotal($best));
+
         $bestRun = [];
         $curRun  = [];
         for ($m = 1; $m <= 12; $m++) {
             if ($avg > 0 && $vals[$m] >= $avg) {
                 $curRun[] = $m;
             } else {
-                if (count($curRun) > count($bestRun)) $bestRun = $curRun;
+                if ($beats($curRun, $bestRun)) $bestRun = $curRun;
                 $curRun = [];
             }
         }
-        if (count($curRun) > count($bestRun)) $bestRun = $curRun;
+        if ($beats($curRun, $bestRun)) $bestRun = $curRun;
 
         if (empty($bestRun)) {
             $peak[$t] = ['label' => 'No data', 'pct' => 0];
@@ -440,17 +476,18 @@ function reports_performance_data(PDO $pdo, string $start, string $end): array
         "SELECT a.type AS label, COUNT(*) AS bookings, COALESCE(SUM(b.total_amount),0) AS revenue
          FROM bookings b JOIN accommodations a ON a.id = b.accommodation_id
          WHERE b.status IN ($inStatuses) AND b.check_in BETWEEN :s AND :e
-         GROUP BY a.type ORDER BY bookings DESC"
+         GROUP BY a.type ORDER BY bookings DESC, revenue DESC, a.type ASC"
     );
     $stmt->execute(['s' => $start, 'e' => $end]);
     $rankings = $stmt->fetchAll();
 
     return [
-        'types'     => $types,
-        'occupancy' => $occupancy,
-        'peak'      => $peak,
-        'rankings'  => $rankings,
-        'year'      => $year,
+        'types'      => $types,
+        'unitCounts' => $typeCounts,   // how many accommodation units exist per type
+        'occupancy'  => $occupancy,
+        'peak'       => $peak,
+        'rankings'   => $rankings,
+        'year'       => $year,
     ];
 }
 
@@ -466,7 +503,7 @@ function reports_guest_insights_data(PDO $pdo, string $start, string $end): arra
 
     /* Total guests active within the period (registered + walk-in, deduped) */
     $stmt = $pdo->prepare(
-        "SELECT COUNT(DISTINCT COALESCE(CAST(b.guest_id AS CHAR), CONCAT('g:', b.guest_name, ':', b.email)))
+        "SELECT COUNT(DISTINCT COALESCE(CAST(b.guest_id AS CHAR), CONCAT('g:', COALESCE(b.guest_name, ''), ':', COALESCE(b.email, ''))))
          FROM bookings b
          WHERE b.status IN ($activeStatuses) AND b.check_in BETWEEN :s AND :e"
     );
@@ -488,9 +525,12 @@ function reports_guest_insights_data(PDO $pdo, string $start, string $end): arra
     $stmt->execute(['s' => $start, 'e' => $end]);
     $repeatGuests = (int) $stmt->fetchColumn();
 
-    /* Average guest rating (all-time, published feedback only) */
-    $avgRatingRaw = $pdo->query("SELECT AVG(rating) FROM feedback WHERE is_published = 1")->fetchColumn();
+    /* Average guest rating (all-time, published feedback only) + how many
+       published reviews it is based on */
+    $ratingRow    = $pdo->query("SELECT AVG(rating) AS avg_rating, COUNT(*) AS cnt FROM feedback WHERE is_published = 1")->fetch();
+    $avgRatingRaw = $ratingRow['avg_rating'] ?? null;
     $avgRating    = $avgRatingRaw !== null ? round((float) $avgRatingRaw, 1) : null;
+    $ratingCount  = (int) ($ratingRow['cnt'] ?? 0);
 
     /* Top returning guests (registered, all-time visit count).
        A guest only counts as "returning" once they have booked at least
@@ -504,7 +544,7 @@ function reports_guest_insights_data(PDO $pdo, string $start, string $end): arra
          JOIN bookings b ON b.guest_id = g.id AND b.status IN ($activeStatuses)
          GROUP BY g.id, g.first_name, g.last_name, g.country
          HAVING COUNT(b.id) >= :minv
-         ORDER BY visits DESC
+         ORDER BY visits DESC, name ASC
          LIMIT 5"
     );
     $stmt->bindValue('minv', $minVisits, PDO::PARAM_INT);
@@ -533,6 +573,7 @@ function reports_guest_insights_data(PDO $pdo, string $start, string $end): arra
         'totalGuests'  => $totalGuests,
         'repeatGuests' => $repeatGuests,
         'avgRating'    => $avgRating,
+        'ratingCount'  => $ratingCount,
         'topGuests'    => $topGuests,
     ];
 }
@@ -589,7 +630,7 @@ function reports_inventory_data(PDO $pdo, string $start, string $end): array
         $used  = (int) $u['used'];
         $denom = $used + (int) $u['quantity'];
         $rate  = $denom > 0 ? (int) round(($used / $denom) * 100) : 0;
-        $mostUsed[] = ['name' => $u['name'], 'used' => $used, 'pct' => $rate];
+        $mostUsed[] = ['name' => $u['name'], 'used' => $used, 'stock' => (int) $u['quantity'], 'pct' => $rate];
     }
 
     return [
