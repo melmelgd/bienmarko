@@ -346,9 +346,9 @@ html.ppm-lock body {
                     <path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10"></path>
                 </svg>
             </span>
-            <div>
+            <div onclick="window.location.href='index.html';">
                 <div class="lobby__brand-name"><?php echo htmlspecialchars($siteName); ?></div>
-                <div class="lobby__brand-tagline"><?php echo htmlspecialchars($siteTagline); ?></div>
+                <div class="lobby__brand-tagline" style="font-size: 28px;">Pension House</div>
             </div>
         </div>
 

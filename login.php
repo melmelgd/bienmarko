@@ -54,7 +54,7 @@ $siteTagline = $siteBrand['full'];
             </span>
             <div>
                 <div class="lobby__brand-name"><?php echo htmlspecialchars($siteName); ?></div>
-                <div class="lobby__brand-tagline"><?php echo htmlspecialchars($siteTagline); ?></div>
+                <div class="lobby__brand-tagline" style="font-size: 28px;">Pension House</div>
             </div>
         </div>
 
