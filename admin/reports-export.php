@@ -9,6 +9,9 @@
  * Reuses the exact same reports_*_data() functions the on-screen pages
  * call — the export can't drift from what's displayed because it's
  * running the same queries over the same resolved date range.
+ *
+ * PDF output is laid out by includes/report-pdf.php so it matches the
+ * paper version in report-print.php. XLSX is unchanged.
  * -----------------------------------------------------------------------
  */
 require_once __DIR__ . '/../includes/auth-common.php';
@@ -19,6 +22,7 @@ bienmarko_require_role('admin');
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/reports-data.php';
 require_once __DIR__ . '/includes/simple-pdf.php';
+require_once __DIR__ . '/includes/report-pdf.php';
 require_once __DIR__ . '/includes/simple-xlsx.php';
 
 $pdo = bienmarko_db();
@@ -40,6 +44,12 @@ $period = reports_resolve_period($_GET);
 require_once __DIR__ . '/../includes/site-settings.php';
 $subtitle = bienmarko_site_name() . ' · ' . $period['label'];
 $dateStamp = date('Y-m-d');
+
+/* PDF: same layout as the print page (letterhead, KPI boxes, tables, notes).
+   Streams the file and exits, so the XLSX data-building below only runs for xlsx. */
+if ($format === 'pdf') {
+    pdf_render_print_report($pdo, $report, $period, 'bienmarko-' . $report . '-report-' . $dateStamp . '.pdf');
+}
 
 switch ($report) {
 
@@ -148,8 +158,4 @@ switch ($report) {
 
 $filenameBase = 'bienmarko-' . $report . '-report-' . $dateStamp;
 
-if ($format === 'pdf') {
-    pdf_render_report($filenameBase . '.pdf', $title, $subtitle, $summary, $headers, $rows);
-} else {
-    export_xlsx($filenameBase . '.xlsx', $xlsxHeaders, $xlsxRows);
-}
+export_xlsx($filenameBase . '.xlsx', $xlsxHeaders, $xlsxRows);

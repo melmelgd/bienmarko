@@ -231,7 +231,7 @@ $tourUrl  = $tourFile !== '' ? 'admin/assets/uploads/tours/' . rawurlencode($tou
 $listing    = $listingPages[$category];
 $guestUrl   = 'user/guest-book.php?room=' . rawurlencode($name);
 $bookUrl    = 'user/book.php?room=' . rawurlencode($name);   // registered users (reached through login)
-$loginUrl   = 'user/login.php';
+$loginUrl   = 'login.php';
 $priceText  = '₱' . number_format($price, 2);
 
 $jsData = [
@@ -508,7 +508,7 @@ button{font:inherit;color:inherit}
         </div>
     </div>
 
-    <p class="ad-hint">Have an account? <a href="user/login.php">Log in</a> or <a href="user/register.php">create one</a> to manage your bookings later.</p>
+    <p class="ad-hint">Have an account? <a href="login.php">Log in</a> or <a href="register.php">create one</a> to manage your bookings later.</p>
 
     <?php if ($blocked): ?>
         <p class="ad-notice" role="status">
