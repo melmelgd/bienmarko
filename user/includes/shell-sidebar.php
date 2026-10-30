@@ -68,7 +68,6 @@ $shellCurrent     = $currentPage ?? '';
             <span class="shell-brand__logo"><?php bm_inline_icon('house'); ?></span>
             <span class="shell-brand__text">
                 <span class="shell-brand__name"><?php echo htmlspecialchars(SITE_NAME); ?></span>
-                <span class="shell-brand__tagline"><?php echo htmlspecialchars(SITE_TAGLINE); ?></span>
             </span>
         </a>
     </div>

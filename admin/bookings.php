@@ -891,7 +891,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                                 <?php endforeach; ?>
                             </select>
                             <span class="form-label" id="nbPoolHint" style="display:none;color:var(--gold-400);margin-top:4px;">
-                                This is a Swimming Pool — every guest pays the full per-person price, and the pool is shared by other bookings up to its capacity for the same dates and session.
+                                This is a Swimming Pool — ₱1,000 flat for 1 to 10 guests, or the per-person price each for 11 or more guests, and the pool is shared by other bookings up to its capacity for the same dates and session.
                             </span>
                         </div>
                         <div class="form-group full" id="nbSessionGroup" style="display:none;">
@@ -1018,7 +1018,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                                 <?php endforeach; ?>
                             </select>
                             <span class="form-label" id="edPoolHint" style="display:none;color:var(--gold-400);margin-top:4px;">
-                                This is a Swimming Pool — every guest pays the full per-person price, and the pool is shared by other bookings up to its capacity for the same dates and session.
+                                This is a Swimming Pool — ₱1,000 flat for 1 to 10 guests, or the per-person price each for 11 or more guests, and the pool is shared by other bookings up to its capacity for the same dates and session.
                             </span>
                         </div>
                         <div class="form-group full" id="edSessionGroup" style="display:none;">
@@ -1345,6 +1345,15 @@ document.getElementById('newBookingModal').addEventListener('click', function (e
 // facing booking flows. Additional guest names can be logged for any
 // accommodation whose capacity allows more than one guest — not just
 // Swimming Pool — mirroring the guest-facing booking flows.
+/* Swimming Pool pricing — mirrors bk_pool_fee() in includes/booking-stay.php */
+var POOL_MIN_GUESTS = <?php echo (int) BK_POOL_MIN_GUESTS; ?>;
+var POOL_MIN_CHARGE = <?php echo json_encode((float) BK_POOL_MIN_CHARGE); ?>;
+function poolFee(price, guests, days) {
+    guests = Math.max(1, guests || 1);
+    days   = Math.max(1, days   || 1);
+    var perDay = guests <= POOL_MIN_GUESTS ? POOL_MIN_CHARGE : price * guests;
+    return Math.round(perDay * days * 100) / 100;
+}
 function calcTotal() {
     var sel      = document.getElementById('nbAccomSelect');
     var opt      = sel.options[sel.selectedIndex];
@@ -1382,9 +1391,9 @@ function calcTotal() {
     if (nights < 1) { document.getElementById('nbTotal').value = ''; return; }
 
     var guests = Math.max(1, parseInt(guestsEl.value, 10) || 1);
-    // Pool: EVERY guest pays the full per-person price (5 guests x ₱150 = ₱750),
-    // for each day booked. Other accommodations: price per night.
-    var total  = isPool ? (guests * price * nights) : (nights * price);
+    // Pool: flat ₱1,000 for 1-10 guests; 11+ guests pay the per-person price
+    // each (11 x ₱150 = ₱1,650), for each day booked. Others: price per night.
+    var total  = isPool ? poolFee(price, guests, nights) : (nights * price);
 
     document.getElementById('nbTotal').value = '₱' + total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
@@ -1850,8 +1859,9 @@ function edCalcTotal() {
     if (nights < 1) { document.getElementById('edTotal').value = ''; return; }
 
     var guests = Math.max(1, parseInt(guestsEl.value, 10) || 1);
-    // Pool: every guest pays the full per-person price, for each day booked.
-    var total  = isPool ? (guests * price * nights) : (nights * price);
+    // Pool: flat ₱1,000 for 1-10 guests; 11+ guests pay the per-person price
+    // each, for each day booked. Others: price per night.
+    var total  = isPool ? poolFee(price, guests, nights) : (nights * price);
 
     document.getElementById('edTotal').value = '₱' + total.toLocaleString('en-PH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }

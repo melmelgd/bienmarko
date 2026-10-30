@@ -411,10 +411,11 @@ if ($action === 'create') {
     }
 
     $nights = max(1, (int) ceil((strtotime($checkOut) - strtotime($checkIn)) / 86400));
-    // Pool = price per PERSON (every guest pays the full pool price) for
-    // each day booked. Every other accommodation = price per night.
+    // Pool = flat ₱1,000 for 1-10 guests; 11+ guests pay the per-person
+    // price each (see bk_pool_fee), for each day booked.
+    // Every other accommodation = price per night.
     $total  = $isPool
-        ? round((float) $room['price'] * $guestsCount * $nights, 2)
+        ? bk_pool_fee((float) $room['price'], $guestsCount, $nights)
         : round((float) $room['price'] * $nights, 2);
 
     /* --- Conflict / capacity check (row-level lock) --- */
@@ -628,9 +629,10 @@ if ($action === 'update') {
     }
 
     $nights = max(1, (int) ceil((strtotime($checkOut) - strtotime($checkIn)) / 86400));
-    // Pool = price per PERSON for each day booked; everything else per night.
+    // Pool = flat ₱1,000 for 1-10 guests; 11+ guests pay the per-person
+    // price each (see bk_pool_fee), for each day booked. Others per night.
     $total  = $isPool
-        ? round((float) $room['price'] * $guestsCount * $nights, 2)
+        ? bk_pool_fee((float) $room['price'], $guestsCount, $nights)
         : round((float) $room['price'] * $nights, 2);
 
     /* --- Conflict / capacity check, excluding this booking itself --- */

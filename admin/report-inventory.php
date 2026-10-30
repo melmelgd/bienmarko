@@ -73,12 +73,20 @@ $statusMeta = [
     </div>
   </div>
 
+  <style>
+    /* Header and body cells share the same padding so titles line up with data */
+    .rpt-inv-table th,
+    .rpt-inv-table td { padding: 12px 16px; text-align: left; vertical-align: middle; }
+    .rpt-inv-table tbody tr { border-bottom: 1px solid var(--border); }
+    .rpt-inv-table tbody tr:last-child { border-bottom: none; }
+  </style>
+
   <div class="panel panel-pad">
     <?php if (empty($data['items'])): ?>
       <?php render_empty_state('boxes', 'No inventory items yet', 'Items added on the Inventory page will show up here.'); ?>
     <?php else: ?>
       <div class="table-scroll">
-        <table>
+        <table class="rpt-inv-table">
           <thead>
             <tr>
               <th>Item Name</th>

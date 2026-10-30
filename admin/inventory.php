@@ -267,6 +267,9 @@ $rowsJson = json_encode(array_map(function ($r) {
 /* Table */
 .table-head { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 0; margin-bottom: 14px; }
 .results-count { font-size: 12.5px; color: var(--text-secondary); }
+/* Header cells use the exact same horizontal padding as body cells so the
+   column titles line up with the data underneath them. */
+thead th { padding: 12px 14px; text-align: left; font-size: 13.5px; }
 tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; cursor: pointer; }
 tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--panel-alt); }

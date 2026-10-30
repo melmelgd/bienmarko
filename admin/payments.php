@@ -292,11 +292,11 @@ $rowsJson = json_encode(array_map(function ($r) {
     $payStatus = $r['payment_status'] ?? 'unpaid';
     $isPool    = strcasecmp(trim((string) $r['room_type']), 'Swimming Pool') === 0;
     /* Default accommodation fee when no bill has been saved yet:
-         Swimming Pool -> price PER PERSON x number of guests x days
-                          (5 guests at ₱150 = ₱750: every guest pays the full price)
+         Swimming Pool -> 1-10 guests: flat ₱1,000 per day
+                          11+ guests: price PER PERSON x guests (11 x ₱150 = ₱1,650)
          Everything else -> price x nights                                    */
     $defaultFee = $isPool
-        ? round((float) $r['room_price'] * (int) $r['guests_count'] * $nights, 2)
+        ? bk_pool_fee((float) $r['room_price'], (int) $r['guests_count'], $nights)
         : round((float) $r['room_price'] * $nights, 2);
     return [
         'booking_id'      => (int) $r['booking_id'],
@@ -527,7 +527,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .receipt-ref    { text-align: center; font-size: 11px; background: #f5f5f5; padding: 6px; border-radius: 4px; margin: 10px 0; letter-spacing: .04em; }
 .receipt-actions { display: flex; gap: 10px; justify-content: center; margin-top: 20px; }
 .receipt-btn { padding: 8px 18px; border-radius: 4px; font-size: 13px; font-weight: 600; border: 1px solid #ccc; cursor: pointer; }
-.receipt-btn--print { background: #8b6914; color: #fff; border-color: #8b6914; }
 .receipt-btn--close { background: #f5f5f5; color: #333; }
 
 /* Toast */
@@ -918,7 +917,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
             <span id="rcDate" style="margin-top:4px;display:block;"></span>
         </div>
         <div class="receipt-actions">
-            <button class="receipt-btn receipt-btn--print" onclick="window.print()">Print</button>
             <button class="receipt-btn receipt-btn--close" onclick="closeReceipt()">Close</button>
         </div>
     </div>
@@ -936,6 +934,15 @@ var ROWS     = <?php echo $rowsJson; ?>;
 var CSRF     = <?php echo json_encode($csrf); ?>;
 var BILL_MAX_PCT = <?php echo json_encode(BIENMARKO_MAX_DISCOUNT_PERCENT); ?>; // same limit the server enforces
 var billSaving   = false;
+/* Swimming Pool pricing — mirrors bk_pool_fee() in includes/booking-stay.php */
+var POOL_MIN_GUESTS = <?php echo (int) BK_POOL_MIN_GUESTS; ?>;
+var POOL_MIN_CHARGE = <?php echo json_encode((float) BK_POOL_MIN_CHARGE); ?>;
+function poolFee(price, guests, days) {
+    guests = Math.max(1, guests || 1);
+    days   = Math.max(1, days   || 1);
+    var perDay = guests <= POOL_MIN_GUESTS ? POOL_MIN_CHARGE : price * guests;
+    return Math.round(perDay * days * 100) / 100;
+}
 var rowMap   = {};
 ROWS.forEach(function (r) { rowMap[r.booking_id] = r; });
 
@@ -987,12 +994,19 @@ function openBilling(bid) {
         ? (r.pool_session.charAt(0).toUpperCase() + r.pool_session.slice(1))
         : 'Day & Night';
     document.getElementById('billGuests').textContent    = r.guests_count;
-    /* Swimming Pool: every guest pays the full per-person price. */
+    /* Swimming Pool: flat ₱1,000 for 1-10 guests, per-person price for 11+. */
     var feeHint = document.getElementById('fRoomFeeHint');
     if (r.is_pool) {
-        feeHint.textContent = 'Pool is per person: ' + BillingCalc.peso(r.room_price) + ' × ' + r.guests_count +
-            ' guest' + (r.guests_count === 1 ? '' : 's') + (r.nights > 1 ? ' × ' + r.nights + ' days' : '') +
-            ' = ' + BillingCalc.peso(r.room_price * r.guests_count * r.nights);
+        var daysTxt = r.nights > 1 ? ' × ' + r.nights + ' days' : '';
+        if (r.guests_count <= POOL_MIN_GUESTS) {
+            feeHint.textContent = 'Pool flat rate for up to ' + POOL_MIN_GUESTS + ' guests: ' +
+                BillingCalc.peso(POOL_MIN_CHARGE) + daysTxt +
+                ' = ' + BillingCalc.peso(poolFee(r.room_price, r.guests_count, r.nights));
+        } else {
+            feeHint.textContent = 'Pool is per person (over ' + POOL_MIN_GUESTS + ' guests): ' +
+                BillingCalc.peso(r.room_price) + ' × ' + r.guests_count + ' guests' + daysTxt +
+                ' = ' + BillingCalc.peso(poolFee(r.room_price, r.guests_count, r.nights));
+        }
         feeHint.style.display = '';
     } else {
         feeHint.style.display = 'none';

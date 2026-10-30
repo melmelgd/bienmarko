@@ -111,6 +111,29 @@ function bk_pool_session_label(?string $session): string
 }
 
 /**
+ * SWIMMING POOL PRICING  (single source of truth, used by the booking
+ * API, the bookings page and the payments page)
+ * -----------------------------------------------------------------------
+ *   1 … 10 guests  -> flat BK_POOL_MIN_CHARGE (₱1,000) for the day
+ *   11 or more     -> pool price per person x guests (e.g. 11 x ₱150 = ₱1,650)
+ *
+ * Multiplied by the number of days booked. To change the rule, edit the two
+ * constants below (and the matching JS in bookings.php / payments.php).
+ */
+const BK_POOL_MIN_GUESTS = 10;       // group size covered by the flat charge
+const BK_POOL_MIN_CHARGE = 1000.00;  // flat charge (₱) per day for that group
+
+function bk_pool_fee(float $pricePerPerson, int $guests, int $days = 1): float
+{
+    $guests = max(1, $guests);
+    $days   = max(1, $days);
+    $perDay = $guests <= BK_POOL_MIN_GUESTS
+        ? BK_POOL_MIN_CHARGE
+        : $pricePerPerson * $guests;
+    return round($perDay * $days, 2);
+}
+
+/**
  * SQL condition (uses the named parameter :psess) matching every booking
  * that occupies the given pool session: same session, or an old pool
  * booking with no session recorded (it blocks both).
