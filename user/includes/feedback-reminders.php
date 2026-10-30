@@ -34,7 +34,9 @@ if (!defined('BM_FB_SMTP_HOST')) define('BM_FB_SMTP_HOST', 'smtp.gmail.com');
 if (!defined('BM_FB_SMTP_PORT')) define('BM_FB_SMTP_PORT', 587);
 if (!defined('BM_FB_SMTP_USER')) define('BM_FB_SMTP_USER', getenv('BM_SMTP_USER') ?: ''); // yourhotel@gmail.com
 if (!defined('BM_FB_SMTP_PASS')) define('BM_FB_SMTP_PASS', getenv('BM_SMTP_PASS') ?: ''); // 16-char app password
-if (!defined('BM_FB_FROM_NAME')) define('BM_FB_FROM_NAME', "Bien Marko's Pension House");
+// Sender / hotel name in the reminder email = property name from Admin > Settings.
+require_once __DIR__ . '/../../includes/site-settings.php';
+if (!defined('BM_FB_FROM_NAME')) define('BM_FB_FROM_NAME', bienmarko_site_name());
 
 /* ------------------------------------------------------------------
    Schema

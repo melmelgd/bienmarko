@@ -2,6 +2,7 @@
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/auth-common.php';
+require_once __DIR__ . '/../includes/site-settings.php';
 
 bienmarko_start_session();
 
@@ -110,14 +111,18 @@ $csrf = bienmarko_csrf_token();
 function gb_e(string $s): string {
     return htmlspecialchars($s, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 }
+
+// Property name from Admin > Settings > General
+$gbBrand = bienmarko_site_brand();
+$gbName  = $gbBrand['full'];
 ?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Guest Booking — Bien Marko's Pension House</title>
-<meta name="description" content="Book a room at Bien Marko's Pension House without creating an account.">
+<title>Guest Booking — <?php echo gb_e($gbName); ?></title>
+<meta name="description" content="Book a room at <?php echo gb_e($gbName); ?> without creating an account.">
 <meta name="robots" content="noindex">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -128,9 +133,9 @@ function gb_e(string $s): string {
 
 <!-- ═══ HEADER ═══════════════════════════════════════════════════════ -->
 <header class="gb-header">
-    <a class="gb-brand" href="../index.html" aria-label="Back to Bien Marko's Pension House homepage">
-        <span>Bien Marko's</span>
-        <strong>Pension House</strong>
+    <a class="gb-brand" href="../index.html" aria-label="Back to <?php echo gb_e($gbName); ?> homepage">
+        <span><?php echo gb_e($gbBrand['short']); ?></span>
+        <strong><?php echo gb_e($gbBrand['rest']); ?></strong>
     </a>
     <nav class="gb-header-nav">
         <a href="../login.php">Log in</a>
@@ -442,7 +447,7 @@ function gb_e(string $s): string {
                 <strong id="gbConfirmGuests">—</strong>
             </div>
         </div>
-        <p class="gb-success-note">Once submitted, this request will be sent to Bien Marko's Pension House for confirmation.</p>
+        <p class="gb-success-note">Once submitted, this request will be sent to <?php echo gb_e($gbName); ?> for confirmation.</p>
         <div class="gb-confirm-actions">
             <button type="button" class="gb-btn gb-btn--outline" id="gbConfirmBackBtn">Go Back</button>
             <button type="button" class="gb-btn gb-btn--gold" id="gbConfirmYesBtn">

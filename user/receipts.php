@@ -8,6 +8,8 @@ require_once __DIR__ . '/../includes/db.php';
 
 require __DIR__ . '/includes/bootstrap.php';
 
+$siteInfo = bienmarko_site_settings();
+
 $currentPage = 'receipts';
 $pageTitle   = 'Receipts';
 
@@ -293,8 +295,8 @@ require __DIR__ . '/includes/head.php';
 <div class="rc-overlay" id="rcOverlay">
     <div class="rc-box" id="rcBox">
         <div class="rc-box__logo">
-            <div class="rc-box__name">Bien Marko's Pension House</div>
-            <div class="rc-box__sub">1st Ave Street, Poblacion, Tabango, Leyte</div>
+            <div class="rc-box__name"><?php echo bienmarko_site_h($siteInfo['name']); ?></div>
+            <div class="rc-box__sub"><?php echo bienmarko_site_h($siteInfo['address']); ?></div>
         </div>
         <div class="rc-box__title">OFFICIAL RECEIPT</div>
         <div class="rc-box__ref" id="rcRef">REF: —</div>
@@ -319,7 +321,7 @@ require __DIR__ . '/includes/head.php';
         <div class="rc-row"><span class="rc-row__label">Balance</span>        <span class="rc-row__value" id="rcBalance">—</span></div>
         <hr class="rc-divider">
         <div class="rc-box__footer">
-            Thank you for choosing Bien Marko's Pension House!<br>
+            Thank you for choosing <?php echo bienmarko_site_h($siteInfo['name']); ?>!<br>
             We hope to see you again soon.<br>
             <span id="rcPrintedAt" style="margin-top:4px;display:block;"></span>
         </div>

@@ -1,6 +1,7 @@
 <?php
 
 require_once __DIR__ . '/includes/auth-common.php';
+require_once __DIR__ . '/includes/site-settings.php';
 
 bienmarko_start_session();
 
@@ -22,8 +23,10 @@ $resetNotice = isset($_GET['reset']) && $_GET['reset'] === '1'
 
 $loginEndpoint = 'user/api/auth.php';
 
-$siteName    = 'BienMarko';
-$siteTagline = "Bien Marko's Pension House";
+// Both come from Admin > Settings > General (property name).
+$siteBrand   = bienmarko_site_brand();
+$siteName    = $siteBrand['short'];
+$siteTagline = $siteBrand['full'];
 ?>
 <!DOCTYPE html>
 <html lang="en">

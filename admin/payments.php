@@ -15,6 +15,7 @@ bienmarko_start_session();
 bienmarko_require_role('admin');
 
 require_once __DIR__ . '/../includes/db.php';
+require_once __DIR__ . '/../includes/site-settings.php';
 require_once __DIR__ . '/includes/ui.php';
 require_once __DIR__ . '/includes/billing-calc.php';
 require_once __DIR__ . '/includes/booking-stay.php';
@@ -886,8 +887,8 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 <div class="receipt-overlay" id="receiptOverlay">
     <div class="receipt-box" id="receiptBox">
         <div class="receipt-logo">
-            <div class="receipt-logo-name">Bien Marko's Pension House</div>
-            <div class="receipt-logo-sub">1st Ave Street, Poblacion, Tabango, Leyte</div>
+            <div class="receipt-logo-name"><?php echo bienmarko_site_h(bienmarko_site_settings()['name']); ?></div>
+            <div class="receipt-logo-sub"><?php echo bienmarko_site_h(bienmarko_site_settings()['address']); ?></div>
         </div>
         <div style="text-align:center;font-size:13px;font-weight:700;margin-bottom:8px;">OFFICIAL RECEIPT</div>
         <div class="receipt-ref" id="rcRef">REF: —</div>
@@ -912,7 +913,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
         <div class="receipt-row"><span class="receipt-row-label">Balance</span>            <span class="receipt-row-value" id="rcBalance">—</span></div>
         <hr class="receipt-divider">
         <div class="receipt-footer">
-            Thank you for choosing Bien Marko's Pension House!<br>
+            Thank you for choosing <?php echo bienmarko_site_h(bienmarko_site_settings()['name']); ?>!<br>
             We hope to see you again soon.<br>
             <span id="rcDate" style="margin-top:4px;display:block;"></span>
         </div>

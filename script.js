@@ -64,8 +64,59 @@ document.addEventListener("DOMContentLoaded", () => {
     const openButtons = document.querySelectorAll("[data-open-map]");
     const closeButton = document.querySelector("[data-close-map]");
     const locationButton = document.querySelector("[data-use-location]");
-    const destination = "Bien Marko's Pension House, Tabango, Leyte";
+    let destination = "Bien Marko's Pension House, Tabango, Leyte";
     let lastFocusedEl = null;
+
+    /* ---------- live property details (Admin > Settings > General) ----------
+       Fetches the name / phone / email / address saved by the admin and
+       fills every element marked data-site-*. Anything that is empty or if
+       the request fails simply keeps the static text already in the HTML. */
+    (function applySiteSettings() {
+        fetch("api/site-settings.php", { headers: { Accept: "application/json" } })
+            .then((response) => response.json())
+            .then((data) => {
+                if (!data || !data.success || !data.settings) return;
+                const s = data.settings;
+                const setText = (selector, value) => {
+                    if (!value) return;
+                    document.querySelectorAll(selector).forEach((el) => { el.textContent = value; });
+                };
+
+                setText("[data-site-name]", s.name);
+                setText("[data-site-short]", s.short_name);
+                setText("[data-site-rest]", s.rest_name);
+                setText("[data-site-short-upper]", (s.short_name || "").toUpperCase());
+                setText("[data-site-logo]", (s.short_name || "").replace(/['\u2019]/g, "").toUpperCase());
+                setText("[data-site-address]", s.address);
+                setText("[data-site-phone]", s.phone);
+
+                if (s.phone && s.phone_href) {
+                    document.querySelectorAll("[data-site-phone-link]").forEach((a) => {
+                        a.setAttribute("href", "tel:" + s.phone_href);
+                    });
+                }
+                if (s.email) {
+                    document.querySelectorAll("[data-site-email-link]").forEach((a) => {
+                        a.setAttribute("href", "mailto:" + s.email);
+                        a.hidden = false;
+                    });
+                    setText("[data-site-email]", s.email);
+                }
+                if (s.name) {
+                    document.title = s.name + " | Online Booking";
+                    destination = s.address ? s.name + ", " + s.address : s.name + ", Tabango, Leyte";
+                    const externalLink = document.querySelector("[data-map-external]");
+                    if (externalLink) {
+                        externalLink.href = "https://www.google.com/maps/dir/?api=1&destination=" +
+                            encodeURIComponent(destination) + "&travelmode=driving";
+                    }
+                    if (frame) {
+                        frame.src = "https://www.google.com/maps?q=" + encodeURIComponent(destination) + "&output=embed";
+                    }
+                }
+            })
+            .catch(() => { /* keep the static defaults */ });
+    })();
 
     function openMapModal() {
         if (!modal) return;

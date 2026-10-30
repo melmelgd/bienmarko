@@ -3,8 +3,11 @@ if (session_status() === PHP_SESSION_NONE) {
     session_start();
 }
 
-define('SITE_NAME', 'BienMarko');
-define('SITE_TAGLINE', "Bien Marko's Pension House");
+// Brand text comes from Admin > Settings > General (property name).
+require_once __DIR__ . '/../../includes/site-settings.php';
+$__siteBrand = bienmarko_site_brand();
+define('SITE_NAME', $__siteBrand['short']);
+define('SITE_TAGLINE', $__siteBrand['full']);
 
 
 $pdo = bienmarko_db();

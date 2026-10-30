@@ -37,7 +37,8 @@ if (!in_array($report, $allowedReports, true) || !in_array($format, $allowedForm
 }
 
 $period = reports_resolve_period($_GET);
-$subtitle = "Bien Marko's Pension House · " . $period['label'];
+require_once __DIR__ . '/../includes/site-settings.php';
+$subtitle = bienmarko_site_name() . ' · ' . $period['label'];
 $dateStamp = date('Y-m-d');
 
 switch ($report) {

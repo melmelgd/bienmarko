@@ -230,6 +230,8 @@ $tourUrl  = $tourFile !== '' ? 'admin/assets/uploads/tours/' . rawurlencode($tou
 
 $listing    = $listingPages[$category];
 $guestUrl   = 'user/guest-book.php?room=' . rawurlencode($name);
+$bookUrl    = 'user/book.php?room=' . rawurlencode($name);   // registered users (reached through login)
+$loginUrl   = 'user/login.php';
 $priceText  = '₱' . number_format($price, 2);
 
 $jsData = [
@@ -242,6 +244,8 @@ $jsData = [
     'blocked'  => $blocked,
     'photos'   => $photoUrls,
     'guestUrl' => $guestUrl,
+    'bookUrl'  => $bookUrl,
+    'loginUrl' => $loginUrl,
     'tourUrl'  => $tourUrl,
 ];
 $jsonFlags = JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT | JSON_UNESCAPED_UNICODE;
@@ -377,6 +381,26 @@ button{font:inherit;color:inherit}
 .ad-missing{padding:60px 0;text-align:center}
 .ad-missing h1{font-family:var(--ad-serif);font-size:2rem;margin:0 0 10px}
 
+/* "Book Now" choice popup: With Account / Without Account */
+.ad-bn{background:rgba(0,0,0,.6);-webkit-backdrop-filter:blur(6px);backdrop-filter:blur(6px);padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) max(16px,env(safe-area-inset-bottom)) max(16px,env(safe-area-inset-left))}
+.ad-bn-card{position:relative;width:100%;max-width:420px;max-height:100%;overflow-y:auto;background:#000;color:#fff;border-radius:32px;padding:26px 28px 30px;box-shadow:0 24px 60px rgba(0,0,0,.5);animation:ad-bn-in .22s ease both}
+@keyframes ad-bn-in{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
+.ad-bn-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 26px}
+.ad-bn-title{margin:0;font-family:var(--ad-sans);font-size:1.6rem;line-height:1.2;font-weight:700;color:#fff}
+.ad-bn-x{flex:none;display:inline-flex;align-items:center;justify-content:center;width:44px;height:44px;margin:-6px -8px -6px 0;padding:0;border:0;border-radius:50%;background:transparent;color:#fff;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.ad-bn-x:hover{background:rgba(255,255,255,.12)}
+.ad-bn-options{display:grid;gap:12px}
+.ad-bn-btn{display:flex;align-items:center;justify-content:center;gap:12px;width:100%;min-height:56px;padding:12px 20px;border:1px solid transparent;border-radius:999px;font-size:1.05rem;font-weight:500;line-height:1.2;text-decoration:none;color:#111;-webkit-tap-highlight-color:transparent;transition:transform .12s ease,filter .15s ease}
+.ad-bn-btn svg{flex:none}
+.ad-bn-btn:hover{filter:brightness(1.06)}
+.ad-bn-btn:active{transform:scale(.98)}
+.ad-bn-btn--account{background:#f2b100;border-color:rgba(0,0,0,.18)}
+.ad-bn-btn--guest{background:#fff}
+.ad-bn-x:focus-visible,.ad-bn-btn:focus-visible{outline:3px solid #fff;outline-offset:3px}
+.ad-bn-btn--guest:focus-visible{outline-color:#f2b100}
+.ad-bn-divider{height:1px;margin:22px 0 16px;background:rgba(255,255,255,.22)}
+.ad-bn-note{max-width:270px;margin:0 auto;text-align:center;font-size:.875rem;line-height:1.45;font-weight:300;color:rgba(255,255,255,.88)}
+@media (max-width:420px){.ad-bn-card{border-radius:28px;padding:22px 20px 26px}.ad-bn-title{font-size:1.5rem}.ad-bn-btn{font-size:1rem}}
 /* ≥ 640px */
 @media (min-width:640px){
     .ad-hero{aspect-ratio:16/8}
@@ -587,6 +611,22 @@ button{font:inherit;color:inherit}
     </div>
 </div>
 
+<!-- Book Now popup: choose to book with or without an account -->
+<div class="ad-overlay ad-bn" id="adBookModal" hidden role="dialog" aria-modal="true" aria-labelledby="adBookTitle">
+    <div class="ad-bn-card">
+        <div class="ad-bn-head">
+            <h2 class="ad-bn-title" id="adBookTitle">Book Now</h2>
+            <button class="ad-bn-x" type="button" data-close-modal aria-label="Close"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"></path><path d="m6 6 12 12"></path></svg></button>
+        </div>
+        <div class="ad-bn-options">
+            <a class="ad-bn-btn ad-bn-btn--account" id="adBookAccount" href="<?= ad_e($loginUrl) ?>?next=<?= rawurlencode($bookUrl) ?>"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M20 21a8 8 0 0 0-16 0"></path></svg><span>With Account</span></a>
+            <a class="ad-bn-btn ad-bn-btn--guest" id="adBookGuest" href="<?= ad_e($guestUrl) ?>"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 21a8 8 0 0 1 11.873-7"></path><circle cx="10" cy="8" r="5"></circle><path d="m17 17 5 5"></path><path d="m22 17-5 5"></path></svg><span>Without Account</span></a>
+        </div>
+        <div class="ad-bn-divider"></div>
+        <p class="ad-bn-note">Booking with an account allows you to manage your reservations easily</p>
+    </div>
+</div>
+
 <script>
 var AD = <?= json_encode($jsData, $jsonFlags) ?>;
 </script>
@@ -635,6 +675,7 @@ var AD = <?= json_encode($jsData, $jsonFlags) ?>;
 
     /* ── overlays (modal + lightbox) ───────────────────────────────── */
     var lightbox  = $('adLightbox');
+    var bookModal = $('adBookModal');
     var lastFocus = null;
     var pending   = null;   // dates confirmed by "Check Availability"
 
@@ -646,7 +687,7 @@ var AD = <?= json_encode($jsData, $jsonFlags) ?>;
         if (focusTarget) { focusTarget.focus(); }
     }
     function closeOverlays() {
-        [lightbox].forEach(function (el) { if (el) { el.hidden = true; } });
+        [lightbox, bookModal].forEach(function (el) { if (el) { el.hidden = true; } });
         root.classList.remove('ad-lock');
         if (lastFocus && typeof lastFocus.focus === 'function') { lastFocus.focus(); }
     }
@@ -654,24 +695,43 @@ var AD = <?= json_encode($jsData, $jsonFlags) ?>;
     Array.prototype.forEach.call(document.querySelectorAll('[data-close-modal]'), function (b) {
         b.addEventListener('click', closeOverlays);
     });
-    [lightbox].forEach(function (el) {
+    [lightbox, bookModal].forEach(function (el) {
         if (!el) { return; }
         el.addEventListener('click', function (e) { if (e.target === el) { closeOverlays(); } });
     });
 
-    /* Book Now / Continue to Booking go straight to the booking form;
-       once dates are confirmed they are carried over in the URL. */
-    function updateBookLinks() {
-        var url = AD.guestUrl;
+    /* Book Now / Continue to Booking open the "Book Now" popup (With Account /
+       Without Account). Once dates are confirmed they are carried over in the URL. */
+    function withDates(url) {
         if (pending) {
-            url += '&checkin=' + encodeURIComponent(pending.checkin) + '&checkout=' + encodeURIComponent(pending.checkout);
+            url += (url.indexOf('?') === -1 ? '?' : '&') +
+                'checkin=' + encodeURIComponent(pending.checkin) +
+                '&checkout=' + encodeURIComponent(pending.checkout);
         }
+        return url;
+    }
+    function updateBookLinks() {
+        var url = withDates(AD.guestUrl);
         Array.prototype.forEach.call(document.querySelectorAll('[data-book-link]'), function (a) {
             a.setAttribute('href', url);
         });
     }
+    function openBookModal() {
+        if (!bookModal) { return; }
+        var guestLink   = $('adBookGuest');
+        var accountLink = $('adBookAccount');
+        if (guestLink)   { guestLink.setAttribute('href', withDates(AD.guestUrl)); }
+        if (accountLink) { accountLink.setAttribute('href', AD.loginUrl + '?next=' + encodeURIComponent(withDates(AD.bookUrl))); }
+        openOverlay(bookModal);
+    }
     Array.prototype.forEach.call(document.querySelectorAll('[data-book-link]'), function (a) {
-        a.addEventListener('click', function (e) { if (AD.blocked) { e.preventDefault(); } });
+        a.addEventListener('click', function (e) {
+            if (AD.blocked) { e.preventDefault(); return; }
+            // let ctrl/cmd/shift-click and middle-click behave normally
+            if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button > 0) { return; }
+            e.preventDefault();
+            openBookModal();
+        });
     });
 
     /* Photos / 360° tour switch (tour loads only when first opened) */
@@ -724,9 +784,18 @@ var AD = <?= json_encode($jsData, $jsonFlags) ?>;
     $('adLbNext').addEventListener('click', function () { showPhoto(lbIndex + 1); });
 
     document.addEventListener('keydown', function (e) {
-        var anyOpen = lightbox && !lightbox.hidden;
+        var anyOpen = (lightbox && !lightbox.hidden) || (bookModal && !bookModal.hidden);
         if (!anyOpen) { return; }
         if (e.key === 'Escape') { closeOverlays(); }
+
+        /* keep Tab focus inside the Book Now popup */
+        if (e.key === 'Tab' && bookModal && !bookModal.hidden) {
+            var items = bookModal.querySelectorAll('a[href], button');
+            var first = items[0];
+            var last  = items[items.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }
         if (lightbox && !lightbox.hidden) {
             if (e.key === 'ArrowLeft')  { showPhoto(lbIndex - 1); }
             if (e.key === 'ArrowRight') { showPhoto(lbIndex + 1); }
