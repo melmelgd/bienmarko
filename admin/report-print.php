@@ -692,6 +692,9 @@ $docTitle = $reportTitle . ' — ' . $period['label'] . ' — ' . $property['nam
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
 <title><?php echo rp_h($docTitle); ?></title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 /* =====================================================================
    Paper-first stylesheet. Black on white, no theme variables, so it
@@ -701,7 +704,7 @@ $docTitle = $reportTitle . ' — ' . $period['label'] . ' — ' . $property['nam
 html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0; background: #e9ecef; color: #111;
-  font-family: "Segoe UI", system-ui, -apple-system, Arial, "Helvetica Neue", sans-serif;
+  font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   font-size: 10.5pt; line-height: 1.45;
   -webkit-print-color-adjust: exact; print-color-adjust: exact;
 }

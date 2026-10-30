@@ -45,7 +45,7 @@ $siteTagline = $siteBrand['full'];
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/css/login.css">
 <link rel="stylesheet" href="assets/css/register.css">
 <style>
@@ -169,7 +169,7 @@ html.ppm-lock body {
 
 .ppm__title {
     margin: 0;
-    font-family: var(--font-display, 'Fraunces', Georgia, serif);
+    font-family: var(--font-display, 'Cormorant Garamond', Georgia, 'Times New Roman', serif);
     font-size: 1.15rem;
     color: #ece7da;
 }
@@ -262,7 +262,7 @@ html.ppm-lock body {
     padding: 0 18px;
     border-radius: 12px;
     border: 1px solid transparent;
-    font: 600 0.92rem/1 var(--font-body, 'Inter', system-ui, sans-serif);
+    font: 600 0.92rem/1 var(--font-body, 'Montserrat', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif);
     cursor: pointer;
 }
 

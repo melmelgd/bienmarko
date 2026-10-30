@@ -510,13 +510,13 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .receipt-overlay.is-open { opacity: 1; pointer-events: auto; }
 .receipt-box {
     background: #fff; border-radius: var(--r-lg); width: 100%; max-width: 360px;
-    padding: 30px 28px; font-family: 'Courier New', monospace; color: #111;
+    padding: 30px 28px; font-family: var(--font-body); color: #111;
     transform: scale(.95); transition: transform .2s;
     max-height: 90vh; overflow-y: auto;
 }
 .receipt-overlay.is-open .receipt-box { transform: scale(1); }
 .receipt-logo   { text-align: center; margin-bottom: 14px; }
-.receipt-logo-name { font-family: 'Georgia', serif; font-size: 17px; font-weight: 700; color: #8b6914; }
+.receipt-logo-name { font-family: var(--font-display); font-size: 20px; font-weight: 600; letter-spacing: 0.16em; text-transform: uppercase; color: #8b6914; }
 .receipt-logo-sub  { font-size: 11px; color: #666; margin-top: 2px; }
 .receipt-divider   { border: none; border-top: 1px dashed #ccc; margin: 12px 0; }
 .receipt-row  { display: flex; justify-content: space-between; font-size: 12.5px; margin: 5px 0; }

@@ -38,7 +38,7 @@ function pp_e(string $s): string
 <link rel="icon" href="data:,">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,600;0,700;1,600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
     --bg: #0e0d0b;
@@ -52,8 +52,8 @@ function pp_e(string $s): string
     --gold-400: #d4af37;
     --gold-500: #b8941f;
     --radius: 14px;
-    --serif: 'Fraunces', Georgia, 'Times New Roman', serif;
-    --sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, Arial, sans-serif;
+    --serif: 'Cormorant Garamond', Georgia, 'Times New Roman', serif;
+    --sans: 'Montserrat', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
 }
 
 * { box-sizing: border-box; }
@@ -115,10 +115,13 @@ a:hover { color: var(--gold-400); }
 
 .pp-brand__mark svg { width: 20px; height: 20px; }
 
+/* System title: same treatment as the landing page logo (Cormorant Garamond, spaced caps) */
 .pp-brand__name {
     font-family: var(--serif);
-    font-weight: 700;
-    font-size: 1.05rem;
+    font-weight: 400;
+    font-size: 1.35rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
     line-height: 1.1;
 }
 

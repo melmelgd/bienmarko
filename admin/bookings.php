@@ -472,7 +472,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .chip--gold { background: var(--gold-tint-bg); color: var(--gold-400); }
 .chip--blue { background: var(--blue-bg);       color: var(--blue); }
 .chip--red  { background: var(--red-bg);        color: var(--red); }
-.ref-code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12.5px; letter-spacing: .02em; }
+.ref-code { font-family: var(--font-body); font-variant-numeric: tabular-nums; font-size: 12.5px; letter-spacing: .02em; }
 
 /* Check-in / check-out notice inside the detail dialog */
 .stay-notice { margin-bottom: 20px; padding: 12px 14px; border-radius: var(--r-md); font-size: 13.5px; line-height: 1.55; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text-secondary); }
