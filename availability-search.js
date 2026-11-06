@@ -1,4 +1,4 @@
-/* Search all four accommodation categories for the selected dates and guests. */
+/* Search accommodation categories (or all of them) for the selected dates and guests. */
 document.addEventListener("DOMContentLoaded", () => {
     const form = document.getElementById("booking-strip");
     const typeSelect = document.getElementById("bookingAccommodationSelect");
@@ -49,15 +49,27 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const categoryInfo = {
-        rooms: { title: "Rooms", singular: "room", plural: "rooms", unit: "room", priceSuffix: "/night" },
-        venues: { title: "Event Halls", singular: "event hall", plural: "event halls", unit: "event hall", priceSuffix: "/day" },
-        cottage: { title: "Cottages", singular: "cottage", plural: "cottages", unit: "cottage", priceSuffix: "/day" },
-        pool: { title: "Pool", singular: "pool option", plural: "pool options", unit: "pool access", priceSuffix: "/person" }
+        all: { title: "Accommodations", label: "", singular: "accommodation", plural: "accommodations", unit: "accommodation", priceSuffix: "/day" },
+        rooms: { title: "Rooms", label: "Room", singular: "room", plural: "rooms", unit: "room", priceSuffix: "/night" },
+        venues: { title: "Event Halls", label: "Event Hall", singular: "event hall", plural: "event halls", unit: "event hall", priceSuffix: "/day" },
+        cottage: { title: "Cottages", label: "Cottage", singular: "cottage", plural: "cottages", unit: "cottage", priceSuffix: "/day" },
+        pool: { title: "Pool", label: "Pool", singular: "pool option", plural: "pool options", unit: "pool access", priceSuffix: "/person" }
+    };
+
+    // Order used when "All" is selected so results are grouped by type.
+    const categoryOrder = ["rooms", "venues", "cottage", "pool"];
+
+    // Falls back to generic wording for any custom category not listed above.
+    const infoFor = (category) => categoryInfo[category] || {
+        title: "Accommodations", label: "", singular: "accommodation", plural: "accommodations",
+        unit: "accommodation", priceSuffix: "/day"
     };
 
     function showResults(message, showSkeletons = false) {
         results.hidden = false;
         summary.textContent = message;
+        // Hide the summary line entirely when there is nothing to say.
+        summary.hidden = !message;
         grid.innerHTML = "";
         if (showSkeletons) {
             for (let i = 0; i < 3; i++) {
@@ -73,18 +85,30 @@ document.addEventListener("DOMContentLoaded", () => {
         results.scrollIntoView({ behavior: "smooth", block: "start" });
     }
 
-    function makeResultCard(item, category) {
+    /* Heading becomes "No Available <Category>" (e.g. "No Available Event Halls"),
+       with an optional short hint underneath. */
+    function showNoResults(details, message = "") {
+        resultsTitle.textContent = "No Available " + details.title;
+        showResults(message);
+    }
+
+    function makeResultCard(item) {
         const card = document.createElement("article");
         card.className = "room-card availability-room-card";
-        const categoryDetails = categoryInfo[category];
+        // Each card uses its own category, so this also works for "All".
+        const itemCategory = item.category;
+        const categoryDetails = infoFor(itemCategory);
 
         const media = item.image_url
             ? `<img src="${escapeHtml(item.image_url)}" alt="${escapeHtml(item.name)}" loading="lazy">`
             : '<div class="room-card-placeholder" aria-label="No photo available"><span>No photo available</span></div>';
         const priceSuffix = categoryDetails.priceSuffix;
         const capacity = Number(item.capacity) || 0;
-        const details = [capacity + " guest" + (capacity === 1 ? "" : "s")];
-        if (category === "rooms" && item.room_number) details.push("Room " + item.room_number);
+        const details = [];
+        // Show the type (Room, Event Hall, ...) when searching across all categories.
+        if (typeSelect.value === "all" && categoryDetails.label) details.push(categoryDetails.label);
+        details.push(capacity + " guest" + (capacity === 1 ? "" : "s"));
+        if (itemCategory === "rooms" && item.room_number) details.push("Room " + item.room_number);
         if (Array.isArray(item.amenities) && item.amenities.length) {
             details.push(item.amenities.slice(0, 2).join(", "));
         }
@@ -154,6 +178,12 @@ document.addEventListener("DOMContentLoaded", () => {
         return true;
     }
 
+    // Sort key so "All" results are grouped: rooms, event halls, cottages, pool, then anything else.
+    function categoryRank(item) {
+        const index = categoryOrder.indexOf(item.category);
+        return index === -1 ? categoryOrder.length : index;
+    }
+
     form.addEventListener("change", () => {
         activeSearch++;
         if (!results.hidden) results.hidden = true;
@@ -180,9 +210,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
         const details = categoryInfo[category];
         if (!details) {
-            showResults("Choose Rooms, Event Halls, Cottages, or Pool.");
+            showResults("Choose All, Rooms, Event Halls, Cottages, or Pool.");
             return;
         }
+        const isAll = category === "all";
         const label = details.plural;
         resultsTitle.textContent = "Available " + details.title;
         showResults(`Checking available ${label} for your selected dates…`, true);
@@ -194,14 +225,17 @@ document.addEventListener("DOMContentLoaded", () => {
             showResults("We couldn't load accommodation listings right now. Please try again shortly.");
             return;
         }
-        const candidates = inventory.filter((item) =>
-            item.category === category &&
-            Number(item.capacity) >= guestsWanted &&
-            !["maintenance", "unavailable"].includes(String(item.status || "").toLowerCase())
-        );
+        const candidates = inventory
+            .filter((item) =>
+                (isAll || item.category === category) &&
+                Number(item.capacity) >= guestsWanted &&
+                !["maintenance", "unavailable"].includes(String(item.status || "").toLowerCase())
+            )
+            .sort((a, b) => categoryRank(a) - categoryRank(b));
 
         if (!candidates.length) {
-            showResults(`NO AVAILABLE ${label}.`);
+            // Heading reads "No Available Event Halls"; no extra line underneath.
+            showNoResults(details);
             return;
         }
 
@@ -229,19 +263,22 @@ document.addEventListener("DOMContentLoaded", () => {
 
         if (availableItems.length) {
             const count = availableItems.length;
+            summary.hidden = false;
             summary.textContent = `${count} ${count === 1 ? details.singular : label} available for ${checkin} to ${checkout}.`;
             if (failedChecks) {
                 summary.textContent += ` Availability could not be verified for ${failedChecks} other listing${failedChecks === 1 ? "" : "s"}.`;
             }
-            availableItems.forEach((item) => grid.appendChild(makeResultCard(item, category)));
+            availableItems.forEach((item) => grid.appendChild(makeResultCard(item)));
             results.hidden = false;
             results.scrollIntoView({ behavior: "smooth", block: "start" });
             return;
         }
 
-        const message = failedChecks === checks.length
-            ? `We couldn't verify ${label} availability right now. Please try again or contact us.`
-            : `No ${label} are available for those dates and guest count. Try different dates or a smaller guest range.`;
-        showResults(message);
+        if (failedChecks === checks.length) {
+            showResults(`We couldn't verify ${label} availability right now. Please try again or contact us.`);
+            return;
+        }
+
+        showNoResults(details, "Try different dates or a smaller guest range.");
     });
 });
