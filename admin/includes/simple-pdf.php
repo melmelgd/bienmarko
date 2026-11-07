@@ -20,6 +20,14 @@
  *
  * The peso sign has no glyph in the base-14 fonts, so it is drawn as a
  * "P" with two vector bars through it (see peso()).
+ *
+ * Options (second constructor argument), all optional:
+ *   'family'  => 'sans' (Helvetica, default) | 'serif' (Times)
+ *   'pageW'   => page width in points  (default A4 595.28)
+ *   'pageH'   => page height in points (default A4 841.89)
+ *   'margins' => [top, right, bottom, left] in points
+ * The statement-style Financial / Performance reports use 'serif' on US
+ * Letter with 1-inch margins (see StatementPDF in report-pdf.php).
  * -----------------------------------------------------------------------
  */
 
@@ -63,6 +71,66 @@ class SimplePDF
         611, 611, 611, 611, 611, 611, 611, 584, 611, 611, 611, 611, 611, 556, 611, 556,
     ];
 
+    /* Times-Roman / Times-Bold / Times-Italic (Adobe base-14 AFM widths,
+       WinAnsi codes 0-255, 1000 units per em). Italic is NOT the same as
+       regular in Times, so it has its own table. */
+    protected const W_T_REG = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        250, 333, 408, 500, 500, 833, 778, 180, 333, 333, 500, 564, 250, 333, 250, 278,
+        500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 278, 278, 564, 564, 564, 444,
+        921, 722, 667, 667, 722, 611, 556, 722, 722, 333, 389, 722, 611, 889, 722, 722,
+        556, 722, 667, 556, 611, 722, 722, 944, 722, 722, 611, 333, 278, 333, 469, 500,
+        333, 444, 500, 444, 500, 444, 333, 500, 500, 278, 278, 500, 278, 778, 500, 500,
+        500, 500, 333, 389, 278, 500, 500, 722, 500, 500, 444, 480, 200, 480, 541, 761,
+        500, 0, 333, 500, 444, 1000, 500, 500, 333, 1000, 556, 333, 889, 0, 611, 0,
+        0, 333, 333, 444, 444, 350, 500, 1000, 333, 980, 389, 333, 722, 0, 444, 722,
+        250, 333, 500, 500, 500, 500, 200, 500, 333, 760, 276, 500, 564, 333, 760, 333,
+        400, 564, 300, 300, 333, 500, 453, 250, 333, 300, 310, 500, 750, 750, 750, 444,
+        722, 722, 722, 722, 722, 722, 889, 667, 611, 611, 611, 611, 333, 333, 333, 333,
+        722, 722, 722, 722, 722, 722, 722, 564, 722, 722, 722, 722, 722, 722, 556, 500,
+        444, 444, 444, 444, 444, 444, 667, 444, 444, 444, 444, 444, 278, 278, 278, 278,
+        500, 500, 500, 500, 500, 500, 500, 564, 500, 500, 500, 500, 500, 500, 500, 500,
+    ];
+
+    protected const W_T_BOLD = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        250, 333, 555, 500, 500, 1000, 833, 278, 333, 333, 500, 570, 250, 333, 250, 278,
+        500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 333, 333, 570, 570, 570, 500,
+        930, 722, 667, 722, 722, 667, 611, 778, 778, 389, 500, 778, 667, 944, 722, 778,
+        611, 778, 722, 556, 667, 722, 722, 1000, 722, 722, 667, 333, 278, 333, 581, 500,
+        333, 500, 556, 444, 556, 444, 333, 500, 556, 278, 333, 556, 278, 833, 556, 500,
+        556, 556, 444, 389, 333, 556, 500, 722, 500, 500, 444, 394, 220, 394, 520, 761,
+        500, 0, 333, 500, 500, 1000, 500, 500, 333, 1000, 556, 333, 1000, 0, 667, 0,
+        0, 333, 333, 500, 500, 350, 500, 1000, 333, 1000, 389, 333, 722, 0, 444, 722,
+        250, 333, 500, 500, 500, 500, 220, 500, 333, 747, 300, 500, 570, 333, 747, 333,
+        400, 570, 300, 300, 333, 556, 540, 250, 333, 300, 330, 500, 750, 750, 750, 500,
+        722, 722, 722, 722, 722, 722, 1000, 722, 667, 667, 667, 667, 389, 389, 389, 389,
+        722, 722, 778, 778, 778, 778, 778, 570, 778, 722, 722, 722, 722, 722, 611, 556,
+        500, 500, 500, 500, 500, 500, 722, 444, 444, 444, 444, 444, 278, 278, 278, 278,
+        500, 556, 500, 500, 500, 500, 500, 570, 500, 556, 556, 556, 556, 500, 556, 500,
+    ];
+
+    protected const W_T_ITAL = [
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        250, 333, 420, 500, 500, 833, 778, 214, 333, 333, 500, 675, 250, 333, 250, 278,
+        500, 500, 500, 500, 500, 500, 500, 500, 500, 500, 333, 333, 675, 675, 675, 500,
+        920, 611, 611, 667, 722, 611, 611, 722, 722, 333, 444, 667, 556, 833, 667, 722,
+        611, 722, 611, 500, 556, 722, 611, 833, 611, 556, 556, 389, 278, 389, 422, 500,
+        333, 500, 500, 444, 500, 444, 278, 500, 500, 278, 278, 444, 278, 722, 500, 500,
+        500, 500, 389, 389, 278, 500, 444, 667, 444, 444, 389, 400, 275, 400, 541, 761,
+        500, 0, 333, 500, 556, 889, 500, 500, 333, 1000, 500, 333, 944, 0, 556, 0,
+        0, 333, 333, 556, 556, 350, 500, 889, 333, 980, 389, 333, 667, 0, 389, 556,
+        250, 389, 500, 500, 500, 500, 275, 500, 333, 760, 276, 500, 675, 333, 760, 333,
+        400, 675, 300, 300, 333, 500, 523, 250, 333, 300, 310, 500, 750, 750, 750, 500,
+        611, 611, 611, 611, 611, 611, 889, 667, 611, 611, 611, 611, 333, 333, 333, 333,
+        722, 667, 722, 722, 722, 722, 722, 675, 722, 722, 722, 722, 722, 556, 611, 500,
+        500, 500, 500, 500, 500, 500, 667, 444, 444, 444, 444, 444, 278, 278, 278, 278,
+        500, 500, 500, 500, 500, 500, 500, 675, 500, 500, 500, 500, 500, 444, 500, 444,
+    ];
+
     /** @var array<int,int> */
     protected array $pageIds = [];
     /** @var array<int,string> */
@@ -81,14 +149,28 @@ class SimplePDF
     protected int $fontObliqueId;
     protected int $curPage = 0;
 
+    /** 'sans' = Helvetica family, 'serif' = Times family. */
+    protected string $family = 'sans';
+
+    /** Optional callback run once per page at output() time: fn(SimplePDF, int $pageNo, int $pageCount). */
+    protected ?\Closure $pageDecorator = null;
+
     /** Current top-down cursor (points from the top of the page). */
     public float $y = 0.0;
 
     protected string $docTitle = '';
 
-    public function __construct(string $docTitle = '')
+    public function __construct(string $docTitle = '', array $opts = [])
     {
-        $this->docTitle      = $docTitle;
+        $this->docTitle = $docTitle;
+        if (($opts['family'] ?? '') === 'serif') {
+            $this->family = 'serif';
+        }
+        if (isset($opts['pageW'])) { $this->pageW = (float) $opts['pageW']; }
+        if (isset($opts['pageH'])) { $this->pageH = (float) $opts['pageH']; }
+        if (isset($opts['margins']) && is_array($opts['margins']) && count($opts['margins']) === 4) {
+            [$this->mT, $this->mR, $this->mB, $this->mL] = array_map('floatval', array_values($opts['margins']));
+        }
         $this->fontRegId     = $this->reserveId();
         $this->fontBoldId    = $this->reserveId();
         $this->fontObliqueId = $this->reserveId();
@@ -155,7 +237,11 @@ class SimplePDF
 
     protected function bytesWidth(string $bytes, string $style): float
     {
-        $t = ($style === 'b') ? self::W_BOLD : self::W_REG;   // oblique shares regular metrics
+        if ($this->family === 'serif') {
+            $t = ($style === 'b') ? self::W_T_BOLD : (($style === 'i') ? self::W_T_ITAL : self::W_T_REG);
+        } else {
+            $t = ($style === 'b') ? self::W_BOLD : self::W_REG;   // Helvetica-Oblique shares regular metrics
+        }
         $w = 0;
         $n = strlen($bytes);
         for ($i = 0; $i < $n; $i++) {
@@ -171,7 +257,7 @@ class SimplePDF
         $pesos = substr_count($s, "\u{20B1}");
         $bytes = $this->enc(str_replace("\u{20B1}", '', $s));
         $w     = $this->bytesWidth($bytes, $style) * $size / 1000.0;
-        $w    += $pesos * 0.667 * $size;
+        $w    += $pesos * $this->pesoAdvance($style) * $size;
         $w    += substr_count($s, "\u{2013}\u{20B1}") * 0.18 * $size;   // gap between a minus and the peso sign
         $w    += $cs * (strlen($bytes) + $pesos);
         return $w;
@@ -213,10 +299,27 @@ class SimplePDF
         ));
     }
 
-    /** Draws the peso sign: a Helvetica "P" crossed by two bars. */
+    /** Advance width of the drawn peso sign, in em. */
+    protected function pesoAdvance(string $style): float
+    {
+        if ($this->family === 'serif') {
+            return ($style === 'b') ? 0.675 : 0.625;
+        }
+        return 0.667;
+    }
+
+    /** Draws the peso sign: a "P" crossed by two bars. */
     protected function peso(float $x, float $base, float $size, string $style, string $color): void
     {
         $this->rawText($x, $base, 'P', $size, $style, $color, 0.0);
+        if ($this->family === 'serif') {
+            $lw    = $size * (($style === 'b') ? 0.046 : 0.036);
+            $right = ($style === 'b') ? 0.600 : 0.545;
+            foreach ([0.285, 0.395] as $k) {
+                $this->hline($x - 0.02 * $size, $x + $right * $size, $base - $k * $size, $lw, $color);
+            }
+            return;
+        }
         $lw = $size * (($style === 'b') ? 0.07 : 0.055);
         foreach ([0.31, 0.43] as $k) {
             $this->hline($x - 0.05 * $size, $x + 0.60 * $size, $base - $k * $size, $lw, $color);
@@ -253,7 +356,7 @@ class SimplePDF
                     $cx += 0.18 * $size;          // keep the minus off the peso bars
                 }
                 $this->peso($cx, $base, $size, $style, $color);
-                $cx += 0.667 * $size + $cs;
+                $cx += $this->pesoAdvance($style) * $size + $cs;
             } else {
                 $this->rawText($cx, $base, $p, $size, $style, $color, $cs);
                 $cx += $this->bytesWidth($this->enc($p), $style) * $size / 1000.0 + $cs * strlen($this->enc($p));
@@ -400,6 +503,125 @@ class SimplePDF
         $this->raw(sprintf("q %s%.2F %.2F %.2F %.2F re %s Q", $op, $x, $this->pageH - $top - $h, $w, $h, $paint));
     }
 
+    /** Justified version of drawRich(): every line except the last is stretched to $maxW. */
+    public function drawRichJustified(float $x, float $top, array $lines, float $lh, float $size,
+                                      float $maxW, string $color = '#111111'): void
+    {
+        $last = count($lines) - 1;
+        foreach ($lines as $i => $line) {
+            $base  = $top + $i * $lh + $lh / 2 + 0.36 * $size;
+            $shift = array_fill(0, count($line), 0.0);
+            if ($i < $last && count($line) > 1) {
+                $end  = end($line);
+                $used = $end['x'] + $end['w'];
+                $gaps = 0;
+                foreach ($line as $k => $tk) {
+                    if ($k > 0 && !empty($tk['sp'])) { $gaps++; }
+                }
+                if ($gaps > 0 && $used < $maxW) {
+                    $extra = ($maxW - $used) / $gaps;
+                    $n = 0;
+                    foreach ($line as $k => $tk) {
+                        if ($k > 0 && !empty($tk['sp'])) { $n++; }
+                        $shift[$k] = $n * $extra;
+                    }
+                }
+            }
+            foreach ($line as $k => $tk) {
+                $this->text($x + $tk['x'] + $shift[$k], $base, $tk['t'], $size, $tk['s'], $color);
+            }
+        }
+    }
+
+    /* ------------------------------------------------------------------
+       Extra vector primitives (used by the statement reports' chart)
+    ------------------------------------------------------------------ */
+
+    /** Straight line between two points (top-down coordinates). $dash e.g. [3, 2]. */
+    public function line(float $x1, float $y1, float $x2, float $y2, float $lw = 0.75,
+                         string $color = '#111111', ?array $dash = null): void
+    {
+        $d = $dash ? sprintf('[%s] 0 d ', implode(' ', array_map(function ($v) { return sprintf('%.2F', $v); }, $dash))) : '';
+        $this->raw(sprintf("q %s RG %.3F w %s%.2F %.2F m %.2F %.2F l S Q",
+            $this->rgb($color), $lw, $d, $x1, $this->pageH - $y1, $x2, $this->pageH - $y2));
+    }
+
+    /** Open path through $pts = [[x, y], ...] (top-down), round joins and caps. */
+    public function polyline(array $pts, float $lw = 1.0, string $color = '#111111'): void
+    {
+        if (count($pts) < 2) {
+            return;
+        }
+        $p = sprintf("%.2F %.2F m", $pts[0][0], $this->pageH - $pts[0][1]);
+        for ($i = 1; $i < count($pts); $i++) {
+            $p .= sprintf(" %.2F %.2F l", $pts[$i][0], $this->pageH - $pts[$i][1]);
+        }
+        $this->raw(sprintf("q %s RG %.3F w 1 J 1 j %s S Q", $this->rgb($color), $lw, $p));
+    }
+
+    /** Closed, filled (and optionally stroked) polygon. */
+    public function polygon(array $pts, ?string $fill, ?string $stroke = null, float $lw = 0.75): void
+    {
+        if (count($pts) < 3) {
+            return;
+        }
+        $p = sprintf("%.2F %.2F m", $pts[0][0], $this->pageH - $pts[0][1]);
+        for ($i = 1; $i < count($pts); $i++) {
+            $p .= sprintf(" %.2F %.2F l", $pts[$i][0], $this->pageH - $pts[$i][1]);
+        }
+        $op = '';
+        if ($fill !== null)   { $op .= $this->rgb($fill) . ' rg '; }
+        if ($stroke !== null) { $op .= $this->rgb($stroke) . sprintf(' RG %.3F w 1 j ', $lw); }
+        $paint = ($fill !== null && $stroke !== null) ? 'B' : ($fill !== null ? 'f' : 'S');
+        $this->raw(sprintf("q %s%s h %s Q", $op, $p, $paint));
+    }
+
+    /** Circle (four Bezier arcs) centred on ($cx, $cy). */
+    public function circle(float $cx, float $cy, float $r, ?string $fill, ?string $stroke = null, float $lw = 0.75): void
+    {
+        $k  = 0.5522847498 * $r;
+        $py = $this->pageH - $cy;
+        $p  = sprintf("%.2F %.2F m ", $cx + $r, $py)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c ", $cx + $r, $py + $k, $cx + $k, $py + $r, $cx, $py + $r)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c ", $cx - $k, $py + $r, $cx - $r, $py + $k, $cx - $r, $py)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c ", $cx - $r, $py - $k, $cx - $k, $py - $r, $cx, $py - $r)
+            . sprintf("%.2F %.2F %.2F %.2F %.2F %.2F c h", $cx + $k, $py - $r, $cx + $r, $py - $k, $cx + $r, $py);
+        $op = '';
+        if ($fill !== null)   { $op .= $this->rgb($fill) . ' rg '; }
+        if ($stroke !== null) { $op .= $this->rgb($stroke) . sprintf(' RG %.3F w ', $lw); }
+        $paint = ($fill !== null && $stroke !== null) ? 'B' : ($fill !== null ? 'f' : 'S');
+        $this->raw(sprintf("q %s%s %s Q", $op, $p, $paint));
+    }
+
+    /**
+     * Text rotated counter-clockwise by $deg (90 = reads bottom-to-top).
+     * $x/$base is the anchor point (baseline), $align 'l' | 'c' | 'r' along the text direction.
+     */
+    public function textRot(float $x, float $base, string $str, float $size, string $style, string $color,
+                            float $deg, string $align = 'c'): void
+    {
+        $str = $this->norm($str);
+        if ($str === '') {
+            return;
+        }
+        $w = $this->textW($str, $size, $style);
+        $a = deg2rad($deg);
+        $c = cos($a);
+        $s = sin($a);
+        $off = ($align === 'c') ? $w / 2 : (($align === 'r') ? $w : 0.0);
+        $px = $x - $off * $c;
+        $py = ($this->pageH - $base) - $off * $s;
+        $font = ($style === 'b') ? 'F2' : (($style === 'i') ? 'F3' : 'F1');
+        $this->raw(sprintf("q %s rg BT /%s %.2F Tf %.4F %.4F %.4F %.4F %.2F %.2F Tm (%s) Tj ET Q",
+            $this->rgb($color), $font, $size, $c, $s, -$s, $c, $px, $py, $this->pdfEsc($this->enc($str))));
+    }
+
+    /** Runs $cb(SimplePDF, pageNo, pageCount) for every page when the file is written (footers, "Page X of Y"). */
+    public function onEachPage(\Closure $cb): void
+    {
+        $this->pageDecorator = $cb;
+    }
+
     /* ------------------------------------------------------------------
        Output
     ------------------------------------------------------------------ */
@@ -409,9 +631,20 @@ class SimplePDF
     {
         $objs = [];
 
-        $objs[$this->fontRegId]     = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>';
-        $objs[$this->fontBoldId]    = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
-        $objs[$this->fontObliqueId] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Oblique /Encoding /WinAnsiEncoding >>';
+        if ($this->pageDecorator !== null) {
+            $total = count($this->pageIds);
+            foreach ($this->pageIds as $i => $pid) {
+                $this->curPage = $pid;
+                ($this->pageDecorator)($this, $i + 1, $total);
+            }
+        }
+
+        $names = ($this->family === 'serif')
+            ? ['Times-Roman', 'Times-Bold', 'Times-Italic']
+            : ['Helvetica', 'Helvetica-Bold', 'Helvetica-Oblique'];
+        $objs[$this->fontRegId]     = '<< /Type /Font /Subtype /Type1 /BaseFont /' . $names[0] . ' /Encoding /WinAnsiEncoding >>';
+        $objs[$this->fontBoldId]    = '<< /Type /Font /Subtype /Type1 /BaseFont /' . $names[1] . ' /Encoding /WinAnsiEncoding >>';
+        $objs[$this->fontObliqueId] = '<< /Type /Font /Subtype /Type1 /BaseFont /' . $names[2] . ' /Encoding /WinAnsiEncoding >>';
 
         $contentIds = [];
         foreach ($this->pageIds as $pid) {
@@ -465,4 +698,4 @@ class SimplePDF
         echo $pdf;
         exit;
     }
-}
+}

@@ -13,6 +13,11 @@
  * report-print.php, mirror the change in the matching rpdf_body_*()
  * function below.
  *
+ * EXCEPTION: 'financial' and 'performance' are drawn by StatementPDF (bottom
+ * of the class section below) from the shared model in
+ * includes/report-statement.php — the formal serif statement layout,
+ * identical to report-print.php's output for those two reports.
+ *
  * Needs: includes/reports-data.php (loaded by reports-export.php) and
  * includes/simple-pdf.php (loaded below).
  * -----------------------------------------------------------------------
@@ -476,6 +481,451 @@ class ReportPDF extends SimplePDF
 }
 
 /* ----------------------------------------------------------------------
+   StatementPDF — the Financial / Performance "statement" layout
+   (US Letter, 1-inch margins, Times). Replays the blocks of the model
+   built by rst_build_model() in includes/report-statement.php, using the
+   same sizes, spacing and margin-collapsing as that page's stylesheet.
+---------------------------------------------------------------------- */
+class StatementPDF extends SimplePDF
+{
+    private const INK    = '#000000';
+    private const SHADE  = '#e7e6e6';
+    private const LH     = 1.15;      // line-height multiplier
+    private const PAD_X  = 5.0;       // table cell padding (pt)
+    private const PAD_Y  = 2.5;
+    private const TD     = 10.5;      // table font size
+    private const H2_H   = 16.55;     // 12pt heading line + 2pt gap + 0.75pt rule
+
+    /** Bottom margin (pt) the previous block left behind; the next block's top margin collapses into it. */
+    private float $lastAfter = 0.0;
+
+    public function __construct(string $docTitle = '')
+    {
+        parent::__construct($docTitle, [
+            'family'  => 'serif',
+            'pageW'   => 612.0,
+            'pageH'   => 792.0,
+            'margins' => [72.0, 72.0, 72.0, 72.0],
+        ]);
+    }
+
+    private function lh(float $size): float
+    {
+        return $size * self::LH;
+    }
+
+    /** Baseline for a line box whose top is $top. */
+    private function bl(float $top, float $size): float
+    {
+        return $top + $this->lh($size) / 2 + 0.36 * $size;
+    }
+
+    private function atTop(): bool
+    {
+        return $this->y <= $this->pageTop() + 0.5;
+    }
+
+    /** Applies a collapsing top margin (skipped at the top of a page, like the print stylesheet). */
+    private function gap(float $before): void
+    {
+        if (!$this->atTop()) {
+            $this->y += max(0.0, $before - $this->lastAfter);
+        }
+        $this->lastAfter = 0.0;
+    }
+
+    private function newPage(): void
+    {
+        $this->addPage();
+        $this->lastAfter = 0.0;
+    }
+
+    /* ------------------------------------------------------------------
+       Letterhead + title block
+    ------------------------------------------------------------------ */
+    private function letterhead(array $m): void
+    {
+        $cx    = ($this->left() + $this->right()) / 2;
+        $lines = $m['headLines'];
+
+        $this->text($cx, $this->bl($this->y, 16), rst_upper($m['property']['name']), 16, 'b', self::INK, 'c');
+        $this->y += $this->lh(16);
+        if (!$lines) {
+            $this->headRule();
+        } else {
+            $this->y += 2;
+        }
+        foreach ($lines as $i => $ln) {
+            $this->text($cx, $this->bl($this->y, 10), $ln, 10, 'r', self::INK, 'c');
+            $this->y += $this->lh(10);
+            if ($i === count($lines) - 1) {
+                $this->headRule();
+            }
+        }
+
+        /* report title */
+        $this->y += 10;
+        $this->text($cx, $this->bl($this->y, 14), $m['title'], 14, 'b', self::INK, 'c');
+        $this->y += $this->lh(14) + 1;
+
+        $n = count($m['subLines']);
+        foreach ($m['subLines'] as $i => $sl) {
+            $this->text($cx, $this->bl($this->y, $sl[1]), $sl[0], $sl[1], $sl[2], self::INK, 'c');
+            $this->y += $this->lh($sl[1]);
+            $this->y += ($i === $n - 1) ? 10 : 1;
+        }
+        $this->lastAfter = 10.0;
+
+        /* Period / Printed / Prepared by (performance report) */
+        if ($m['meta']) {
+            $rowH = $this->lh(self::TD) + 2 * self::PAD_Y;
+            $valX = $this->left() + 468 * 0.2137 + self::PAD_X;
+            foreach ($m['meta'] as $row) {
+                $b = $this->bl($this->y + self::PAD_Y, self::TD);
+                $this->text($this->left() + self::PAD_X, $b, $row[0], self::TD, 'b', self::INK);
+                $this->text($valX, $b, $row[1], self::TD, 'r', self::INK);
+                $this->y += $rowH;
+            }
+            $this->lastAfter = 0.0;
+        }
+    }
+
+    /** 6pt padding, 1.5pt rule, 6pt margin — the letterhead's closing line. */
+    private function headRule(): void
+    {
+        $this->y += 6;
+        $this->hline($this->left(), $this->right(), $this->y + 0.75, 1.5, self::INK);
+        $this->y += 1.5 + 6;
+    }
+
+    /* ------------------------------------------------------------------
+       Block metrics: [margin-before, height, margin-after]
+    ------------------------------------------------------------------ */
+    private function metrics(array $b, array $m): array
+    {
+        $W = $this->contentWidth();
+        switch ($b['t']) {
+            case 'summary':
+                $n = count($this->wrapRich($b['segs'], $W, 11));
+                return [(float) $b['before'], $n * $this->lh(11), 6.0];
+            case 'h2':
+                return [13.0, self::H2_H, 5.0];
+            case 'table':
+                return [0.0, $this->tableLayout($b)['total'], 0.0];
+            case 'italic':
+                $n = count($this->wrap($b['text'], $W, 10, 'i'));
+                return [4.0, $n * $this->lh(10), 4.0];
+            case 'chart':
+                $n = count($this->wrap($b['caption'], $W, 10, 'i'));
+                return [3.0, $b['chart']['h'] + 3 + $n * $this->lh(10), 4.0];
+            case 'notes':
+                $h = 0.0;
+                foreach ($b['items'] as $segs) {
+                    $h += count($this->wrapRich($segs, $W - 18, self::TD)) * $this->lh(self::TD) + 4;
+                }
+                return [0.0, $h - 4, 4.0];
+            case 'signatures':
+                return [24.0, 35 + 30 + 16 + 25, 0.0];
+        }
+        return [0.0, 0.0, 0.0];
+    }
+
+    /**
+     * Height a run of blocks needs from the current position, margins collapsed exactly as
+     * drawBlock() does (the last block's own bottom margin is not counted).
+     */
+    private function flowHeight(array $blocks, array $m): float
+    {
+        $h = 0.0;
+        $after = $this->lastAfter;
+        foreach ($blocks as $b) {
+            [$before, $bh, $aft] = $this->metrics($b, $m);
+            $h += max(0.0, $before - $after) + $bh;
+            $after = $aft;
+            $h += $aft;
+        }
+        return $h - $after;
+    }
+
+    /* ------------------------------------------------------------------
+       Tables
+    ------------------------------------------------------------------ */
+
+    /** Resolves a table block into row geometry. */
+    private function tableLayout(array $b): array
+    {
+        $cols = [];
+        foreach ($b['cols'] as $c) { $cols[] = $c['w'] / 20.0; }          // twips -> pt (sums to 468)
+        $lh = $this->lh(self::TD);
+
+        $mk = function (array $cells, string $kind, bool $head) use ($b, $cols, $lh) {
+            $bold  = $head || in_array($kind, ['label', 'subtotal', 'total'], true);
+            $style = $bold ? 'b' : 'r';
+            $out = []; $maxN = 1;
+            foreach ($cells as $i => $text) {
+                $align = $b['cols'][$i]['a'];
+                $padL  = self::PAD_X + (($kind === 'indent' && $i === 0) ? 18.0 : 0.0);
+                $lines = ($align === 'r') ? [(string) $text]
+                       : $this->wrap((string) $text, max(10.0, $cols[$i] - $padL - self::PAD_X), self::TD, $style);
+                $maxN  = max($maxN, count($lines));
+                $out[] = ['lines' => $lines, 'a' => $align, 'padL' => $padL, 'w' => $cols[$i]];
+            }
+            $extraTop = ($head || in_array($kind, ['subtotal', 'total'], true)) ? 0.5 : 0.0;
+            $extraBot = $head ? 0.5 : ($kind === 'total' ? 2.25 : 0.0);
+            return ['cells' => $out, 'kind' => $head ? 'head' : $kind, 'style' => $style,
+                    'top' => $extraTop, 'bot' => $extraBot,
+                    'h' => $maxN * $lh + 2 * self::PAD_Y + $extraTop + $extraBot];
+        };
+
+        $head = $mk($b['head'], 'head', true);
+        $rows = [];
+        $total = $head['h'];
+        foreach ($b['rows'] as $r) {
+            $L = $mk($r['c'], $r['k'], false);
+            if ($r['k'] === 'blank') { $L['cells'] = []; }
+            $rows[] = $L;
+            $total += $L['h'];
+        }
+        return ['head' => $head, 'rows' => $rows, 'total' => $total];
+    }
+
+    private function drawRow(array $L): void
+    {
+        $x0 = $this->left();
+        $y0 = $this->y;
+        $lh = $this->lh(self::TD);
+        if ($L['kind'] === 'head') {
+            $this->rect($x0, $y0, $this->contentWidth(), $L['h'], self::SHADE);
+        }
+        $x = $x0;
+        foreach ($L['cells'] as $c) {
+            foreach ($c['lines'] as $i => $ln) {
+                $base = $this->bl($y0 + $L['top'] + self::PAD_Y + $i * $lh, self::TD);
+                if ($c['a'] === 'r') {
+                    $this->text($x + $c['w'] - self::PAD_X, $base, $ln, self::TD, $L['style'], self::INK, 'r');
+                } elseif ($c['a'] === 'c') {
+                    $this->text($x + $c['w'] / 2, $base, $ln, self::TD, $L['style'], self::INK, 'c');
+                } else {
+                    $this->text($x + $c['padL'], $base, $ln, self::TD, $L['style'], self::INK, 'l');
+                }
+            }
+            $x += $c['w'];
+        }
+        if ($L['kind'] === 'head') {
+            $this->hline($x0, $this->right(), $y0 + 0.25, 0.5, self::INK);
+            $this->hline($x0, $this->right(), $y0 + $L['h'] - 0.25, 0.5, self::INK);
+        } elseif ($L['kind'] === 'subtotal' || $L['kind'] === 'total') {
+            $this->hline($x0, $this->right(), $y0 + 0.25, 0.5, self::INK);
+            if ($L['kind'] === 'total') {                     // accounting double underline
+                $this->hline($x0, $this->right(), $y0 + $L['h'] - 2.0, 0.75, self::INK);
+                $this->hline($x0, $this->right(), $y0 + $L['h'] - 0.375, 0.75, self::INK);
+            }
+        }
+        $this->y += $L['h'];
+    }
+
+    private function drawTable(array $b): void
+    {
+        $T = $this->tableLayout($b);
+        if ($T['head']['h'] + ($T['rows'] ? $T['rows'][0]['h'] : 0) > $this->remaining() && !$this->atTop()) {
+            $this->newPage();
+        }
+        $this->drawRow($T['head']);
+        foreach ($T['rows'] as $r) {
+            if ($r['h'] > $this->remaining()) {
+                $this->newPage();
+                $this->drawRow($T['head']);           // header row repeats on every page
+            }
+            $this->drawRow($r);
+        }
+    }
+
+    /* ------------------------------------------------------------------
+       Blocks
+    ------------------------------------------------------------------ */
+    private function drawBlock(array $b, array $m): void
+    {
+        $W = $this->contentWidth();
+        [$before, $h, $after] = $this->metrics($b, $m);
+
+        /* Anything that cannot be split moves to the next page as a whole. */
+        if (in_array($b['t'], ['summary', 'italic', 'chart', 'signatures'], true)) {
+            if ($this->y + max(0.0, $before - $this->lastAfter) + $h > $this->pageBottom() && !$this->atTop()) {
+                $this->newPage();
+            }
+        }
+        $this->gap($before);
+
+        switch ($b['t']) {
+            case 'summary':
+                $lines = $this->wrapRich($b['segs'], $W, 11);
+                $this->drawRichJustified($this->left(), $this->y, $lines, $this->lh(11), 11, $W, self::INK);
+                break;
+
+            case 'h2':
+                $this->text($this->left(), $this->bl($this->y, 12), $b['text'], 12, 'b', self::INK);
+                $this->hline($this->left(), $this->right(), $this->y + $this->lh(12) + 2 + 0.375, 0.75, self::INK);
+                break;
+
+            case 'table':
+                $this->drawTable($b);
+                $h = 0.0;                              // drawTable advanced y itself
+                break;
+
+            case 'italic':
+                $y = $this->y;
+                foreach ($this->wrap($b['text'], $W, 10, 'i') as $ln) {
+                    $this->text($this->left(), $this->bl($y, 10), $ln, 10, 'i', self::INK);
+                    $y += $this->lh(10);
+                }
+                break;
+
+            case 'chart':
+                $this->drawChart($b['chart'], $this->left() + ($W - $b['chart']['w']) / 2, $this->y);
+                $y = $this->y + $b['chart']['h'] + 3;
+                $cx = ($this->left() + $this->right()) / 2;
+                foreach ($this->wrap($b['caption'], $W, 10, 'i') as $ln) {
+                    $this->text($cx, $this->bl($y, 10), $ln, 10, 'i', self::INK, 'c');
+                    $y += $this->lh(10);
+                }
+                break;
+
+            case 'notes':
+                $this->drawNotes($b);
+                $h = 0.0;                              // drawNotes advanced y itself
+                break;
+
+            case 'signatures':
+                $this->drawSignatures($m);
+                break;
+        }
+        $this->y += $h + $after;                       // bottom margin; the next block's top margin collapses into it
+        $this->lastAfter = $after;
+    }
+
+    private function drawNotes(array $b): void
+    {
+        $W  = $this->contentWidth();
+        $lh = $this->lh(self::TD);
+        $n  = count($b['items']);
+        foreach ($b['items'] as $i => $segs) {
+            $lines = $this->wrapRich($segs, $W - 18, self::TD);
+            $h = count($lines) * $lh;
+            if ($this->y + $h > $this->pageBottom() && !$this->atTop()) {
+                $this->newPage();
+            }
+            $this->text($this->left(), $this->bl($this->y, self::TD), ($i + 1) . '.', self::TD, 'r', self::INK);
+            $this->drawRichJustified($this->left() + 18, $this->y, $lines, $lh, self::TD, $W - 18, self::INK);
+            $this->y += $h + (($i < $n - 1) ? 4 : 0);
+        }
+    }
+
+    private function drawSignatures(array $m): void
+    {
+        $w = [150.0, 16.5, 150.0, 16.5, 135.0];
+        $x = [];
+        $acc = $this->left();
+        foreach ($w as $cw) { $x[] = $acc; $acc += $cw; }
+        $name = 'Name';
+        $y = $this->y;
+        $lh = $this->lh(10);
+
+        foreach ([[0, 'Prepared by:'], [2, 'Reviewed by:'], [4, 'Approved by:']] as [$k, $label]) {
+            $this->text($x[$k] + $w[$k] / 2, $this->bl($y + 2, 10), $label, 10, 'b', self::INK, 'c');
+        }
+        $y += 35 + 30;                                                     // label row + blank signing space
+        foreach ([[0, $name], [2, 'Name / Signature'], [4, 'Owner / Manager']] as [$k, $label]) {
+            $this->hline($x[$k], $x[$k] + $w[$k], $y + 0.25, 0.5, self::INK);
+            $this->text($x[$k] + $w[$k] / 2, $this->bl($y + 0.5 + 2, 10), $label, 10, 'r', self::INK, 'c');
+        }
+        $y += 16;
+        foreach ([0, 2, 4] as $k) {
+            $this->text($x[$k] + $w[$k] / 2, $this->bl($y + 2, 10), 'Date: ______________', 10, 'r', self::INK, 'c');
+        }
+    }
+
+    /** Replays the chart primitives of the model at ($ox, $oy). */
+    private function drawChart(array $chart, float $ox, float $oy): void
+    {
+        $anchor = ['start' => 'l', 'middle' => 'c', 'end' => 'r'];
+        foreach ($chart['prims'] as $p) {
+            switch ($p[0]) {
+                case 'line':
+                    $this->line($ox + $p[1], $oy + $p[2], $ox + $p[3], $oy + $p[4], $p[5], $p[6]);
+                    break;
+                case 'poly':
+                    $this->polyline(array_map(function ($q) use ($ox, $oy) { return [$ox + $q[0], $oy + $q[1]]; }, $p[1]), $p[2], $p[3]);
+                    break;
+                case 'fill':
+                    $this->polygon(array_map(function ($q) use ($ox, $oy) { return [$ox + $q[0], $oy + $q[1]]; }, $p[1]), $p[2]);
+                    break;
+                case 'circle':
+                    $this->circle($ox + $p[1], $oy + $p[2], $p[3], $p[4]);
+                    break;
+                case 'text':
+                    if ((float) $p[8] != 0.0) {
+                        $this->textRot($ox + $p[1], $oy + $p[2], $p[3], $p[4], $p[5], $p[7], (float) $p[8], 'c');
+                    } else {
+                        $this->text($ox + $p[1], $oy + $p[2], $p[3], $p[4], $p[5], $p[7], $anchor[$p[6]]);
+                    }
+                    break;
+            }
+        }
+    }
+
+    /* ------------------------------------------------------------------
+       Entry point
+    ------------------------------------------------------------------ */
+    public function renderModel(array $m): void
+    {
+        $this->letterhead($m);
+
+        $blocks = $m['blocks'];
+        for ($i = 0, $n = count($blocks); $i < $n; $i++) {
+            $b = $blocks[$i];
+            if ($b['t'] !== 'h2') {
+                $this->drawBlock($b, $m);
+                continue;
+            }
+            /* A heading travels with the table / figure under it (and a table's trailing remark). */
+            $group = [$b];
+            $rowCount = 0;
+            if (isset($blocks[$i + 1]) && !in_array($blocks[$i + 1]['t'], ['h2', 'signatures'], true)) {
+                $group[] = $blocks[++$i];
+                if ($group[1]['t'] === 'table') { $rowCount = count($group[1]['rows']); }
+                if ($group[1]['t'] === 'table' && isset($blocks[$i + 1]) && $blocks[$i + 1]['t'] === 'italic') {
+                    $group[] = $blocks[++$i];
+                }
+            }
+            $need = ($rowCount <= 24 || $group[1]['t'] !== 'table')
+                ? $this->flowHeight($group, $m)
+                : self::H2_H + 13 + $this->tableKeep($group[1]);
+            if ($this->y + $need > $this->pageBottom() && !$this->atTop()) {
+                $this->newPage();
+            }
+            foreach ($group as $g) { $this->drawBlock($g, $m); }
+        }
+
+        $footer = $m['footerText'];
+        $this->onEachPage(function (SimplePDF $pdf, int $no, int $count) use ($footer) {
+            $size  = 9;
+            $ruleY = $pdf->pageH - 72 + 27;                   // 27pt below the text area, like the print footer
+            $base  = $pdf->pageH - 30 - 10.35 + 10.35 / 2 + 0.36 * $size;
+            $pdf->hline($pdf->left(), $pdf->right(), $ruleY, 0.5, '#000000');
+            $pdf->text($pdf->left(), $base, $footer, $size, 'r', '#000000', 'l');
+            $pdf->text($pdf->right(), $base, 'Page ' . $no . ' of ' . $count, $size, 'r', '#000000', 'r');
+        });
+    }
+
+    /** Heading's companion: header row + first body row (the least that may sit at the foot of a page). */
+    private function tableKeep(array $b): float
+    {
+        $T = $this->tableLayout($b);
+        return $T['head']['h'] + ($T['rows'] ? $T['rows'][0]['h'] : 0.0);
+    }
+}
+
+/* ----------------------------------------------------------------------
    Report bodies — one per report, mirroring rp_body_*() in report-print.php
 ---------------------------------------------------------------------- */
 
@@ -811,6 +1261,15 @@ function rpdf_body_inventory(ReportPDF $pdf, PDO $pdo, array $period): void
 ---------------------------------------------------------------------- */
 function pdf_render_print_report(PDO $pdo, string $report, array $period, string $filename): void
 {
+    /* Financial and Performance: formal statement layout (shared model with the print page). */
+    if ($report === 'financial' || $report === 'performance') {
+        require_once __DIR__ . '/report-statement.php';
+        $m   = rst_build_model($pdo, $report, $period);
+        $pdf = new StatementPDF($m['reportTitle'] . ' — ' . $period['label'] . ' — ' . $m['property']['name']);
+        $pdf->renderModel($m);
+        $pdf->output($filename);   // streams the file and exits
+    }
+
     $titles = [
         'financial'      => 'Financial Report',
         'performance'    => 'Performance Report',
@@ -871,4 +1330,4 @@ function pdf_render_print_report(PDO $pdo, string $report, array $period, string
         'Printed ' . $generated
     );
     $pdf->output($filename);
-}
+}

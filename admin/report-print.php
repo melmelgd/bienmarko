@@ -21,6 +21,9 @@
  * pages and the PDF/XLSX export (includes/reports-data.php), over the
  * same resolved date range, so the printout can never disagree with them.
  *
+ * NOTE: 'financial' and 'performance' are rendered by includes/report-statement.php
+ * (formal statement layout); this file's own layout serves the other two reports.
+ *
  * Self-contained on purpose (own CSS + tiny JS, no shared admin theme):
  * it must look the same on paper regardless of the dashboard's dark theme.
  * -----------------------------------------------------------------------
@@ -47,6 +50,17 @@ if (!in_array($report, $allowedReports, true)) {
 
 $period    = reports_resolve_period($_GET);
 $autoPrint = (($_GET['autoprint'] ?? '') === '1');
+
+/* Financial and Performance use the formal "statement" layout (serif, US Letter,
+   Summary / Schedules / Notes / signature lines, Page X of Y) defined in
+   includes/report-statement.php. Guest Insights and Inventory keep the
+   layout below. */
+if ($report === 'financial' || $report === 'performance') {
+    require_once __DIR__ . '/includes/report-statement.php';
+    $backHref = 'report-' . $report . '.php?' . http_build_query(['period' => $period['period'], 'start' => $period['start'], 'end' => $period['end']]);
+    rst_render_html(rst_build_model($pdo, $report, $period), $backHref, $autoPrint);
+    exit;
+}
 
 $titles = [
     'financial'      => 'Financial Report',
@@ -869,4 +883,4 @@ window.addEventListener('load', function () { setTimeout(function () { window.pr
 </script>
 <?php endif; ?>
 </body>
-</html>
+</html>
