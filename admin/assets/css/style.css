@@ -796,3 +796,46 @@ a:focus-visible, button:focus-visible, input:focus-visible {
     animation-duration: 0.01ms !important;
   }
 }
+
+/* -------------------------------------------------------------------------
+   16. NUMBER SIZING (bigger, easier-to-read figures)
+   Cormorant Garamond draws digits in old-style form (a "0" looks like a
+   small "o", a "1" like an "I"), so numbers read much smaller than the
+   font-size suggests. These rules switch to lining figures and raise the
+   size. They are prefixed with .app-shell so they win over the page-scoped
+   <style> blocks in dashboard.php, bookings.php, payments.php, etc.
+   Tweak the sizes below to taste.
+   ------------------------------------------------------------------------- */
+.app-shell .stat-value,
+.app-shell .td-amount,
+.app-shell .revenue-figure,
+.app-shell .rpt-overview-stat-value,
+.app-shell .rpt-stat-value,
+.app-shell .rpt-collect-amount,
+.app-shell .bill-row-value,
+.app-shell .bill-total-value {
+  font-variant-numeric: lining-nums;
+  font-feature-settings: "lnum" 1;
+}
+
+/* Stat cards (Dashboard, Bookings, Payments, Inventory, Expenses) */
+.app-shell .stat-value {
+  font-size: clamp(1.5rem, 0.9rem + 1.1vw, 2.25rem);
+  line-height: 1.15;
+  overflow-wrap: anywhere; /* wrap instead of overflowing narrow cards */
+}
+
+/* Amounts inside tables (Total Due, Paid, Total Cost, Expense Amount, ...) */
+.app-shell .td-amount { font-size: 1.125rem; }
+
+/* Billing modal rows and total */
+.app-shell .bill-row-value   { font-size: 1.05rem; }
+.app-shell .bill-total-value { font-size: 1.75rem; }
+
+/* Reports overview cards and sub-report cards */
+.app-shell .rpt-overview-stat-value { font-size: 1.75rem; line-height: 1.15; }
+.app-shell .rpt-stat-value,
+.app-shell .rpt-collect-amount      { font-size: 2.1rem;  line-height: 1.15; }
+
+/* Revenue figure on the dashboard/report panels */
+.app-shell .revenue-figure { font-size: 1.9rem; }

@@ -187,7 +187,7 @@ function bk_stage(array $row): string
  * Payments & Billing saves (so this page, the API and the Payments page can
  * never disagree about what "fully paid" means).
  *
- *   billed  = room fee + extra guest fee + other charges - discount
+ *   billed  = room fee + extra bed fee + other charges - discount
  *   paid    = payments.total_paid (running total of every payment recorded)
  *   balance = billed - paid (never negative)
  *

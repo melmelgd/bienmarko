@@ -7,6 +7,7 @@ bienmarko_require_role('user');
 
 require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/booking-emails.php';
+require_once __DIR__ . '/../../includes/booking-sms.php';
 require_once __DIR__ . '/../includes/booking-notifications.php';
 require_once __DIR__ . '/../includes/booking-stay.php';
 
@@ -99,6 +100,13 @@ function bk_ensure_tables(PDO $pdo): void
                  ADD COLUMN IF NOT EXISTS `address`        VARCHAR(255) NULL DEFAULT NULL,
                  ADD COLUMN IF NOT EXISTS `payment_method` ENUM('cash','gcash') NULL DEFAULT 'cash',
                  ADD COLUMN IF NOT EXISTS `booking_type`   ENUM('registered','guest') NOT NULL DEFAULT 'registered'"
+        );
+
+        // Older installs may have created payment_method as ENUM('cash') only,
+        // which would reject a GCash booking. Widening the ENUM is safe to re-run.
+        $pdo->exec(
+            "ALTER TABLE `bookings`
+             MODIFY COLUMN `payment_method` ENUM('cash','gcash') NULL DEFAULT 'cash'"
         );
 
         // Companion / guest-mate names — currently surfaced in the UI only
@@ -646,7 +654,7 @@ function bk_action_availability(PDO $pdo, array $input): never
  * Validates the contact block submitted with a registered-account booking,
  * using the same rules as api/guest-book.php:
  *   first name* (<=80), last name* (<=80), email* (valid, <=200),
- *   phone* (7-30 chars), address (optional, <=255), payment: cash only.
+ *   phone* (7-30 chars), address (optional, <=255), payment: cash or gcash.
  *
  * Returns [array $clean, ?string $error]. $clean keys: guest_name, email,
  * phone, address (string|null), payment_method.
@@ -658,6 +666,7 @@ function bk_validate_contact(array $input): array
     $email   = trim((string) ($input['email']      ?? ''));
     $phone   = trim((string) ($input['phone']      ?? ''));
     $address = trim((string) ($input['address']    ?? ''));
+    $payment = strtolower(trim((string) ($input['payment_method'] ?? '')));
 
     if ($first === '' || mb_strlen($first) > 80) {
         return [[], 'First name is required (max 80 characters).'];
@@ -680,8 +689,9 @@ function bk_validate_contact(array $input): array
         'email'          => $email,
         'phone'          => $phone,
         'address'        => $address !== '' ? $address : null,
-        // The resort accepts cash only; anything else falls back to cash.
-        'payment_method' => 'cash',
+        // The resort accepts cash and GCash (both collected in person);
+        // anything else falls back to cash.
+        'payment_method' => in_array($payment, ['cash', 'gcash'], true) ? $payment : 'cash',
     ], null];
 }
 
@@ -980,9 +990,13 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
         error_log('[bienmarko] guest confirmation notification failed: ' . $e->getMessage());
     }
 
-    // Email the guest (sent after the response; never blocks or breaks the booking).
+    // Email + text the guest and notify their dashboard (sent after the response; never blocks or breaks the booking).
     bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
-        bienmarko_email_send_booking($pdo, $bookingId, 'confirmation');
+        try {
+            bienmarko_email_send_booking($pdo, $bookingId, 'confirmation');
+        } finally {
+            bienmarko_notify_booking($pdo, $bookingId, 'confirmation');
+        }
     });
 
     bk_ok([
@@ -1161,10 +1175,14 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
             ? (float) $room['price'] * (int) $guestsCount
             : (float) $room['price'] * $nights;
 
+        $paymentSent = $contactSent && array_key_exists('payment_method', $input);
         $contactSql = $contactSent
             ? ", guest_name = :guest_name, email = :email, phone = :phone,
-                 address = :address, payment_method = :payment_method"
+                 address = :address"
             : '';
+        if ($paymentSent) {
+            $contactSql .= ", payment_method = :payment_method";
+        }
 
         $upd = $pdo->prepare(
             "UPDATE bookings SET
@@ -1194,6 +1212,8 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
             $updParams['email']          = $contact['email'];
             $updParams['phone']          = $contact['phone'];
             $updParams['address']        = $contact['address'];
+        }
+        if ($paymentSent) {
             $updParams['payment_method'] = $contact['payment_method'];
         }
         $upd->execute($updParams);
@@ -1216,9 +1236,13 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
             : "Booking {$booking['reference']} for {$booking['room_name']} was modified by the guest."
     );
 
-    // Email the guest (sent after the response; never blocks or breaks the booking).
+    // Email + text the guest and notify their dashboard (sent after the response; never blocks or breaks the booking).
     bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
-        bienmarko_email_send_booking($pdo, $bookingId, 'modified');
+        try {
+            bienmarko_email_send_booking($pdo, $bookingId, 'modified');
+        } finally {
+            bienmarko_notify_booking($pdo, $bookingId, 'modified');
+        }
     });
 
     bk_ok([
@@ -1305,9 +1329,13 @@ function bk_action_cancel(PDO $pdo, array $input, int $guestId): never
         "Booking {$booking['reference']} for {$booking['room_name']} was cancelled by the guest."
     );
 
-    // Email the guest (sent after the response; never blocks or breaks the booking).
+    // Email + text the guest and notify their dashboard (sent after the response; never blocks or breaks the booking).
     bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
-        bienmarko_email_send_booking($pdo, $bookingId, 'cancelled');
+        try {
+            bienmarko_email_send_booking($pdo, $bookingId, 'cancelled');
+        } finally {
+            bienmarko_notify_booking($pdo, $bookingId, 'cancelled');
+        }
     });
 
     bk_ok([

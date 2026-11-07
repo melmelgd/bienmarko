@@ -231,6 +231,55 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .btn-sm--gold:hover { background: var(--gold-600); color: var(--on-accent); }
 .btn-sm[disabled] { opacity: 0.5; cursor: default; pointer-events: none; }
 
+.icon-btn-sm {
+    width: 30px; height: 30px; display: inline-flex; align-items: center; justify-content: center;
+    border-radius: var(--r-sm); border: 1px solid var(--border); background: var(--panel-alt);
+    cursor: pointer; transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.icon-btn-sm--view { color: var(--gold-400); }
+.icon-btn-sm--view:hover { background: var(--amber-bg); border-color: var(--gold-600); }
+
+/* View / moderate modal */
+.modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px; z-index: 500;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.modal-overlay.is-open { opacity: 1; pointer-events: auto; }
+.modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--r-lg); width: 100%; max-width: 520px;
+    max-height: 92vh; display: flex; flex-direction: column;
+    transform: translateY(12px); transition: transform .2s;
+}
+.modal-overlay.is-open .modal { transform: translateY(0); }
+.modal-header {
+    padding: 20px 24px 16px;
+    display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+    border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.modal-header-left { display: flex; align-items: flex-start; gap: 12px; min-width: 0; }
+.modal-icon-box {
+    width: 40px; height: 40px; border-radius: var(--r-md);
+    background: var(--amber-bg); color: var(--gold-400);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.modal-title    { font-family: var(--font-display); font-size: 17px; font-weight: 700; }
+.modal-subtitle { font-size: 12.5px; color: var(--text-secondary); margin-top: 3px; overflow-wrap: anywhere; }
+.modal-close    { background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px; border-radius: var(--r-sm); flex-shrink: 0; }
+.modal-close:hover { color: var(--text); background: var(--panel-alt); }
+.modal-body     { padding: 20px 24px; overflow-y: auto; flex: 1; min-height: 0; }
+.modal-section-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-tertiary); margin: 18px 0 10px; }
+.modal-actions  { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; flex-shrink: 0; }
+.modal-actions .btn-sm { padding: 8px 16px; font-size: 13px; }
+
+.detail-box { background: var(--panel-alt); border: 1px solid var(--border); border-radius: var(--r-md); padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.detail-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 13.5px; }
+.detail-row-label { color: var(--text-secondary); }
+.detail-row-value { font-weight: 600; color: var(--text); text-align: right; }
+.fb-message-box { background: var(--panel-alt); border: 1px solid var(--border); border-radius: var(--r-md); padding: 14px 16px; font-size: 14px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+
 .toast-wrap { position: fixed; bottom: 24px; right: 24px; display: flex; flex-direction: column; gap: 10px; z-index: 999; }
 .toast {
     padding: 12px 16px; border-radius: var(--r-md); font-size: 13.5px; font-weight: 600;
@@ -331,9 +380,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                 </td>
                                 <td>
                                     <div class="status-stack">
-                                        <span class="ab <?php echo $row['is_read'] ? 'ab--grey' : 'ab--red'; ?>" id="fb-status-<?php echo (int) $row['id']; ?>">
-                                            <?php echo $row['is_read'] ? 'Read' : 'Unread'; ?>
-                                        </span>
                                         <span class="ab <?php echo $row['is_published'] ? 'ab--gold' : 'ab--grey'; ?>" id="fb-published-<?php echo (int) $row['id']; ?>">
                                             <?php echo $row['is_published'] ? 'On Site' : 'Hidden'; ?>
                                         </span>
@@ -343,21 +389,19 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                     <div class="td-actions">
                                         <button
                                             type="button"
-                                            class="btn-sm btn-sm--success fb-mark-read-btn"
+                                            class="icon-btn-sm icon-btn-sm--view fb-view-btn"
+                                            id="fb-view-btn-<?php echo (int) $row['id']; ?>"
                                             data-id="<?php echo (int) $row['id']; ?>"
-                                            <?php echo $row['is_read'] ? 'disabled' : ''; ?>
-                                        >
-                                            <?php echo icon('check', 'icon-sm'); ?> Mark Read
-                                        </button>
-                                        <button
-                                            type="button"
-                                            class="btn-sm btn-sm--gold fb-publish-btn"
-                                            data-id="<?php echo (int) $row['id']; ?>"
+                                            data-name="<?php echo htmlspecialchars(fb_admin_name($row), ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-email="<?php echo htmlspecialchars($row['email'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-category="<?php echo htmlspecialchars(fb_admin_category_label($row['category']), ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-message="<?php echo htmlspecialchars($row['message'], ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-date="<?php echo htmlspecialchars(date('M j, Y · g:i A', strtotime($row['created_at'])), ENT_QUOTES, 'UTF-8'); ?>"
                                             data-published="<?php echo $row['is_published'] ? '1' : '0'; ?>"
-                                            id="fb-publish-btn-<?php echo (int) $row['id']; ?>"
+                                            title="View"
+                                            aria-label="View feedback from <?php echo htmlspecialchars(fb_admin_name($row), ENT_QUOTES, 'UTF-8'); ?>"
                                         >
-                                            <?php echo icon($row['is_published'] ? 'close' : 'check', 'icon-sm'); ?>
-                                            <?php echo $row['is_published'] ? 'Unpublish' : 'Publish'; ?>
+                                            <?php echo icon('eye', 'icon-sm'); ?>
                                         </button>
                                         <button type="button" class="btn-sm btn-sm--danger fb-delete-btn" data-id="<?php echo (int) $row['id']; ?>">
                                             <?php echo icon('trash', 'icon-sm'); ?> Delete
@@ -388,18 +432,39 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
     </div>
 </div>
 
+<div class="modal-overlay" id="fbModal" aria-modal="true" role="dialog" aria-labelledby="fbModalName">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-header-left">
+                <span class="modal-icon-box"><?php echo icon('message', 'icon-sm'); ?></span>
+                <div style="min-width:0;">
+                    <div class="modal-title" id="fbModalName">—</div>
+                    <div class="modal-subtitle" id="fbModalEmail">—</div>
+                </div>
+            </div>
+            <button type="button" class="modal-close" id="fbModalClose" aria-label="Close"><?php echo icon('close'); ?></button>
+        </div>
+        <div class="modal-body">
+            <div class="detail-box">
+                <div class="detail-row"><span class="detail-row-label">Rating</span><span class="detail-row-value" id="fbModalRating"></span></div>
+                <div class="detail-row"><span class="detail-row-label">Category</span><span class="detail-row-value" id="fbModalCategory">—</span></div>
+                <div class="detail-row"><span class="detail-row-label">Submitted</span><span class="detail-row-value" id="fbModalDate">—</span></div>
+                <div class="detail-row"><span class="detail-row-label">Status</span><span class="detail-row-value"><span class="ab ab--grey" id="fbModalStatus">Hidden</span></span></div>
+            </div>
+            <div class="modal-section-title">Message</div>
+            <div class="fb-message-box" id="fbModalMessage"></div>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn-sm btn-sm--success" id="fbPublishBtn"><?php echo icon('check', 'icon-sm'); ?> Publish</button>
+            <button type="button" class="btn-sm btn-sm--gold" id="fbUnpublishBtn"><?php echo icon('close', 'icon-sm'); ?> Unpublish</button>
+        </div>
+    </div>
+</div>
+
 <div class="toast-wrap" id="toastWrap"></div>
 
 <script>
 var CSRF = <?php echo json_encode($csrf); ?>;
-
-// Mirrors admin/includes/icons.php's icon('check'|'close', 'icon-sm') output,
-// so the Publish/Unpublish button's icon can be swapped after a successful
-// toggle without a full page reload.
-var ICON_SVG = {
-    check: '<svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><polyline points="4 12.5 9.5 18 20 6"></polyline></svg>',
-    close: '<svg class="icon-sm" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><line x1="6" y1="6" x2="18" y2="18"></line><line x1="18" y1="6" x2="6" y2="18"></line></svg>'
-};
 
 function toast(message, type) {
     var wrap = document.getElementById('toastWrap');
@@ -424,29 +489,6 @@ function feedbackApi(payload) {
 }
 
 document.addEventListener('click', function (e) {
-    var markBtn = e.target.closest('.fb-mark-read-btn');
-    if (markBtn) {
-        var id = markBtn.getAttribute('data-id');
-        markBtn.disabled = true;
-        feedbackApi({ action: 'mark_read', id: id })
-            .then(function (result) {
-                if (!result.ok || !result.data.success) {
-                    throw new Error((result.data && result.data.error) || 'Could not update this feedback.');
-                }
-                var badge = document.getElementById('fb-status-' + id);
-                if (badge) {
-                    badge.textContent = 'Read';
-                    badge.className = 'ab ab--grey';
-                }
-                toast('Marked as read.', 'success');
-            })
-            .catch(function (err) {
-                markBtn.disabled = false;
-                toast(err.message, 'error');
-            });
-        return;
-    }
-
     var delBtn = e.target.closest('.fb-delete-btn');
     if (delBtn) {
         if (!window.confirm('Delete this feedback? This cannot be undone.')) return;
@@ -468,31 +510,9 @@ document.addEventListener('click', function (e) {
         return;
     }
 
-    var pubBtn = e.target.closest('.fb-publish-btn');
-    if (pubBtn) {
-        var pubId = pubBtn.getAttribute('data-id');
-        var willPublish = pubBtn.getAttribute('data-published') !== '1';
-        pubBtn.disabled = true;
-        feedbackApi({ action: 'toggle_publish', id: pubId, publish: willPublish })
-            .then(function (result) {
-                if (!result.ok || !result.data.success) {
-                    throw new Error((result.data && result.data.error) || 'Could not update this feedback.');
-                }
-                var badge = document.getElementById('fb-published-' + pubId);
-                if (badge) {
-                    badge.textContent = willPublish ? 'On Site' : 'Hidden';
-                    badge.className = 'ab ' + (willPublish ? 'ab--gold' : 'ab--grey');
-                }
-                pubBtn.setAttribute('data-published', willPublish ? '1' : '0');
-                pubBtn.innerHTML = ICON_SVG[willPublish ? 'close' : 'check'] + (willPublish ? ' Unpublish' : ' Publish');
-                toast(willPublish ? 'Now showing on the landing page.' : 'Hidden from the landing page.', 'success');
-            })
-            .catch(function (err) {
-                toast(err.message, 'error');
-            })
-            .finally(function () {
-                pubBtn.disabled = false;
-            });
+    var viewBtn = e.target.closest('.fb-view-btn');
+    if (viewBtn) {
+        openFeedbackModal(viewBtn);
         return;
     }
 
@@ -513,6 +533,82 @@ document.addEventListener('click', function (e) {
             });
     }
 });
+
+/* ---------- View / moderate modal ---------- */
+var fbModal = document.getElementById('fbModal');
+var fbActiveBtn = null; // the eye button of the row currently open in the modal
+
+function renderFeedbackModalState() {
+    if (!fbActiveBtn) return;
+    var published = fbActiveBtn.getAttribute('data-published') === '1';
+    var status = document.getElementById('fbModalStatus');
+    status.textContent = published ? 'On Site' : 'Hidden';
+    status.className = 'ab ' + (published ? 'ab--gold' : 'ab--grey');
+    // The action that doesn't apply to the current state is disabled.
+    document.getElementById('fbPublishBtn').disabled = published;
+    document.getElementById('fbUnpublishBtn').disabled = !published;
+}
+
+function openFeedbackModal(btn) {
+    fbActiveBtn = btn;
+    document.getElementById('fbModalName').textContent     = btn.getAttribute('data-name');
+    document.getElementById('fbModalEmail').textContent    = btn.getAttribute('data-email');
+    document.getElementById('fbModalCategory').textContent = btn.getAttribute('data-category');
+    document.getElementById('fbModalDate').textContent     = btn.getAttribute('data-date');
+    document.getElementById('fbModalMessage').textContent  = btn.getAttribute('data-message');
+
+    // Reuse the star markup already rendered in the table row.
+    var row = btn.closest('tr');
+    var stars = row ? row.querySelector('.fb-stars-admin') : null;
+    document.getElementById('fbModalRating').innerHTML = stars ? stars.outerHTML : '';
+
+    renderFeedbackModalState();
+    fbModal.classList.add('is-open');
+}
+
+function closeFeedbackModal() {
+    fbModal.classList.remove('is-open');
+    fbActiveBtn = null;
+}
+
+function setFeedbackPublished(willPublish) {
+    if (!fbActiveBtn) return;
+    var btn = fbActiveBtn;
+    var id = btn.getAttribute('data-id');
+    var pubBtn = document.getElementById('fbPublishBtn');
+    var unpubBtn = document.getElementById('fbUnpublishBtn');
+    pubBtn.disabled = true;
+    unpubBtn.disabled = true;
+
+    feedbackApi({ action: 'toggle_publish', id: id, publish: willPublish })
+        .then(function (result) {
+            if (!result.ok || !result.data.success) {
+                throw new Error((result.data && result.data.error) || 'Could not update this feedback.');
+            }
+            var badge = document.getElementById('fb-published-' + id);
+            if (badge) {
+                badge.textContent = willPublish ? 'On Site' : 'Hidden';
+                badge.className = 'ab ' + (willPublish ? 'ab--gold' : 'ab--grey');
+            }
+            btn.setAttribute('data-published', willPublish ? '1' : '0');
+            toast(willPublish ? 'Now showing on the landing page.' : 'Hidden from the landing page.', 'success');
+        })
+        .catch(function (err) {
+            toast(err.message, 'error');
+        })
+        .finally(function () {
+            renderFeedbackModalState();
+        });
+}
+
+document.getElementById('fbPublishBtn').addEventListener('click', function () { setFeedbackPublished(true); });
+document.getElementById('fbUnpublishBtn').addEventListener('click', function () { setFeedbackPublished(false); });
+document.getElementById('fbModalClose').addEventListener('click', closeFeedbackModal);
+fbModal.addEventListener('click', function (e) { if (e.target === fbModal) closeFeedbackModal(); });
+document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && fbModal.classList.contains('is-open')) closeFeedbackModal();
+});
 </script>
+
 
 <?php require __DIR__ . '/includes/foot.php'; ?>

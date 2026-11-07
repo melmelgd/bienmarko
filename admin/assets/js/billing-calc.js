@@ -9,10 +9,10 @@
  *   discount per guest = per-person share × discount % ÷ 100
  *   total discount     = discount per guest × guests with discount
  *                        (never more than the accommodation fee)
- *   final amount due   = accommodation fee + extra guest fees
+ *   final amount due   = accommodation fee + extra bed fees
  *                        + other charges − total discount
  *
- * Only the accommodation fee is discounted. Extra guest fees and other
+ * Only the accommodation fee is discounted. Extra bed fees and other
  * charges are always charged in full.
  *
  * Works in the browser (window.BillingCalc) and in Node (module.exports),
@@ -79,7 +79,7 @@
         var r, feeC, extraC, otherC, paidC;
 
         r = money(input.accommodation_fee, 'Accommodation fee'); feeC   = r[0]; if (r[1]) errors.push(r[1]);
-        r = money(input.extra_guest_fee,   'Extra guest fee');   extraC = r[0]; if (r[1]) errors.push(r[1]);
+        r = money(input.extra_guest_fee,   'Extra bed fee');   extraC = r[0]; if (r[1]) errors.push(r[1]);
         r = money(input.other_charges,     'Other charges');     otherC = r[0]; if (r[1]) errors.push(r[1]);
         r = money(input.amount_paid,       'Amount paid');       paidC  = r[0]; if (r[1]) errors.push(r[1]);
 
@@ -195,7 +195,7 @@
         /* Plain "A − B = C" when there are no extras; labelled terms when there are. */
         var hasExtras = c.extra_guest_fee > 0 || c.other_charges > 0;
         var terms = [peso(c.accommodation_fee) + (hasExtras ? ' accommodation' : '')];
-        if (c.extra_guest_fee > 0) terms.push('+ ' + peso(c.extra_guest_fee) + ' extra guest fees');
+        if (c.extra_guest_fee > 0) terms.push('+ ' + peso(c.extra_guest_fee) + ' extra bed fees');
         if (c.other_charges   > 0) terms.push('+ ' + peso(c.other_charges)   + ' other charges');
         if (c.total_discount  > 0) terms.push('\u2212 ' + peso(c.total_discount) + (hasExtras ? ' discount' : ''));
         lines.push(terms.join(' ') + ' = ' + peso(c.final_amount) + ' final amount');

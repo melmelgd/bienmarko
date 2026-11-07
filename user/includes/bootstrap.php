@@ -110,7 +110,7 @@ if (!empty($_SESSION['auth_user_id'])) {
             'id'      => (int) $n['id'],
             'href'    => ($n['type'] === 'feedback_reminder' && $n['booking_id'])
                 ? 'feedback.php?booking=' . (int) $n['booking_id']
-                : (in_array($n['type'], ['booking_confirmed', 'booking_reminder_week', 'booking_reminder_night'], true)
+                : (in_array($n['type'], ['booking_confirmed', 'booking_modified', 'booking_cancelled', 'booking_reminder', 'booking_reminder_week', 'booking_reminder_night'], true)
                     ? 'bookings.php'
                     : null),
             'message' => $n['message'],

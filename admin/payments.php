@@ -728,7 +728,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         <span class="form-label" id="fRoomFeeHint" style="display:none;color:var(--gold-400);font-weight:500;margin-top:4px;"></span>
                     </div>
                     <div class="form-group">
-                        <label class="form-label">Extra Guest Fee (₱)</label>
+                        <label class="form-label">Extra Bed Fee (₱)</label>
                         <input class="form-input" type="number" id="fExtraGuest" min="0" step="0.01" oninput="recalc()" placeholder="0.00">
                     </div>
                     <div class="form-group">
@@ -807,7 +807,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         <span class="bill-row-value" id="bsRoomFeeFinal">₱0.00</span>
                     </div>
                     <div class="bill-row">
-                        <span class="bill-row-label">Extra Guest Fees</span>
+                        <span class="bill-row-label">Extra Bed Fees</span>
                         <span class="bill-row-value" id="bsExtraGuest">₱0.00</span>
                     </div>
                     <div class="bill-row">
@@ -899,7 +899,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
         <div class="receipt-row"><span class="receipt-row-label" id="rcNightsLabel">Nights</span>     <span class="receipt-row-value" id="rcNights">—</span></div>
         <hr class="receipt-divider">
         <div class="receipt-row"><span class="receipt-row-label">Room Fee</span>           <span class="receipt-row-value" id="rcRoomFee">—</span></div>
-        <div class="receipt-row"><span class="receipt-row-label">Extra Guest Fee</span>    <span class="receipt-row-value" id="rcExtraGuest">—</span></div>
+        <div class="receipt-row"><span class="receipt-row-label">Extra Bed Fee</span>    <span class="receipt-row-value" id="rcExtraGuest">—</span></div>
         <div class="receipt-row"><span class="receipt-row-label">Other Charges</span>      <span class="receipt-row-value" id="rcOtherCharges">—</span></div>
         <div class="receipt-row" id="rcDiscountRow"><span class="receipt-row-label" id="rcDiscountLabel">Discount</span><span class="receipt-row-value" id="rcDiscount" style="color:#c0392b;">—</span></div>
         <hr class="receipt-divider">
@@ -1069,7 +1069,7 @@ document.getElementById('billingModal').addEventListener('click', function (e) {
      per-person share   = accommodation fee ÷ total guests
      discount per guest = per-person share × discount % ÷ 100
      total discount     = discount per guest × guests with discount
-     final amount due   = accommodation fee + extra guest fees + other charges − total discount
+     final amount due   = accommodation fee + extra bed fees + other charges − total discount
 */
 function pctLabel(p) { return BillingCalc.pctLabel(p); }
 
@@ -1205,7 +1205,7 @@ function recalc() {
                'The remaining guests pay their full shares.';
     }
     if (discounted && (c.extra_guest_fee > 0 || c.other_charges > 0)) {
-        note += ' Extra guest fees and other charges are always charged in full.';
+        note += ' Extra bed fees and other charges are always charged in full.';
     }
     setText('bsNote', note);
 

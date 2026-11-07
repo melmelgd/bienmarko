@@ -94,7 +94,7 @@ try {
                 b.guests_count, b.status, {$stayCols}, b.total_amount, b.notes,
                 b.created_at, b.accommodation_id, b.companion_names,
                 b.guest_name, b.email AS contact_email, b.phone AS contact_phone,
-                b.address AS contact_address,
+                b.address AS contact_address, b.payment_method,
                 a.name AS room_name, a.type AS room_type,
                 a.capacity AS room_capacity, a.price AS room_price,
                 a.image_filename
@@ -148,7 +148,7 @@ function bk_btn_icon(string $name): string
     $paths = [
         'chevron'  => '<path d="m9 18 6-6-6-6"/>',
         'edit'     => '<path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/>',
-        'trash'    => '<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+        'cancel'   => '<circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/>',
         'download' => '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
     ];
     return '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">'
@@ -538,12 +538,32 @@ require __DIR__ . '/includes/head.php';
 }
 .guest-info-field select:focus { border-color: var(--ember); outline: none; }
 .guest-info-field .req { color: var(--ember); font-weight: 700; }
-.pay-method {
-  display: flex; flex-direction: column; gap: 2px;
-  background: var(--surface-raised); border: 1px solid var(--ember);
-  border-radius: var(--radius-sm); padding: 12px 14px; font-size: 13px; color: var(--paper-dim);
+/* Payment method picker (Cash / GCash) */
+.pay-options { display: grid; grid-template-columns: 1fr; gap: 10px; }
+@media (min-width: 480px) { .pay-options { grid-template-columns: 1fr 1fr; } }
+.guest-info-field .pay-option {
+  position: relative; display: block; cursor: pointer;
+  font-weight: 400; color: var(--paper-dim);
 }
-.pay-method strong { font-size: 15px; color: var(--paper); }
+.guest-info-field .pay-option input[type="radio"] {
+  position: absolute; opacity: 0; width: 1px; height: 1px;
+  padding: 0; border: 0; pointer-events: none;
+}
+.pay-option__inner {
+  display: flex; flex-direction: column; gap: 2px; height: 100%;
+  background: var(--surface-raised); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 12px 14px;
+  font-size: 13px; color: var(--paper-dim);
+  transition: border-color .15s, box-shadow .15s;
+}
+.pay-option__inner strong { font-size: 15px; color: var(--paper); }
+.pay-option:hover .pay-option__inner { border-color: var(--paper-faint); }
+.guest-info-field .pay-option input[type="radio"]:checked + .pay-option__inner {
+  border-color: var(--ember); box-shadow: 0 0 0 1px var(--ember);
+}
+.guest-info-field .pay-option input[type="radio"]:focus-visible + .pay-option__inner {
+  outline: 2px solid var(--ember); outline-offset: 2px;
+}
 .guest-info-field select option,
 .guest-info-field select optgroup { background: var(--surface-raised); color: var(--paper); }
 .guest-info-field select option:disabled { color: var(--paper-faint); }
@@ -1449,10 +1469,22 @@ require __DIR__ . '/includes/head.php';
                     </div>
 
                     <div class="guest-info-field" style="grid-column:1/-1">
-                        <label>Payment Method</label>
-                        <div class="pay-method">
-                            <strong>Cash</strong>
-                            <span>Pay in person at check-in or check-out.</span>
+                        <label id="payMethodLabel">Payment Method</label>
+                        <div class="pay-options" role="radiogroup" aria-labelledby="payMethodLabel">
+                            <label class="pay-option">
+                                <input type="radio" name="payMethod" value="cash" checked>
+                                <span class="pay-option__inner">
+                                    <strong>Cash</strong>
+                                    <span>Pay in person at check-in or check-out.</span>
+                                </span>
+                            </label>
+                            <label class="pay-option">
+                                <input type="radio" name="payMethod" value="gcash">
+                                <span class="pay-option__inner">
+                                    <strong>GCash</strong>
+                                    <span>Pay via GCash at check-in or check-out.</span>
+                                </span>
+                            </label>
                         </div>
                     </div>
 
@@ -1554,6 +1586,7 @@ require __DIR__ . '/includes/head.php';
                      data-email="<?php echo htmlspecialchars($rowEmail); ?>"
                      data-phone="<?php echo htmlspecialchars($rowPhone); ?>"
                      data-address="<?php echo htmlspecialchars($rowAddress); ?>"
+                     data-payment-method="<?php echo (($bk['payment_method'] ?? 'cash') === 'gcash') ? 'gcash' : 'cash'; ?>"
                      data-status="<?php echo htmlspecialchars($bk['status']); ?>"
                      data-stage="<?php echo htmlspecialchars($stage); ?>"
                      data-image="<?php echo htmlspecialchars((string) $bk['image_filename']); ?>">
@@ -1591,7 +1624,7 @@ require __DIR__ . '/includes/head.php';
                                     <?php echo bk_btn_icon('edit'); ?> Modify
                                 </button>
                                 <button type="button" class="bk-btn bk-btn--red" data-bk-cancel>
-                                    <?php echo bk_btn_icon('trash'); ?> Cancel
+                                    <?php echo bk_btn_icon('cancel'); ?> Cancel
                                 </button>
                             </span>
                         <?php elseif ($isCheckedIn): ?>
@@ -1660,7 +1693,7 @@ require __DIR__ . '/includes/head.php';
             </div>
             <div class="bk-detail-row">
                 <span class="bk-detail-row__label">Payment</span>
-                <span class="bk-detail-row__value">Cash on arrival</span>
+                <span class="bk-detail-row__value" id="bkDetailPayment">Cash on arrival</span>
             </div>
             <div class="bk-detail-divider"></div>
             <div class="bk-detail-row">
@@ -1732,7 +1765,7 @@ require __DIR__ . '/includes/head.php';
         <div class="bk-success__ref" id="bkSuccessRef">BM-XXXXXXXX-XXXX</div>
         <p id="bkSuccessDetails" style="margin-top:4px"></p>
         <p style="font-size:13px;color:var(--paper-faint);margin-top:8px">
-            Payment is settled in cash upon check-in or check-out.
+            Payment is settled in cash or GCash upon check-in or check-out.
         </p>
         <div class="bk-success__actions">
             <button type="button" class="btn btn--primary" id="bkSuccessDone">
@@ -3119,6 +3152,10 @@ require __DIR__ . '/includes/head.php';
       email:      elGuestEmail.value.trim(),
       phone:      elGuestPhone.value.trim(),
       address:    elGuestAddress.value.trim(),
+      payment_method: (function () {
+        var sel = document.querySelector('input[name="payMethod"]:checked');
+        return (sel && sel.value === 'gcash') ? 'gcash' : 'cash';
+      })(),
     };
 
     elStep3Error.style.display = 'none';
@@ -3262,6 +3299,7 @@ require __DIR__ . '/includes/head.php';
     document.getElementById('bkDetailPhone').textContent    = contact.phone;
     document.getElementById('bkDetailAddress').textContent  = contact.address;
     document.getElementById('bkDetailAddressRow').style.display = contact.address ? '' : 'none';
+    document.getElementById('bkDetailPayment').textContent  = contact.payment_method === 'gcash' ? 'GCash on arrival' : 'Cash on arrival';
     document.getElementById('bkDetailCheckIn').textContent  = formatDate(currentCheckIn);
     document.getElementById('bkDetailCheckOut').textContent = formatDate(currentCheckOut);
     document.getElementById('bkDetailNights').textContent   = pendingBooking.nights + ' night' + (pendingBooking.nights === 1 ? '' : 's');
@@ -3357,7 +3395,7 @@ require __DIR__ . '/includes/head.php';
         email:            pendingBooking.contact.email,
         phone:            pendingBooking.contact.phone,
         address:          pendingBooking.contact.address,
-        payment_method:   'cash',
+        payment_method:   pendingBooking.contact.payment_method === 'gcash' ? 'gcash' : 'cash',
         csrf_token:       csrf,
       }),
     })
@@ -3407,6 +3445,8 @@ require __DIR__ . '/includes/head.php';
     companionMax = 0;
     elCompanionsField.hidden = true;
     elCompanionsList.innerHTML = '';
+    var payCashEl = document.querySelector('input[name="payMethod"][value="cash"]');
+    if (payCashEl) payCashEl.checked = true;
     refreshDateTriggers();
     setStep(1);
     // Collapse the wizard again and show the new booking in the list.
@@ -3445,6 +3485,7 @@ require __DIR__ . '/includes/head.php';
     art.setAttribute('data-email', ct.email || '');
     art.setAttribute('data-phone', ct.phone || '');
     art.setAttribute('data-address', ct.address || '');
+    art.setAttribute('data-payment-method', ct.payment_method === 'gcash' ? 'gcash' : 'cash');
     art.setAttribute('data-status', 'confirmed');
     art.setAttribute('data-stage', 'upcoming');
     art.setAttribute('data-total', data.total_amount || 0);
@@ -3453,7 +3494,7 @@ require __DIR__ . '/includes/head.php';
     var actionsHtml = bkCanModifyClient(data.check_in)
       ? '<span class="bk-item__actions">' +
           '<button type="button" class="bk-btn bk-btn--cream" data-bk-edit>' + BK_ICON.edit + ' Modify</button>' +
-          '<button type="button" class="bk-btn bk-btn--red" data-bk-cancel>' + BK_ICON.trash + ' Cancel</button>' +
+          '<button type="button" class="bk-btn bk-btn--red" data-bk-cancel>' + BK_ICON.cancel + ' Cancel</button>' +
         '</span>'
       : '<span class="bk-item__note">Contact us to modify</span>';
 
@@ -4082,7 +4123,7 @@ require __DIR__ . '/includes/head.php';
   var BK_ICON = {
     chevron:  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m9 18 6-6-6-6"/></svg>',
     edit:     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z"/></svg>',
-    trash:    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>'
+    cancel:   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6"/><path d="m9 9 6 6"/></svg>'
   };
 
   /* ---- "New Booking" toggle (wizard is collapsed by default) ---- */
@@ -4216,7 +4257,7 @@ require __DIR__ . '/includes/head.php';
     if (d.address) html += vmRow('Address', d.address);
     if (companions.length) html += vmRow('Additional guests', companions.join(', '));
     if (d.notes) html += vmRow('Notes', d.notes);
-    html += vmRow('Payment', 'Cash on arrival');
+    html += vmRow('Payment', d.paymentMethod === 'gcash' ? 'GCash on arrival' : 'Cash on arrival');
     html += '<div class="bk-detail-divider"></div>';
     html += '<div class="bk-detail-row bk-detail-row--total">' +
               '<span class="bk-detail-row__label">Total</span>' +

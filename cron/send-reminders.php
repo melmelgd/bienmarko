@@ -7,6 +7,10 @@
  * includes/gmail-config.php, default 1). Safe to run as often as you like:
  * a booking is only ever sent ONE reminder (failed attempts retry, max 3).
  *
+ * The same run also TEXTS the reminder (iProg SMS, includes/sms-config.php)
+ * and posts it to registered guests' dashboard bell. That part works even
+ * when Gmail is not connected.
+ *
  * Run it once a day, e.g. every morning:
  *
  *   Command line (XAMPP / most hosts):
@@ -53,6 +57,7 @@ if ($isCli && empty($_SERVER['HTTP_HOST'])) {
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/../includes/booking-emails.php';
+require_once __DIR__ . '/../includes/booking-sms.php';
 
 // Options
 $days   = max(0, (int) ($cfg['reminder_days_before'] ?? 1));
@@ -87,10 +92,32 @@ try {
 $target = date('Y-m-d', strtotime("+{$days} day"));
 $say('[' . date('Y-m-d H:i:s') . "] Reminder run — check-in date {$target}" . ($dryRun ? ' (dry run)' : ''));
 
+/* ---- SMS + dashboard bell (independent of Gmail) ---------------------- */
+$smsFailed = 0;
+$smsIds    = bienmarko_reminder_booking_ids($pdo, $target);
+$say(count($smsIds) . ' booking(s) checking in on ' . $target . ' (SMS / dashboard)'
+   . (bienmarko_sms_is_ready() ? '.' : ' - SMS is not set up, dashboard notices only.'));
+foreach ($smsIds as $id) {
+    if ($dryRun) {
+        $say("  would text/notify: #{$id}");
+        continue;
+    }
+    $r   = bienmarko_notify_booking($pdo, $id, 'reminder');
+    $sms = $r['sms'];
+    if (in_array($sms['status'], ['sent', 'duplicate', 'off'], true)) {
+        $say("  #{$id}: SMS {$sms['status']}" . ($r['app'] ? ', dashboard notified' : ''));
+    } else {
+        if ($sms['status'] === 'failed') {
+            $smsFailed++;
+        }
+        $say("  #{$id}: SMS {$sms['status']} - {$sms['error']}" . ($r['app'] ? ' (dashboard notified)' : ''));
+    }
+}
+
 $status = bienmarko_gmail_status($pdo);
 if (!$status['connected']) {
-    $say('Gmail is not connected (' . $status['status'] . '). Nothing sent. Connect it in Settings → Email (Gmail).');
-    exit(0);
+    $say('Gmail is not connected (' . $status['status'] . '). No emails sent. Connect it in Settings → Email (Gmail).');
+    exit($smsFailed > 0 ? 2 : 0);
 }
 
 $ids = bienmarko_email_due_reminders($pdo, $target);
@@ -123,4 +150,4 @@ foreach ($ids as $id) {
 }
 
 $say($dryRun ? 'Dry run complete.' : "Done. Sent {$sent}, failed {$failed}.");
-exit($failed > 0 ? 2 : 0);
+exit(($failed + $smsFailed) > 0 ? 2 : 0);

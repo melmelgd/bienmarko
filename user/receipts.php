@@ -308,7 +308,7 @@ require __DIR__ . '/includes/head.php';
         <div class="rc-row"><span class="rc-row__label">Nights</span>    <span class="rc-row__value" id="rcNights">—</span></div>
         <hr class="rc-divider">
         <div class="rc-row"><span class="rc-row__label">Room Fee</span>        <span class="rc-row__value" id="rcRoomFee">—</span></div>
-        <div class="rc-row"><span class="rc-row__label">Extra Guest Fee</span> <span class="rc-row__value" id="rcExtraGuest">—</span></div>
+        <div class="rc-row"><span class="rc-row__label">Extra Bed Fee</span> <span class="rc-row__value" id="rcExtraGuest">—</span></div>
         <div class="rc-row"><span class="rc-row__label">Other Charges</span>   <span class="rc-row__value" id="rcOtherCharges">—</span></div>
         <div class="rc-row" id="rcDiscountRow"><span class="rc-row__label">Discount</span><span class="rc-row__value" id="rcDiscount" style="color:#c0392b;">—</span></div>
         <hr class="rc-divider">

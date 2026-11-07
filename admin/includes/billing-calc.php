@@ -12,10 +12,10 @@
  *   discount per guest = per-person share × discount % ÷ 100
  *   total discount     = discount per guest × guests with discount
  *                        (never more than the accommodation fee)
- *   final amount due   = accommodation fee + extra guest fees
+ *   final amount due   = accommodation fee + extra bed fees
  *                        + other charges − total discount
  *
- * Only the accommodation fee is discounted. Extra guest fees and other
+ * Only the accommodation fee is discounted. Extra bed fees and other
  * charges are always charged in full.
  *
  * Rounding: every step is rounded half-up to whole centavos (2 decimals)
@@ -98,7 +98,7 @@ function bienmarko_billing_calculate(array $in): array
     $errors = [];
 
     [$feeC,   $e] = bienmarko_billing_money($in['accommodation_fee'] ?? 0, 'Accommodation fee');     if ($e) $errors[] = $e;
-    [$extraC, $e] = bienmarko_billing_money($in['extra_guest_fee']   ?? 0, 'Extra guest fee');         if ($e) $errors[] = $e;
+    [$extraC, $e] = bienmarko_billing_money($in['extra_guest_fee']   ?? 0, 'Extra bed fee');         if ($e) $errors[] = $e;
     [$otherC, $e] = bienmarko_billing_money($in['other_charges']     ?? 0, 'Other charges');           if ($e) $errors[] = $e;
     [$paidC,  $e] = bienmarko_billing_money($in['amount_paid']       ?? 0, 'Amount paid');             if ($e) $errors[] = $e;
 

@@ -20,6 +20,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 require_once __DIR__ . '/../../includes/booking-emails.php';
+require_once __DIR__ . '/../../includes/booking-sms.php';
 require_once __DIR__ . '/../includes/booking-stay.php';
 
 bienmarko_start_session();
@@ -325,9 +326,13 @@ if ($action === 'update_status') {
     }
 
     if ($status === 'cancelled' && $prevStatus !== 'cancelled') {
-        // Email the guest (sent after the response; never blocks the admin action).
+        // Email + text the guest and notify their dashboard (sent after the response; never blocks the admin action).
         bienmarko_email_after_response(static function () use ($pdo, $id): void {
-            bienmarko_email_send_booking($pdo, $id, 'cancelled');
+            try {
+                bienmarko_email_send_booking($pdo, $id, 'cancelled');
+            } finally {
+                bienmarko_notify_booking($pdo, $id, 'cancelled');
+            }
         });
     }
 
@@ -515,12 +520,17 @@ if ($action === 'create') {
 
         $pdo->commit();
 
-        if ($email !== '') {
-            // Email the guest (sent after the response; never blocks the admin action).
-            bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
-                bienmarko_email_send_booking($pdo, $bookingId, 'confirmation');
-            });
-        }
+        // Email (when an address was given) + text the guest, and notify their dashboard if they
+        // have an account. Sent after the response; never blocks the admin action.
+        bienmarko_email_after_response(static function () use ($pdo, $bookingId, $email): void {
+            try {
+                if ($email !== '') {
+                    bienmarko_email_send_booking($pdo, $bookingId, 'confirmation');
+                }
+            } finally {
+                bienmarko_notify_booking($pdo, $bookingId, 'confirmation');
+            }
+        });
 
         echo json_encode(['success' => true, 'reference' => $ref, 'booking_id' => $bookingId]);
 
@@ -729,9 +739,13 @@ if ($action === 'update') {
         $pdo->commit();
 
         if (($existing['status'] ?? '') !== 'cancelled') {
-            // Email the guest the updated details (sent after the response).
+            // Email + text the guest the updated details and notify their dashboard (sent after the response).
             bienmarko_email_after_response(static function () use ($pdo, $id): void {
-                bienmarko_email_send_booking($pdo, $id, 'modified');
+                try {
+                    bienmarko_email_send_booking($pdo, $id, 'modified');
+                } finally {
+                    bienmarko_notify_booking($pdo, $id, 'modified');
+                }
             });
         }
 

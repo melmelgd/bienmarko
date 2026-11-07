@@ -36,6 +36,7 @@ if (!defined('BM_FB_SMTP_USER')) define('BM_FB_SMTP_USER', getenv('BM_SMTP_USER'
 if (!defined('BM_FB_SMTP_PASS')) define('BM_FB_SMTP_PASS', getenv('BM_SMTP_PASS') ?: ''); // 16-char app password
 // Sender / hotel name in the reminder email = property name from Admin > Settings.
 require_once __DIR__ . '/../../includes/site-settings.php';
+require_once __DIR__ . '/../../includes/booking-sms.php'; // SMS copy of the reminder
 if (!defined('BM_FB_FROM_NAME')) define('BM_FB_FROM_NAME', bienmarko_site_name());
 
 /* ------------------------------------------------------------------
@@ -222,11 +223,11 @@ function bm_fb_send_reminder_email(array $stay): bool
 
 /* ------------------------------------------------------------------
    Sync: create the notification + send the email, once per booking
-   Returns ['notified' => int, 'emailed' => int]
+   Returns ['notified' => int, 'emailed' => int, 'texted' => int]
 ------------------------------------------------------------------ */
 function bm_fb_sync_reminders(PDO $pdo, ?int $guestId = null, bool $sendEmails = true, bool $deferEmails = false): array
 {
-    $result = ['notified' => 0, 'emailed' => 0];
+    $result = ['notified' => 0, 'emailed' => 0, 'texted' => 0];
 
     $stays = bm_fb_unreviewed_stays($pdo, $guestId, (int) BM_FB_REMIND_WITHIN_DAYS);
     $emailJobs = [];
@@ -265,7 +266,10 @@ function bm_fb_sync_reminders(PDO $pdo, ?int $guestId = null, bool $sendEmails =
         }
     }
 
-    $run = static function () use ($pdo, $emailJobs, &$result): void {
+    // SMS copy of the same reminder (once per booking, tracked in sms_log).
+    $smsJobs = $sendEmails ? $stays : [];
+
+    $run = static function () use ($pdo, $emailJobs, $smsJobs, &$result): void {
         foreach ($emailJobs as $stay) {
             if (bm_fb_send_reminder_email($stay)) {
                 $result['emailed']++;
@@ -275,9 +279,22 @@ function bm_fb_sync_reminders(PDO $pdo, ?int $guestId = null, bool $sendEmails =
                     ->execute(['b' => (int) $stay['id']]);
             }
         }
+
+        foreach ($smsJobs as $stay) {
+            try {
+                $base = bm_fb_site_url();
+                $link = $base !== '' ? $base . '/feedback.php?booking=' . (int) $stay['id'] : '';
+                $res  = bienmarko_sms_send_booking($pdo, (int) $stay['id'], 'feedback', ['link' => $link]);
+                if (($res['status'] ?? '') === 'sent') {
+                    $result['texted']++;
+                }
+            } catch (\Throwable $e) {
+                error_log('[feedback-reminder] SMS failed: ' . $e->getMessage());
+            }
+        }
     };
 
-    if ($emailJobs) {
+    if ($emailJobs || $smsJobs) {
         if ($deferEmails) {
             // Web request: send after the page has been delivered so SMTP never slows the page.
             register_shutdown_function(static function () use ($run): void {

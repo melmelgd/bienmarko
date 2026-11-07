@@ -447,10 +447,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                 <td><?php echo (int) $row['total_quantity']; ?> units</td>
                                 <td><?php echo (int) $row['quantity']; ?> units</td>
                                 <td><?php echo (int) $row['min_stock_level']; ?> units</td>
-                                <td class="td-amount">
-                                    ₱<?php echo number_format((float) $row['total_cost'], 2); ?>
-                                    <div class="td-sub" style="font-size:11px;font-weight:400;">₱<?php echo number_format((float) $row['cost_per_unit'], 2); ?> / unit</div>
-                                </td>
+                                <td class="td-amount">₱<?php echo number_format((float) $row['total_cost'], 2); ?></td>
                                 <td><?php echo inv_status_badge($row['status']); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">

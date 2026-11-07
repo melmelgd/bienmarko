@@ -6,10 +6,12 @@
  * role + CSRF, checked in that order. Mirrors admin/api/notifications.php.
  *
  * Actions:
- *   mark_read       — marks a single feedback row as read (requires id)
+ *   mark_read       — marks a single feedback row as read (requires id;
+ *                     no longer used by the admin UI)
  *   mark_all_read   — marks every unread feedback row as read
  *   toggle_publish  — shows/hides a feedback row on the public landing
- *                     page's testimonials section (requires id, publish)
+ *                     page's testimonials section (requires id, publish).
+ *                     Publishing also marks the row as read.
  *   delete          — permanently removes a feedback row (requires id)
  * -----------------------------------------------------------------------
  */
@@ -92,8 +94,9 @@ switch ($action) {
             break;
         }
         $publish = !empty($input['publish']);
-        $stmt = $pdo->prepare('UPDATE feedback SET is_published = :pub WHERE id = :id');
-        $stmt->execute(['pub' => $publish ? 1 : 0, 'id' => $id]);
+        // Publishing implies the admin has read it, so mark it read at the same time.
+        $stmt = $pdo->prepare('UPDATE feedback SET is_published = :pub, is_read = IF(:pub2 = 1, 1, is_read) WHERE id = :id');
+        $stmt->execute(['pub' => $publish ? 1 : 0, 'pub2' => $publish ? 1 : 0, 'id' => $id]);
         echo json_encode(['success' => true, 'is_published' => $publish]);
         break;
 

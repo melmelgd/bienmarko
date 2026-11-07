@@ -15,7 +15,7 @@
  *   discount per guest = per-person share × discount % ÷ 100
  *   total discount     = discount per guest × guests with discount
  *                        (never more than the accommodation fee)
- *   final amount due   = accommodation fee + extra guest fees
+ *   final amount due   = accommodation fee + extra bed fees
  *                        + other charges − total discount
  *
  * PARTIAL PAYMENTS: the browser sends `payment_amount` = the money received
@@ -31,6 +31,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/../../includes/auth-common.php';
 require_once __DIR__ . '/../../includes/booking-emails.php';
+require_once __DIR__ . '/../../includes/booking-sms.php';
 require_once __DIR__ . '/../includes/billing-calc.php';
 
 bienmarko_start_session();
@@ -349,11 +350,17 @@ if ($action === 'save_payment') {
                 error_log('[payments api] receipt status check failed: ' . $e->getMessage());
             }
 
-            if (!$receiptAlreadySent) {
-                bienmarko_email_after_response(static function () use ($pdo, $bookingId): void {
-                    bienmarko_email_send_booking($pdo, $bookingId, 'receipt');
-                });
-            }
+            // The receipt email still goes out once only; the receipt text has its own
+            // once-only guard (sms_log), so it is also sent for payments saved before SMS was set up.
+            bienmarko_email_after_response(static function () use ($pdo, $bookingId, $receiptAlreadySent): void {
+                try {
+                    if (!$receiptAlreadySent) {
+                        bienmarko_email_send_booking($pdo, $bookingId, 'receipt');
+                    }
+                } finally {
+                    bienmarko_notify_booking($pdo, $bookingId, 'receipt');
+                }
+            });
         }
 
         echo json_encode([
