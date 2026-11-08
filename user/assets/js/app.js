@@ -22,8 +22,7 @@ function initNotifications() {
   var toggle = document.getElementById('notifToggle');
   var panel = document.getElementById('notifPanel');
   if (!toggle || !panel) return;
-  var badge = toggle.querySelector('.topbar__badge');
-  var marked = false;
+  var marking = false;
 
   toggle.addEventListener('click', function (e) {
     e.stopPropagation();
@@ -50,24 +49,27 @@ function initNotifications() {
   });
 
   // Marks every unread notification as read once the panel is opened.
-  // Runs once per page load (marked guard) and only when there's
-  // actually a badge showing, so a click with nothing unread doesn't
-  // fire a wasted request.
+  // The badge is looked up at click time (not cached at page load) because
+  // live-refresh.js can add or remove it while the page is open; no badge
+  // means nothing is unread, so no wasted request.
   function markNotificationsRead() {
-    if (marked || !badge) return;
-    marked = true;
+    var badge = toggle.querySelector('.topbar__badge');
+    if (marking || !badge) return;
+    marking = true;
     var csrf = toggle.getAttribute('data-csrf') || '';
     fetch('api/notifications.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'mark_all_read', csrf_token: csrf })
     }).then(function () {
-      if (badge && badge.parentNode) badge.parentNode.removeChild(badge);
+      var b = toggle.querySelector('.topbar__badge');
+      if (b && b.parentNode) b.parentNode.removeChild(b);
       var items = panel.querySelectorAll('.topbar__notif-list li.is-unread');
       for (var i = 0; i < items.length; i++) {
         items[i].classList.remove('is-unread');
       }
-    }).catch(function () { marked = false; });
+    }).catch(function () { /* try again on the next open */ })
+      .then(function () { marking = false; });
   }
 }
 

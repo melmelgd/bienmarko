@@ -2120,6 +2120,13 @@ require __DIR__ . '/includes/head.php';
   var isLoadingRooms  = false;
   var isSubmitting    = false;
 
+  // Live refresh (assets/js/live-refresh.js) reloads this page when the
+  // guest's data changes — but never while a booking is half-finished.
+  var liveStep = 1;
+  window.BM_LIVE_HOLD = function () {
+    return liveStep > 1 || !!currentCheckIn || !!currentCheckOut || isSubmitting;
+  };
+
   // Calendar shared state
   var calRoomId       = null;
   var calRoomStatus   = 'available';
@@ -2621,6 +2628,7 @@ require __DIR__ . '/includes/head.php';
 
   /* ---- Step management ---- */
   function setStep(n) {
+    liveStep = n;
     step1Panel.style.display = n === 1 ? '' : 'none';
     step2Panel.style.display = n === 2 ? '' : 'none';
     step3Panel.style.display = n === 3 ? '' : 'none';
@@ -3004,7 +3012,7 @@ require __DIR__ . '/includes/head.php';
     });
   }
 
-  function loadCatalog() {
+  function loadCatalog(quiet) {
     if (!elCatalogGrid) return;
     fetch('api/bookings.php', {
       method: 'POST',
@@ -3013,16 +3021,20 @@ require __DIR__ . '/includes/head.php';
     })
     .then(function (r) { return r.json(); })
     .then(function (data) {
+      if (quiet && !data.success) return;
       elCatalogLoading.style.display = 'none';
       if (!data.success) {
         elCatalogEmpty.textContent = data.error || 'Could not load accommodations.';
         elCatalogEmpty.style.display = 'block';
         return;
       }
-      catalogRooms = data.rooms || [];
+      var nextRooms = data.rooms || [];
+      if (quiet && JSON.stringify(nextRooms) === JSON.stringify(catalogRooms)) return;
+      catalogRooms = nextRooms;
       renderCatalog();
     })
     .catch(function () {
+      if (quiet) return;
       elCatalogLoading.style.display = 'none';
       elCatalogEmpty.textContent = 'Could not load accommodations. Please refresh the page.';
       elCatalogEmpty.style.display = 'block';
@@ -3088,6 +3100,46 @@ require __DIR__ . '/includes/head.php';
   }
 
   elCheckBtn.addEventListener('click', checkAvailability);
+
+  /* ---- Live availability: refresh what's on screen without a reload ---- */
+  var liveBusy = false;
+  function refreshRoomsQuiet() {
+    if (liveStep !== 2 || isLoadingRooms || isSubmitting || liveBusy) return;
+    if (!currentCheckIn || !currentCheckOut || document.querySelector('dialog[open]')) return;
+    liveBusy = true;
+    fetch('api/bookings.php', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:       'availability',
+        check_in:     currentCheckIn,
+        check_out:    currentCheckOut,
+        guests_count: currentGuests,
+        csrf_token:   csrf,
+      }),
+    })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data || !data.success || liveStep !== 2) return;
+      var next = data.rooms || [];
+      next.sort(function (a, b) {
+        var order = { available: 0, occupied: 1, unavailable: 2 };
+        return (order[a.availability] || 0) - (order[b.availability] || 0);
+      });
+      if (JSON.stringify(next) === JSON.stringify(allRooms)) return;
+      allRooms   = next;
+      lastNights = data.nights || lastNights;
+      renderRooms();
+    })
+    .catch(function () {})
+    .then(function () { liveBusy = false; });
+  }
+
+  window.setInterval(function () {
+    if (document.hidden) return;
+    if (liveStep === 1) loadCatalog(true);
+    else if (liveStep === 2) refreshRoomsQuiet();
+  }, 10000);
 
   elChangeDates.addEventListener('click', function () { setStep(1); });
 

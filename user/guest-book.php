@@ -1191,6 +1191,44 @@ $gbName  = $gbBrand['full'];
     // they're still open, per preserveDates=true above.
     gbdpLoadAvailability(roomSel.value, true);
 
+    /* ── live availability ────────────────────────────────────────
+       Re-fetches the selected room's availability every 10 s (and when
+       the tab regains focus) so the calendar never offers dates another
+       guest has just booked. Form values are left alone unless the dates
+       the visitor picked were just taken. */
+    var gbdpRefreshing = false;
+    function gbdpRefreshAvailability() {
+        var id = roomSel.value;
+        if (!id || document.hidden || gbdpRefreshing || !gbdpAvailability) return;
+        gbdpRefreshing = true;
+        fetch('../api/availability.php?accommodation_id=' + encodeURIComponent(id) + '&_=' + Date.now(), { cache: 'no-store' })
+            .then(function (r) { return r.json(); })
+            .then(function (res) {
+                if (!res || !res.success || roomSel.value !== id) return;
+                var next = {
+                    capacity: res.accommodation.capacity,
+                    isPool:   res.accommodation.is_pool,
+                    bookings: res.bookings,
+                };
+                if (JSON.stringify(next) === JSON.stringify(gbdpAvailability)) return;
+                gbdpAvailability = next;
+                if (gbdpOpenPicker) gbdpRenderCalendar(gbdpOpenPicker);
+
+                var ci = document.getElementById('gb_checkin').value;
+                var checkinTaken = ci && gbdpIsBlocked(ci, gbdpBuildBookedMap(), gbdpGuestsWanted());
+                if (checkinTaken || !gbdpSelectionStillValid()) {
+                    gbdpResetDates();
+                    formErr.textContent = 'Those dates were just booked by another guest \u2014 please pick new ones.';
+                }
+            })
+            .catch(function () {})
+            .then(function () { gbdpRefreshing = false; });
+    }
+    setInterval(gbdpRefreshAvailability, 10000);
+    document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) gbdpRefreshAvailability();
+    });
+
     /* ── client-side validation ───────────────────────────────────── */
     function validate() {
         var ok = true;
