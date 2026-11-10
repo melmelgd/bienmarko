@@ -326,10 +326,39 @@ $gbName  = $gbBrand['full'];
 
             <div class="gb-row gb-row--1">
                 <div class="gb-field">
-                    <label class="gb-label" for="gb_address">Home Address <span class="gb-muted-label">(optional)</span></label>
+                    <label class="gb-label" for="gb_address">Address <span class="gb-required" aria-hidden="true">*</span></label>
                     <input class="gb-input" type="text" id="gb_address" name="address"
-                           maxlength="255"
-                           placeholder="Barangay, Municipality, Province">
+                           maxlength="255" required aria-required="true" aria-describedby="gb_address_hint gb_address_err"
+                           placeholder="Barangay, Municipality, Province" autocomplete="street-address">
+                    <span class="gb-field-hint" id="gb_address_hint">It can be just your barangay.</span>
+                    <span class="gb-field-err" id="gb_address_err" role="alert"></span>
+                </div>
+            </div>
+
+            <div class="gb-row gb-row--1">
+                <div class="gb-field">
+                    <label class="gb-label" for="gb_nationality">Nationality <span class="gb-required" aria-hidden="true">*</span></label>
+                    <input class="gb-input" type="text" id="gb_nationality" name="nationality"
+                           maxlength="80" required aria-required="true" aria-describedby="gb_nationality_err"
+                           list="gb_nationality_list" autocomplete="off"
+                           placeholder="Filipino">
+                    <datalist id="gb_nationality_list">
+                        <option value="Filipino">
+                        <option value="American">
+                        <option value="Australian">
+                        <option value="British">
+                        <option value="Canadian">
+                        <option value="Chinese">
+                        <option value="Japanese">
+                        <option value="Korean">
+                        <option value="Indian">
+                        <option value="German">
+                        <option value="French">
+                        <option value="Singaporean">
+                        <option value="Malaysian">
+                        <option value="Taiwanese">
+                    </datalist>
+                    <span class="gb-field-err" id="gb_nationality_err" role="alert"></span>
                 </div>
             </div>
 
@@ -1302,6 +1331,20 @@ $gbName  = $gbBrand['full'];
             ok = false;
         }
 
+        var address = document.getElementById('gb_address').value.trim();
+        if (!address) {
+            fieldErr('gb_address_err', 'Please enter your address (your barangay is fine).');
+            document.getElementById('gb_address').classList.add('gb-input--error');
+            ok = false;
+        }
+
+        var nationality = document.getElementById('gb_nationality').value.trim();
+        if (!nationality) {
+            fieldErr('gb_nationality_err', 'Please enter your nationality.');
+            document.getElementById('gb_nationality').classList.add('gb-input--error');
+            ok = false;
+        }
+
         return ok;
     }
 
@@ -1380,7 +1423,7 @@ $gbName  = $gbBrand['full'];
                 formErr.textContent = json.error || 'An error occurred. Please try again.';
                 if (json.field_errors) {
                     Object.keys(json.field_errors).forEach(function (field) {
-                        fieldErr(field + '_err', json.field_errors[field]);
+                        fieldErr('gb_' + field + '_err', json.field_errors[field]);
                         // checkin/checkout error styling has to land on the
                         // visible trigger button, not the hidden input.
                         var el = (field === 'checkin' || field === 'checkout')

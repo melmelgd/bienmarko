@@ -48,7 +48,8 @@ $pdo->exec("
         ADD COLUMN IF NOT EXISTS `email`          VARCHAR(200) NULL DEFAULT NULL     AFTER `guest_name`,
         ADD COLUMN IF NOT EXISTS `phone`          VARCHAR(30)  NULL DEFAULT NULL     AFTER `email`,
         ADD COLUMN IF NOT EXISTS `address`        VARCHAR(255) NULL DEFAULT NULL     AFTER `phone`,
-        ADD COLUMN IF NOT EXISTS `payment_method` ENUM('cash','gcash') NULL DEFAULT 'cash' AFTER `address`,
+        ADD COLUMN IF NOT EXISTS `nationality`    VARCHAR(80)  NULL DEFAULT NULL     AFTER `address`,
+        ADD COLUMN IF NOT EXISTS `payment_method` ENUM('cash','gcash') NULL DEFAULT 'cash' AFTER `nationality`,
         ADD COLUMN IF NOT EXISTS `booking_type`   ENUM('registered','guest') NOT NULL DEFAULT 'registered' AFTER `payment_method`
 ");
 
@@ -181,7 +182,7 @@ $sql = "SELECT
             b.booking_type, b.payment_method, b.notes,
             b.accommodation_id,
             b.guest_name, b.email AS guest_book_email,
-            b.phone AS guest_phone, b.address AS guest_address,
+            b.phone AS guest_phone, b.address AS guest_address, b.nationality AS guest_nationality,
             b.companion_names,
             b.pool_session,
             b.created_at,
@@ -535,6 +536,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
         'guest_email'  => bk_email($bk),
         'guest_phone'  => bk_phone($bk),
         'guest_address'=> $bk['guest_address'] ?? '',
+        'guest_nationality'=> $bk['guest_nationality'] ?? '',
         'is_pool'      => strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0,
         'pool_session' => $bk['pool_session'] ?? '',
         'companion_names' => (function ($raw) {
@@ -756,6 +758,10 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                         <span class="detail-label">Address</span>
                         <span class="detail-value" id="dGuestAddress">—</span>
                     </div>
+                    <div class="detail-row" id="dNationalityRow">
+                        <span class="detail-label">Nationality</span>
+                        <span class="detail-value" id="dGuestNationality">—</span>
+                    </div>
                 </div>
             </div>
             <div class="modal-section">
@@ -864,8 +870,28 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                             <input class="form-input" type="number" name="guests_count" min="1" max="20" value="1" required id="nbGuestsCount">
                         </div>
                         <div class="form-group full">
-                            <label class="form-label">Address</label>
-                            <input class="form-input" type="text" name="address" placeholder="Home address (optional)">
+                            <label class="form-label">Address <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="text" name="address" placeholder="Barangay, Municipality, Province (can be just the barangay)" required>
+                        </div>
+                        <div class="form-group full">
+                            <label class="form-label">Nationality <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="text" name="nationality" placeholder="Filipino" list="adminNationalityList" autocomplete="off" required>
+                            <datalist id="adminNationalityList">
+                                <option value="Filipino">
+                                <option value="American">
+                                <option value="Australian">
+                                <option value="British">
+                                <option value="Canadian">
+                                <option value="Chinese">
+                                <option value="Japanese">
+                                <option value="Korean">
+                                <option value="Indian">
+                                <option value="German">
+                                <option value="French">
+                                <option value="Singaporean">
+                                <option value="Malaysian">
+                                <option value="Taiwanese">
+                            </datalist>
                         </div>
                     </div>
                 </div>
@@ -991,8 +1017,12 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                             <input class="form-input" type="number" name="guests_count" min="1" max="20" value="1" required id="edGuestsCount">
                         </div>
                         <div class="form-group full">
-                            <label class="form-label">Address</label>
-                            <input class="form-input" type="text" name="address" placeholder="Home address (optional)" id="edAddress">
+                            <label class="form-label">Address <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="text" name="address" placeholder="Barangay, Municipality, Province (can be just the barangay)" id="edAddress" required>
+                        </div>
+                        <div class="form-group full">
+                            <label class="form-label">Nationality <span style="color:var(--red)">*</span></label>
+                            <input class="form-input" type="text" name="nationality" placeholder="Filipino" id="edNationality" list="adminNationalityList" autocomplete="off" required>
                         </div>
                     </div>
                 </div>
@@ -1143,6 +1173,8 @@ function openDetail(id) {
     document.getElementById('dGuestPhone').textContent = b.guest_phone || '—';
     document.getElementById('dGuestAddress').textContent = b.guest_address || '—';
     document.getElementById('dAddressRow').style.display = b.guest_address ? '' : 'none';
+    document.getElementById('dGuestNationality').textContent = b.guest_nationality || '—';
+    document.getElementById('dNationalityRow').style.display = b.guest_nationality ? '' : 'none';
     document.getElementById('dRoom').textContent      = b.room_name;
     document.getElementById('dRoomType').textContent  = b.room_type;
     document.getElementById('dCheckIn').textContent   = fmtDate(b.check_in) + (b.check_in_time ? ' · ' + b.check_in_time : '');
@@ -1790,7 +1822,7 @@ function openEdit(id) {
     // still see them here for reference, but only guest (no-account)
     // bookings allow editing the name/contact fields directly.
     var isGuestBooking = b.booking_type === 'guest';
-    ['edGuestName', 'edPhone', 'edEmail', 'edAddress'].forEach(function (id) {
+    ['edGuestName', 'edPhone', 'edEmail', 'edAddress', 'edNationality'].forEach(function (id) {
         document.getElementById(id).readOnly = !isGuestBooking;
     });
     document.getElementById('edAccountHint').style.display = isGuestBooking ? 'none' : '';
@@ -1800,6 +1832,7 @@ function openEdit(id) {
     document.getElementById('edPhone').value         = b.guest_phone || '';
     document.getElementById('edEmail').value         = b.guest_email || '';
     document.getElementById('edAddress').value       = b.guest_address || '';
+    document.getElementById('edNationality').value   = b.guest_nationality || '';
     document.getElementById('edGuestsCount').value   = b.guests_count;
     document.getElementById('edCheckIn').value       = b.check_in;
     document.getElementById('edCheckOut').value      = b.check_out;

@@ -8,9 +8,9 @@
  *   accommodation-details.php?id=3&room=Barkada%20Room
  *
  * Looks the accommodation up by id (preferred) or by exact name, shows its
- * photos, price, capacity, description, amenities and house rules, lets the
- * visitor check dates against api/availability.php, and sends them on to
- * user/guest-book.php (or login / register) when they press "Book Now".
+ * photos, price, capacity, description, amenities and house rules, and sends the
+ * visitor on to user/guest-book.php (or login / register) when they press
+ * "Book Now".
  *
  * Read-only apart from one defensive, additive column guard (bed_config),
  * following the same pattern guest-book.php uses for tour_filename.
@@ -342,16 +342,6 @@ button{font:inherit;color:inherit}
 .ad-facts svg{color:var(--ad-gold)}
 .ad-facts small{font-weight:500;color:var(--ad-muted)}
 
-/* availability panel */
-.ad-avail{margin-top:18px;padding:16px;border:1px solid var(--ad-line);border-radius:14px;background:var(--ad-panel)}
-.ad-avail form{display:grid;grid-template-columns:1fr;gap:12px}
-.ad-field label{display:block;margin-bottom:6px;color:var(--ad-muted);font-size:.7rem;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
-.ad-field input{width:100%;min-height:46px;padding:0 12px;border:1px solid var(--ad-line);border-radius:10px;background:var(--ad-panel-2);color:var(--ad-text);font:inherit;color-scheme:dark}
-.ad-result{margin:14px 0 0;font-size:.9rem;font-weight:600}
-.ad-result[data-state="ok"]{color:var(--ad-ok)}
-.ad-result[data-state="bad"]{color:var(--ad-bad)}
-.ad-result-actions{margin-top:12px}
-.ad-result-actions .ad-btn{flex:0 1 auto}
 
 .ad-cols{display:grid;grid-template-columns:1fr;gap:32px;margin-top:28px}
 .ad-desc{margin:0;font-family:var(--ad-serif);font-size:1.25rem;line-height:1.5;color:var(--ad-text)}
@@ -408,7 +398,6 @@ button{font:inherit;color:inherit}
     .ad-titlebar{flex-direction:row;align-items:flex-end;justify-content:space-between}
     .ad-actions{flex-wrap:nowrap}
     .ad-btn{flex:0 0 auto}
-    .ad-avail form{grid-template-columns:repeat(3,1fr) auto;align-items:end}
     .ad-list{grid-template-columns:repeat(2,1fr)}
     .ad-thumbs{grid-template-columns:repeat(4,1fr)}
 }
@@ -503,7 +492,6 @@ button{font:inherit;color:inherit}
             <h1 class="ad-title"><?= ad_e($name) ?></h1>
         </div>
         <div class="ad-actions">
-            <button class="ad-btn" id="adCheckBtn" type="button" aria-expanded="false" aria-controls="adAvail"<?= $blocked ? ' disabled' : '' ?>>Check Availability</button>
             <a class="ad-btn ad-btn--solid" href="<?= ad_e($guestUrl) ?>" data-book-link<?= $blocked ? ' aria-disabled="true" tabindex="-1"' : '' ?>>Book Now</a>
         </div>
     </div>
@@ -523,28 +511,6 @@ button{font:inherit;color:inherit}
             <li><?= ad_icon('bed', 18) ?> <?= ad_e($bedConfig) ?></li>
         <?php endif; ?>
     </ul>
-
-    <section class="ad-avail" id="adAvail" hidden aria-label="Check availability">
-        <form id="adAvailForm" novalidate>
-            <div class="ad-field">
-                <label for="adIn"><?= $isPool ? 'Date' : 'Check-in' ?></label>
-                <input type="date" id="adIn" required>
-            </div>
-            <div class="ad-field">
-                <label for="adOut"><?= $isPool ? 'Until' : 'Check-out' ?></label>
-                <input type="date" id="adOut" required>
-            </div>
-            <div class="ad-field"<?= $isPool ? '' : ' hidden' ?> id="adGuestsWrap">
-                <label for="adGuests">Guests</label>
-                <input type="number" id="adGuests" min="1" max="<?= $capacity ?>" value="1" inputmode="numeric">
-            </div>
-            <button class="ad-btn ad-btn--solid" type="submit">Check</button>
-        </form>
-        <p class="ad-result" id="adResult" role="status" aria-live="polite"></p>
-        <div class="ad-result-actions" id="adResultActions" hidden>
-            <a class="ad-btn ad-btn--solid" href="<?= ad_e($guestUrl) ?>" data-book-link>Continue to Booking</a>
-        </div>
-    </section>
 
     <div class="ad-cols">
         <div>
@@ -677,7 +643,7 @@ var AD = <?= json_encode($jsData, $jsonFlags) ?>;
     var lightbox  = $('adLightbox');
     var bookModal = $('adBookModal');
     var lastFocus = null;
-    var pending   = null;   // dates confirmed by "Check Availability"
+    var pending   = null;   // (kept for withDates(); no dates are carried now)
 
     function openOverlay(el) {
         lastFocus = document.activeElement;
@@ -801,129 +767,6 @@ var AD = <?= json_encode($jsData, $jsonFlags) ?>;
             if (e.key === 'ArrowRight') { showPhoto(lbIndex + 1); }
         }
     });
-
-    /* ── availability check ────────────────────────────────────────── */
-    var panel    = $('adAvail');
-    var checkBtn = $('adCheckBtn');
-    var form     = $('adAvailForm');
-    var inEl     = $('adIn');
-    var outEl    = $('adOut');
-    var guestsEl = $('adGuests');
-    var result   = $('adResult');
-    var actions  = $('adResultActions');
-
-    function say(msg, state) {
-        result.textContent = msg || '';
-        if (state) { result.setAttribute('data-state', state); }
-        else { result.removeAttribute('data-state'); }
-    }
-    function resetResult() {
-        pending = null;
-        updateBookLinks();
-        actions.hidden = true;
-        say('');
-    }
-
-    var today = new Date();
-    today.setHours(0, 0, 0, 0);
-    inEl.min = iso(today);
-    outEl.min = iso(new Date(today.getTime() + 86400000));
-
-    inEl.addEventListener('change', function () {
-        var d = parseISO(inEl.value);
-        if (d) {
-            var next = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1);
-            outEl.min = iso(next);
-            if (!outEl.value || outEl.value <= inEl.value) { outEl.value = iso(next); }
-        }
-        resetResult();
-    });
-    outEl.addEventListener('change', resetResult);
-    if (guestsEl) { guestsEl.addEventListener('input', resetResult); }
-
-    if (checkBtn && panel) {
-        checkBtn.addEventListener('click', function () {
-            var open = panel.hidden;
-            panel.hidden = !open;
-            checkBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
-            if (open) { inEl.focus(); }
-        });
-    }
-
-    /* A night is taken when a booking covers it (check_in <= night < check_out).
-       Pool: shared up to capacity by guest count. Everything else: exclusive. */
-    function isRangeFree(checkin, checkout, guests, bookings, isPool) {
-        var capacity = AD.capacity;
-        var cur = parseISO(checkin);
-        var end = parseISO(checkout);
-        var guard = 0;
-        while (cur < end && guard < 400) {
-            var night = iso(cur);
-            var used = 0;
-            for (var i = 0; i < bookings.length; i++) {
-                var b = bookings[i];
-                if (b.check_in <= night && night < b.check_out) {
-                    used += isPool ? (parseInt(b.guests_count, 10) || 1) : 1;
-                }
-            }
-            if (isPool ? (used + guests) > capacity : used > 0) { return false; }
-            cur.setDate(cur.getDate() + 1);
-            guard++;
-        }
-        return true;
-    }
-
-    if (form) {
-        form.addEventListener('submit', function (e) {
-            e.preventDefault();
-            resetResult();
-
-            var checkin  = inEl.value;
-            var checkout = outEl.value;
-            var guests   = AD.isPool ? (parseInt(guestsEl.value, 10) || 0) : 1;
-            var a = parseISO(checkin);
-            var b = parseISO(checkout);
-
-            if (!a || !b) { say('Please choose both dates.', 'bad'); return; }
-            if (a < today) { say('The first date cannot be in the past.', 'bad'); return; }
-            if (b <= a) { say('The end date must be after the start date.', 'bad'); return; }
-            if (AD.isPool && (guests < 1 || guests > AD.capacity)) {
-                say('Guests must be between 1 and ' + AD.capacity + '.', 'bad');
-                return;
-            }
-
-            say('Checking availability\u2026');
-            fetch('api/availability.php?accommodation_id=' + encodeURIComponent(AD.id), {
-                headers: { Accept: 'application/json' }
-            })
-                .then(function (r) {
-                    if (!r.ok) { throw new Error('bad response'); }
-                    return r.json();
-                })
-                .then(function (res) {
-                    if (!res || !res.success) { throw new Error('unavailable'); }
-                    var bookings = Array.isArray(res.bookings) ? res.bookings : [];
-                    var apiPool  = !!(res.accommodation && res.accommodation.is_pool);
-                    if (res.accommodation && res.accommodation.capacity) { AD.capacity = res.accommodation.capacity; }
-                    if (isRangeFree(checkin, checkout, apiPool ? guests : 1, bookings, apiPool)) {
-                        var nights = Math.round((b - a) / 86400000);
-                        var total  = AD.isPool ? AD.price * guests : AD.price * nights;
-                        var label  = AD.isPool
-                            ? guests + ' guest' + (guests === 1 ? '' : 's')
-                            : nights + ' ' + (AD.unit === 'night' ? 'night' : 'day') + (nights === 1 ? '' : 's');
-                        pending = { checkin: checkin, checkout: checkout };
-                        updateBookLinks();
-                        say('Available for those dates \u00B7 ' + label + ' \u00B7 estimated ' + money(total), 'ok');
-                        actions.hidden = false;
-                    } else {
-                        say('Sorry, those dates are not available. Please try different dates.', 'bad');
-                    }
-                })
-                .catch(function () {
-                    say('We could not check availability right now. Please try again or continue to booking.', 'bad');
-                });
-        });
-    }
 }());
 </script>
 </body>

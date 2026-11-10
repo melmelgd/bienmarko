@@ -150,6 +150,12 @@ try {
              ADD COLUMN IF NOT EXISTS `companion_names` TEXT NULL DEFAULT NULL"
     );
 
+    // Guest nationality (required on the booking form).
+    $pdo->exec(
+        "ALTER TABLE `bookings`
+             ADD COLUMN IF NOT EXISTS `nationality` VARCHAR(80) NULL DEFAULT NULL"
+    );
+
     // Ensure admin_notifications table exists.
     $pdo->exec(
         "CREATE TABLE IF NOT EXISTS `admin_notifications` (
@@ -188,6 +194,7 @@ $lastName      = trim((string) ($_POST['last_name']   ?? ''));
 $email         = trim((string) ($_POST['email']       ?? ''));
 $phone         = trim((string) ($_POST['phone']       ?? ''));
 $address       = trim((string) ($_POST['address']     ?? ''));
+$nationality   = trim((string) ($_POST['nationality'] ?? ''));
 $requests      = trim((string) ($_POST['requests']    ?? ''));
 $paymentMethod = trim((string) ($_POST['payment_method'] ?? 'cash'));
 
@@ -232,8 +239,16 @@ if ($phone === '' || mb_strlen($phone) < 7 || mb_strlen($phone) > 30) {
     $fieldErrors['phone'] = 'Please enter a valid phone number.';
 }
 
-if (mb_strlen($address) > 255) {
+if ($address === '') {
+    $fieldErrors['address'] = 'Please enter your address (your barangay is fine).';
+} elseif (mb_strlen($address) > 255) {
     $address = mb_substr($address, 0, 255);
+}
+
+if ($nationality === '') {
+    $fieldErrors['nationality'] = 'Please enter your nationality.';
+} elseif (mb_strlen($nationality) > 80) {
+    $nationality = mb_substr($nationality, 0, 80);
 }
 
 if (mb_strlen($requests) > 500) {
@@ -382,13 +397,13 @@ try {
             (`reference`, `guest_id`, `accommodation_id`,
              `check_in`, `check_out`, `guests_count`,
              `notes`, `status`, `total_amount`,
-             `guest_name`, `email`, `phone`, `address`,
+             `guest_name`, `email`, `phone`, `address`, `nationality`,
              `payment_method`, `booking_type`, `companion_names`)
          VALUES
             (:reference, NULL, :accommodation_id,
              :check_in, :check_out, :guests_count,
              :notes, 'confirmed', :total_amount,
-             :guest_name, :email, :phone, :address,
+             :guest_name, :email, :phone, :address, :nationality,
              :payment_method, 'guest', :companion_names)"
     );
     $insert->execute([
@@ -403,6 +418,7 @@ try {
         'email'            => $email,
         'phone'            => $phone,
         'address'          => $address !== '' ? $address : null,
+        'nationality'      => $nationality,
         'payment_method'   => $paymentMethod,
         'companion_names'  => $companionNamesJson,
     ]);

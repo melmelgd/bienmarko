@@ -30,6 +30,7 @@ if (!isset($typeOptions[$initialType])) {
 // Pull guest profile for Step 3 pre-fill
 $guestProfile = ['first_name' => '', 'last_name' => '', 'email' => '', 'phone' => ''];
 $prefillAddress = '';
+$prefillNationality = '';
 try {
     $pdo     = bienmarko_db();
     $guestId = (int) ($_SESSION['auth_user_id'] ?? 0);
@@ -56,6 +57,19 @@ try {
     $prefillAddress = (string) ($aStmt->fetchColumn() ?: '');
 } catch (Throwable $e) {
     // bookings.address may not exist yet on a fresh install — ignore.
+}
+
+// Re-use the nationality from this guest's most recent booking, if they gave one.
+try {
+    $nStmt = $pdo->prepare(
+        "SELECT nationality FROM bookings
+         WHERE guest_id = :id AND nationality IS NOT NULL AND nationality <> ''
+         ORDER BY id DESC LIMIT 1"
+    );
+    $nStmt->execute(['id' => $guestId]);
+    $prefillNationality = (string) ($nStmt->fetchColumn() ?: '');
+} catch (Throwable $e) {
+    // bookings.nationality is added on first booking — ignore until then.
 }
 
 $prefillName  = trim($guestProfile['first_name'] . ' ' . $guestProfile['last_name']);
@@ -87,6 +101,13 @@ try {
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     );
 
+    // Guest nationality column (added once; safe to re-run) — must exist before the SELECT below.
+    try {
+        $pdo->exec("ALTER TABLE `bookings` ADD COLUMN IF NOT EXISTS `nationality` VARCHAR(80) NULL DEFAULT NULL");
+    } catch (Throwable $e) {
+        error_log('[bienmarko] bookings.nationality migration warning: ' . $e->getMessage());
+    }
+
     $guestId = (int) ($_SESSION['auth_user_id'] ?? 0);
     $stayCols = bk_stay_select($pdo);   // checked_in_at / checked_out_at set by the admin
     $stmt = $pdo->prepare(
@@ -94,7 +115,7 @@ try {
                 b.guests_count, b.status, {$stayCols}, b.total_amount, b.notes,
                 b.created_at, b.accommodation_id, b.companion_names,
                 b.guest_name, b.email AS contact_email, b.phone AS contact_phone,
-                b.address AS contact_address, b.payment_method,
+                b.address AS contact_address, b.nationality AS contact_nationality, b.payment_method,
                 a.name AS room_name, a.type AS room_type,
                 a.capacity AS room_capacity, a.price AS room_price,
                 a.image_filename
@@ -1460,12 +1481,34 @@ require __DIR__ . '/includes/head.php';
                         <span class="field-hint">For booking confirmation contact.</span>
                     </div>
                     <div class="guest-info-field" style="grid-column:1/-1">
-                        <label for="guestAddress">Home Address <span style="font-weight:400;color:var(--paper-faint)">(optional)</span></label>
-                        <input type="text" id="guestAddress" maxlength="255"
+                        <label for="guestAddress">Address <span class="req">*</span></label>
+                        <input type="text" id="guestAddress" maxlength="255" required
                                value="<?php echo htmlspecialchars($prefillAddress); ?>"
-                               placeholder="Street, Barangay, City / Municipality, Province"
+                               placeholder="Barangay, Municipality, Province"
                                autocomplete="street-address">
-                        <span class="field-hint">Pre-filled from your account and last booking — update if needed.</span>
+                        <span class="field-hint">It can be just your barangay. Pre-filled from your last booking — update if needed.</span>
+                    </div>
+                    <div class="guest-info-field" style="grid-column:1/-1">
+                        <label for="guestNationality">Nationality <span class="req">*</span></label>
+                        <input type="text" id="guestNationality" maxlength="80" required
+                               value="<?php echo htmlspecialchars($prefillNationality); ?>"
+                               placeholder="Filipino" list="nationalityList" autocomplete="off">
+                        <datalist id="nationalityList">
+                            <option value="Filipino">
+                            <option value="American">
+                            <option value="Australian">
+                            <option value="British">
+                            <option value="Canadian">
+                            <option value="Chinese">
+                            <option value="Japanese">
+                            <option value="Korean">
+                            <option value="Indian">
+                            <option value="German">
+                            <option value="French">
+                            <option value="Singaporean">
+                            <option value="Malaysian">
+                            <option value="Taiwanese">
+                        </datalist>
                     </div>
 
                     <div class="guest-info-field" style="grid-column:1/-1">
@@ -1557,6 +1600,7 @@ require __DIR__ . '/includes/head.php';
             $rowEmail   = !empty($bk['contact_email']) ? (string) $bk['contact_email'] : (string) $prefillEmail;
             $rowPhone   = !empty($bk['contact_phone']) ? (string) $bk['contact_phone'] : (string) $prefillPhone;
             $rowAddress = (string) ($bk['contact_address'] ?? '');
+            $rowNationality = (string) ($bk['contact_nationality'] ?? '');
 
             $companionNamesArr = [];
             if (!empty($bk['companion_names'])) {
@@ -1586,6 +1630,7 @@ require __DIR__ . '/includes/head.php';
                      data-email="<?php echo htmlspecialchars($rowEmail); ?>"
                      data-phone="<?php echo htmlspecialchars($rowPhone); ?>"
                      data-address="<?php echo htmlspecialchars($rowAddress); ?>"
+                     data-nationality="<?php echo htmlspecialchars($rowNationality); ?>"
                      data-payment-method="<?php echo (($bk['payment_method'] ?? 'cash') === 'gcash') ? 'gcash' : 'cash'; ?>"
                      data-status="<?php echo htmlspecialchars($bk['status']); ?>"
                      data-stage="<?php echo htmlspecialchars($stage); ?>"
@@ -1690,6 +1735,10 @@ require __DIR__ . '/includes/head.php';
             <div class="bk-detail-row" id="bkDetailAddressRow">
                 <span class="bk-detail-row__label">Address</span>
                 <span class="bk-detail-row__value" id="bkDetailAddress">—</span>
+            </div>
+            <div class="bk-detail-row" id="bkDetailNationalityRow">
+                <span class="bk-detail-row__label">Nationality</span>
+                <span class="bk-detail-row__value" id="bkDetailNationality">—</span>
             </div>
             <div class="bk-detail-row">
                 <span class="bk-detail-row__label">Payment</span>
@@ -1821,8 +1870,14 @@ require __DIR__ . '/includes/head.php';
                     <input type="tel" id="editPhone" maxlength="30" required autocomplete="tel">
                 </div>
                 <div class="guest-info-field" style="grid-column:1/-1">
-                    <label for="editAddress">Home Address <span style="font-weight:400;color:var(--paper-faint)">(optional)</span></label>
-                    <input type="text" id="editAddress" maxlength="255" autocomplete="street-address">
+                    <label for="editAddress">Address <span class="req">*</span></label>
+                    <input type="text" id="editAddress" maxlength="255" required autocomplete="street-address"
+                           placeholder="Barangay, Municipality, Province">
+                </div>
+                <div class="guest-info-field" style="grid-column:1/-1">
+                    <label for="editNationality">Nationality <span class="req">*</span></label>
+                    <input type="text" id="editNationality" maxlength="80" required autocomplete="off"
+                           placeholder="Filipino" list="nationalityList">
                 </div>
             </div>
 
@@ -2100,6 +2155,7 @@ require __DIR__ . '/includes/head.php';
   var elGuestEmail    = document.getElementById('guestEmail');
   var elGuestPhone    = document.getElementById('guestPhone');
   var elGuestAddress  = document.getElementById('guestAddress');
+  var elGuestNationality = document.getElementById('guestNationality');
 
   // Additional guest names (Step 3) — capacity-based, any accommodation type
   var elCompanionsField = document.getElementById('s3CompanionsField');
@@ -3204,6 +3260,7 @@ require __DIR__ . '/includes/head.php';
       email:      elGuestEmail.value.trim(),
       phone:      elGuestPhone.value.trim(),
       address:    elGuestAddress.value.trim(),
+      nationality: elGuestNationality.value.trim(),
       payment_method: (function () {
         var sel = document.querySelector('input[name="payMethod"]:checked');
         return (sel && sel.value === 'gcash') ? 'gcash' : 'cash';
@@ -3216,7 +3273,7 @@ require __DIR__ . '/includes/head.php';
     if (problem) {
       elStep3ErrorTxt.textContent = problem.message;
       elStep3Error.style.display  = 'flex';
-      var focusEl = { first_name: elGuestFirst, last_name: elGuestLast, email: elGuestEmail, phone: elGuestPhone }[problem.field];
+      var focusEl = { first_name: elGuestFirst, last_name: elGuestLast, email: elGuestEmail, phone: elGuestPhone, address: elGuestAddress, nationality: elGuestNationality }[problem.field];
       if (focusEl) focusEl.focus();
       return;
     }
@@ -3236,6 +3293,10 @@ require __DIR__ . '/includes/head.php';
       return { field: 'email', message: 'Please enter a valid email address.' };
     if (!c.phone || c.phone.length < 7 || c.phone.length > 30)
       return { field: 'phone', message: 'Please enter a valid phone number.' };
+    if (!c.address || c.address.length > 255)
+      return { field: 'address', message: 'Please enter your address (your barangay is fine).' };
+    if (!c.nationality || c.nationality.length > 80)
+      return { field: 'nationality', message: 'Please enter your nationality.' };
     return null;
   }
 
@@ -3351,6 +3412,8 @@ require __DIR__ . '/includes/head.php';
     document.getElementById('bkDetailPhone').textContent    = contact.phone;
     document.getElementById('bkDetailAddress').textContent  = contact.address;
     document.getElementById('bkDetailAddressRow').style.display = contact.address ? '' : 'none';
+    document.getElementById('bkDetailNationality').textContent  = contact.nationality;
+    document.getElementById('bkDetailNationalityRow').style.display = contact.nationality ? '' : 'none';
     document.getElementById('bkDetailPayment').textContent  = contact.payment_method === 'gcash' ? 'GCash on arrival' : 'Cash on arrival';
     document.getElementById('bkDetailCheckIn').textContent  = formatDate(currentCheckIn);
     document.getElementById('bkDetailCheckOut').textContent = formatDate(currentCheckOut);
@@ -3447,6 +3510,7 @@ require __DIR__ . '/includes/head.php';
         email:            pendingBooking.contact.email,
         phone:            pendingBooking.contact.phone,
         address:          pendingBooking.contact.address,
+        nationality:      pendingBooking.contact.nationality,
         payment_method:   pendingBooking.contact.payment_method === 'gcash' ? 'gcash' : 'cash',
         csrf_token:       csrf,
       }),
@@ -3537,6 +3601,7 @@ require __DIR__ . '/includes/head.php';
     art.setAttribute('data-email', ct.email || '');
     art.setAttribute('data-phone', ct.phone || '');
     art.setAttribute('data-address', ct.address || '');
+    art.setAttribute('data-nationality', ct.nationality || '');
     art.setAttribute('data-payment-method', ct.payment_method === 'gcash' ? 'gcash' : 'cash');
     art.setAttribute('data-status', 'confirmed');
     art.setAttribute('data-stage', 'upcoming');
@@ -3651,6 +3716,7 @@ require __DIR__ . '/includes/head.php';
   var editEmailEl          = document.getElementById('editEmail');
   var editPhoneEl          = document.getElementById('editPhone');
   var editAddressEl        = document.getElementById('editAddress');
+  var editNationalityEl    = document.getElementById('editNationality');
   var editRoomsById        = {};   // id -> accommodation info, for the dropdown
 
   var editState = {
@@ -3965,6 +4031,7 @@ require __DIR__ . '/includes/head.php';
     editEmailEl.value     = d.email     || '';
     editPhoneEl.value     = d.phone     || '';
     editAddressEl.value   = d.address   || '';
+    editNationalityEl.value = d.nationality || '';
 
     editRefreshTotalPreview();
     editOpenModal();
@@ -3985,6 +4052,7 @@ require __DIR__ . '/includes/head.php';
       email:      editEmailEl.value.trim(),
       phone:      editPhoneEl.value.trim(),
       address:    editAddressEl.value.trim(),
+      nationality: editNationalityEl.value.trim(),
     };
     var contactProblem = validateContact(editContact);
     if (contactProblem) {
@@ -4017,6 +4085,7 @@ require __DIR__ . '/includes/head.php';
         email:            editContact.email,
         phone:            editContact.phone,
         address:          editContact.address,
+        nationality:      editContact.nationality,
         check_in:         checkIn,
         check_out:        checkOut,
         guests_count:     editState.guests,
@@ -4083,6 +4152,7 @@ require __DIR__ . '/includes/head.php';
       item.setAttribute('data-email', data.contact.email || '');
       item.setAttribute('data-phone', data.contact.phone || '');
       item.setAttribute('data-address', data.contact.address || '');
+      item.setAttribute('data-nationality', data.contact.nationality || '');
     }
 
     item.setAttribute('data-check-in', data.check_in);
@@ -4307,6 +4377,7 @@ require __DIR__ . '/includes/head.php';
     html += vmRow('Email', d.email || '—');
     html += vmRow('Phone', d.phone || '—');
     if (d.address) html += vmRow('Address', d.address);
+    if (d.nationality) html += vmRow('Nationality', d.nationality);
     if (companions.length) html += vmRow('Additional guests', companions.join(', '));
     if (d.notes) html += vmRow('Notes', d.notes);
     html += vmRow('Payment', d.paymentMethod === 'gcash' ? 'GCash on arrival' : 'Cash on arrival');

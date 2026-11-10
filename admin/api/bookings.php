@@ -34,6 +34,7 @@ $pdo  = bienmarko_db();
 // migration. Additive, information_schema-guarded, safe to repeat.
 try {
     $pdo->exec("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS companion_names TEXT NULL DEFAULT NULL");
+    $pdo->exec("ALTER TABLE bookings ADD COLUMN IF NOT EXISTS nationality VARCHAR(80) NULL DEFAULT NULL");
 } catch (\Throwable $e) {
     error_log('[bookings api] companion_names migration warning: ' . $e->getMessage());
 }
@@ -353,6 +354,7 @@ if ($action === 'create') {
     $phone           = trim($body['phone']            ?? '');
     $email           = trim($body['email']            ?? '');
     $address         = trim($body['address']          ?? '');
+    $nationality     = trim($body['nationality']      ?? '');
     $paymentMethod   = in_array($body['payment_method'] ?? '', ['cash', 'gcash']) ? $body['payment_method'] : 'cash';
     $notes           = trim($body['notes']            ?? '');
 
@@ -366,6 +368,20 @@ if ($action === 'create') {
     if ($guestName === '') {
         echo json_encode(['success' => false, 'error' => 'Guest name is required.']);
         exit;
+    }
+    if ($address === '') {
+        echo json_encode(['success' => false, 'error' => 'Address is required (the barangay is enough).']);
+        exit;
+    }
+    if (mb_strlen($address) > 255) {
+        $address = mb_substr($address, 0, 255);
+    }
+    if ($nationality === '') {
+        echo json_encode(['success' => false, 'error' => 'Nationality is required.']);
+        exit;
+    }
+    if (mb_strlen($nationality) > 80) {
+        $nationality = mb_substr($nationality, 0, 80);
     }
     if ($accommodationId <= 0) {
         echo json_encode(['success' => false, 'error' => 'Please select an accommodation.']);
@@ -480,12 +496,12 @@ if ($action === 'create') {
             "INSERT INTO bookings
                 (accommodation_id, guest_id, reference, check_in, check_out,
                  guests_count, status, total_amount,
-                 guest_name, email, phone, address, payment_method, booking_type, notes, companion_names,
+                 guest_name, email, phone, address, nationality, payment_method, booking_type, notes, companion_names,
                  pool_session)
              VALUES
                 (:aid, NULL, :ref, :ci, :co,
                  :gc, 'confirmed', :total,
-                 :gname, :email, :phone, :addr, :pm, 'guest', :notes, :companion_names,
+                 :gname, :email, :phone, :addr, :nat, :pm, 'guest', :notes, :companion_names,
                  :psess)"
         );
         $ins->execute([
@@ -500,6 +516,7 @@ if ($action === 'create') {
             'email'           => $email,
             'phone'           => $phone,
             'addr'            => $address,
+            'nat'             => $nationality,
             'pm'              => $paymentMethod,
             'notes'           => $notes,
             'companion_names' => $companionNamesJson,
@@ -587,16 +604,28 @@ if ($action === 'update') {
         $phone     = trim($body['phone']      ?? (string) $existing['phone']);
         $email     = trim($body['email']      ?? (string) $existing['email']);
         $address   = trim($body['address']    ?? (string) $existing['address']);
+        $nationality = trim($body['nationality'] ?? (string) ($existing['nationality'] ?? ''));
 
         if ($guestName === '') {
             echo json_encode(['success' => false, 'error' => 'Guest name is required.']);
             exit;
         }
+        if ($address === '') {
+            echo json_encode(['success' => false, 'error' => 'Address is required (the barangay is enough).']);
+            exit;
+        }
+        if ($nationality === '') {
+            echo json_encode(['success' => false, 'error' => 'Nationality is required.']);
+            exit;
+        }
+        if (mb_strlen($address) > 255)     { $address     = mb_substr($address, 0, 255); }
+        if (mb_strlen($nationality) > 80)  { $nationality = mb_substr($nationality, 0, 80); }
     } else {
         $guestName = $existing['guest_name'];
         $phone     = $existing['phone'];
         $email     = $existing['email'];
         $address   = $existing['address'];
+        $nationality = $existing['nationality'] ?? null;   // owned by the account's own booking; admin can't change it here
     }
 
     $companionNamesJson = bm_parse_companion_names((string) ($body['companion_names'] ?? ''));
@@ -702,6 +731,7 @@ if ($action === 'update') {
                 email            = :email,
                 phone            = :phone,
                 address          = :addr,
+                nationality      = :nat,
                 payment_method   = :pm,
                 notes            = :notes,
                 companion_names  = :companion_names,
@@ -719,6 +749,7 @@ if ($action === 'update') {
             'email'           => $email,
             'phone'           => $phone,
             'addr'            => $address,
+            'nat'             => $nationality,
             'pm'              => $paymentMethod,
             'notes'           => $notes,
             'companion_names' => $companionNamesJson,

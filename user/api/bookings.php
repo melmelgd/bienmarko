@@ -70,6 +70,7 @@ function bk_ensure_tables(PDO $pdo): void
             `email`            VARCHAR(200) NULL DEFAULT NULL,
             `phone`            VARCHAR(30)  NULL DEFAULT NULL,
             `address`          VARCHAR(255) NULL DEFAULT NULL,
+            `nationality`      VARCHAR(80)  NULL DEFAULT NULL,
             `payment_method`   ENUM('cash','gcash') NULL DEFAULT 'cash',
             `booking_type`     ENUM('registered','guest') NOT NULL DEFAULT 'registered',
             `created_at`       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -115,6 +116,12 @@ function bk_ensure_tables(PDO $pdo): void
         $pdo->exec(
             "ALTER TABLE `bookings`
                  ADD COLUMN IF NOT EXISTS `companion_names` TEXT NULL DEFAULT NULL"
+        );
+
+        // Guest nationality (required on the booking form).
+        $pdo->exec(
+            "ALTER TABLE `bookings`
+                 ADD COLUMN IF NOT EXISTS `nationality` VARCHAR(80) NULL DEFAULT NULL"
         );
     } catch (Throwable $e) {
         error_log('[bienmarko] bookings table migration warning: ' . $e->getMessage());
@@ -654,10 +661,11 @@ function bk_action_availability(PDO $pdo, array $input): never
  * Validates the contact block submitted with a registered-account booking,
  * using the same rules as api/guest-book.php:
  *   first name* (<=80), last name* (<=80), email* (valid, <=200),
- *   phone* (7-30 chars), address (optional, <=255), payment: cash or gcash.
+ *   phone* (7-30 chars), address* (<=255), nationality* (<=80),
+ *   payment: cash or gcash.
  *
  * Returns [array $clean, ?string $error]. $clean keys: guest_name, email,
- * phone, address (string|null), payment_method.
+ * phone, address, nationality, payment_method.
  */
 function bk_validate_contact(array $input): array
 {
@@ -666,6 +674,7 @@ function bk_validate_contact(array $input): array
     $email   = trim((string) ($input['email']      ?? ''));
     $phone   = trim((string) ($input['phone']      ?? ''));
     $address = trim((string) ($input['address']    ?? ''));
+    $nationality = trim((string) ($input['nationality'] ?? ''));
     $payment = strtolower(trim((string) ($input['payment_method'] ?? '')));
 
     if ($first === '' || mb_strlen($first) > 80) {
@@ -680,15 +689,25 @@ function bk_validate_contact(array $input): array
     if ($phone === '' || mb_strlen($phone) < 7 || mb_strlen($phone) > 30) {
         return [[], 'Please enter a valid phone number.'];
     }
+    if ($address === '') {
+        return [[], 'Please enter your address (your barangay is fine).'];
+    }
     if (mb_strlen($address) > 255) {
         $address = mb_substr($address, 0, 255);
+    }
+    if ($nationality === '') {
+        return [[], 'Please enter your nationality.'];
+    }
+    if (mb_strlen($nationality) > 80) {
+        $nationality = mb_substr($nationality, 0, 80);
     }
 
     return [[
         'guest_name'     => $first . ' ' . $last,
         'email'          => $email,
         'phone'          => $phone,
-        'address'        => $address !== '' ? $address : null,
+        'address'        => $address,
+        'nationality'    => $nationality,
         // The resort accepts cash and GCash (both collected in person);
         // anything else falls back to cash.
         'payment_method' => in_array($payment, ['cash', 'gcash'], true) ? $payment : 'cash',
@@ -931,11 +950,11 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
             "INSERT INTO bookings
                 (reference, guest_id, accommodation_id, check_in, check_out,
                  guests_count, notes, status, total_amount, booking_type, companion_names,
-                 guest_name, email, phone, address, payment_method)
+                 guest_name, email, phone, address, nationality, payment_method)
              VALUES
                 (:reference, :guest_id, :accommodation_id, :check_in, :check_out,
                  :guests_count, :notes, 'confirmed', :total_amount, 'registered', :companion_names,
-                 :guest_name, :email, :phone, :address, :payment_method)"
+                 :guest_name, :email, :phone, :address, :nationality, :payment_method)"
         );
 
         $stmt->execute([
@@ -952,6 +971,7 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
             'email'            => $contact['email'],
             'phone'            => $contact['phone'],
             'address'          => $contact['address'],
+            'nationality'      => $contact['nationality'],
             'payment_method'   => $contact['payment_method'],
         ]);
 
@@ -1085,6 +1105,7 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
     }
 
     // Contact details are optional on update (older clients omit them → left unchanged).
+    // When they ARE sent, address and nationality must be filled in.
     $contactSent = array_key_exists('first_name', $input) || array_key_exists('email', $input);
     $contact     = [];
     if ($contactSent) {
@@ -1178,7 +1199,7 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
         $paymentSent = $contactSent && array_key_exists('payment_method', $input);
         $contactSql = $contactSent
             ? ", guest_name = :guest_name, email = :email, phone = :phone,
-                 address = :address"
+                 address = :address, nationality = :nationality"
             : '';
         if ($paymentSent) {
             $contactSql .= ", payment_method = :payment_method";
@@ -1212,6 +1233,7 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
             $updParams['email']          = $contact['email'];
             $updParams['phone']          = $contact['phone'];
             $updParams['address']        = $contact['address'];
+            $updParams['nationality']    = $contact['nationality'];
         }
         if ($paymentSent) {
             $updParams['payment_method'] = $contact['payment_method'];
@@ -1260,6 +1282,7 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
             'email'      => $contact['email'],
             'phone'      => $contact['phone'],
             'address'    => $contact['address'] ?? '',
+            'nationality' => $contact['nationality'] ?? '',
         ] : null,
         'check_in'        => $checkIn,
         'check_out'       => $checkOut,
