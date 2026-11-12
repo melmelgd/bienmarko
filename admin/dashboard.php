@@ -139,9 +139,10 @@ $maxNights     = $totalRooms * $daysInMonth;
 $occupancyRate = $maxNights > 0 ? round(($statNights / $maxNights) * 100) : 0;
 
 /* ------------------------------------------------------------------
-   Pagination — 10 recent bookings per page. The dashboard has no
-   filters, so this always walks every booking in the system, most
-   recent first (same 10-per-page pattern as admin/bookings.php).
+   Pagination — 10 bookings per page. The dashboard has no filters, so
+   this always walks every booking in the system, grouped by stage
+   (see the ORDER BY below) with the same 10-per-page pattern as
+   admin/bookings.php.
 ------------------------------------------------------------------ */
 $perPage     = 10;
 $currentPage = max(1, (int) ($_GET['page'] ?? 1));
@@ -152,8 +153,31 @@ $currentPage         = min($currentPage, $totalPages);
 $offset              = ($currentPage - 1) * $perPage;
 
 /* ------------------------------------------------------------------
-   Recent bookings table (current page's 10 rows)
+   Bookings table (current page's 10 rows), grouped by stage:
+
+     1 Upcoming    — nearest arrival first (arrivals whose date already
+                     passed but were never checked in go after today's
+                     and future ones — still Upcoming, never auto-moved)
+     2 Checked-in  — soonest expected check-out first
+     3 Cancelled   — most recently booked first
+     4 Completed   — most recent stay first
+
+   Uses bk_stage_sql() — the same stage rule as admin/bookings.php — so
+   the two pages always agree. Every ORDER BY ends in b.id, so the order
+   is stable and identical across pagination pages.
 ------------------------------------------------------------------ */
+$dashStageRank = 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN 1'
+               . ' WHEN '     . bk_stage_sql('checked_in') . ' THEN 2'
+               . ' WHEN '     . bk_stage_sql('cancelled')  . ' THEN 3'
+               . ' ELSE 4 END';
+$dashOrderBy = $dashStageRank . ' ASC, '
+    . 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN (b.check_in < ' . $pdo->quote($today) . ') ELSE 0 END ASC, '
+    . 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN b.check_in END ASC, '
+    . 'CASE WHEN ' . bk_stage_sql('checked_in') . ' THEN b.check_out END ASC, '
+    . 'CASE WHEN ' . bk_stage_sql('cancelled')  . ' THEN b.created_at END DESC, '
+    . 'CASE WHEN ' . bk_stage_sql('completed')  . ' THEN b.check_in END DESC, '
+    . 'b.created_at DESC, b.id ASC';
+
 $stmtRecent = $pdo->prepare(
     "SELECT b.id, b.reference, b.check_in, b.check_out,
             b.guests_count, b.status, b.total_amount, b.created_at,
@@ -165,7 +189,7 @@ $stmtRecent = $pdo->prepare(
      FROM bookings b
      JOIN accommodations a ON a.id = b.accommodation_id
      LEFT JOIN guests    g ON g.id = b.guest_id
-     ORDER BY b.created_at DESC
+     ORDER BY {$dashOrderBy}
      LIMIT :limit OFFSET :offset"
 );
 $stmtRecent->bindValue(':limit', $perPage, \PDO::PARAM_INT);

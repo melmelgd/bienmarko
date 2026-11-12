@@ -7,7 +7,10 @@
  *   WEEKLY (default) — one Monday–Sunday week at a time, with Prev / Next /
  *     This week buttons. A booking belongs to a week when its stay overlaps
  *     that week (check-in <= Sunday AND check-out >= Monday), so a guest who
- *     is still checked-in from last week stays visible. Ordered by stage:
+ *     is still checked-in from last week stays visible. A CANCELLED booking
+ *     also belongs to the week in which it was cancelled (bookings.updated_at),
+ *     so a cancellation never "vanishes" just because its stay dates fall in
+ *     a different week. Ordered by stage:
  *
  *       1. Upcoming    — guest has NOT checked in (nearest arrival first)
  *       2. Checked-in  — admin recorded the check-in (earliest check-out first)
@@ -137,7 +140,10 @@ $currentPage = max(1, (int) ($_GET['page'] ?? 1));
    from the same stage conditions as the lists, on every page load, so a
    status change is reflected the moment the page refreshes.
 ------------------------------------------------------------------ */
-$countScope  = $scope === 'week' ? 'WHERE check_in <= :we AND check_out >= :ws' : '';
+$countScope  = $scope === 'week'
+    ? "WHERE (check_in <= :we AND check_out >= :ws)
+          OR (status = 'cancelled' AND DATE(updated_at) BETWEEN :cws AND :cwe)"
+    : '';
 $countStmtSt = $pdo->prepare(
     "SELECT
         COUNT(*)                                          AS total,
@@ -148,7 +154,9 @@ $countStmtSt = $pdo->prepare(
      FROM bookings
      {$countScope}"
 );
-$countStmtSt->execute($scope === 'week' ? ['we' => $weekEnd, 'ws' => $weekStart] : []);
+$countStmtSt->execute($scope === 'week'
+    ? ['we' => $weekEnd, 'ws' => $weekStart, 'cws' => $weekStart, 'cwe' => $weekEnd]
+    : []);
 $countRow = $countStmtSt->fetch();
 $statTotal      = (int) $countRow['total'];
 $statUpcoming   = (int) $countRow['upcoming'];
@@ -163,10 +171,15 @@ $whereClauses = [];
 $params       = [];
 
 if ($scope === 'week') {
-    // Stay overlaps the selected Monday–Sunday week.
-    $whereClauses[] = '(b.check_in <= :week_end AND b.check_out >= :week_start)';
-    $params['week_end']   = $weekEnd;
-    $params['week_start'] = $weekStart;
+    // Stay overlaps the selected Monday–Sunday week, OR the booking was
+    // cancelled during that week (so cancellations are always visible in
+    // the week the admin cancelled them, whatever their stay dates are).
+    $whereClauses[] = "((b.check_in <= :week_end AND b.check_out >= :week_start)
+        OR (b.status = 'cancelled' AND DATE(b.updated_at) BETWEEN :cancel_start AND :cancel_end))";
+    $params['week_end']     = $weekEnd;
+    $params['week_start']   = $weekStart;
+    $params['cancel_start'] = $weekStart;
+    $params['cancel_end']   = $weekEnd;
 }
 
 if ($filterStatus !== '') {
@@ -681,8 +694,8 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
     if ($scope === 'week') {
         $viewTitle = 'Weekly Bookings';
         $viewHint  = ($filterStatus !== ''
-            ? $statusLabels[$filterStatus] . ' bookings with a stay in this week.'
-            : 'Stays in this week — upcoming first, then checked-in, completed and cancelled.');
+            ? $statusLabels[$filterStatus] . ' bookings with a stay in this week' . ($filterStatus === 'cancelled' ? ' or cancelled this week.' : '.')
+            : 'Stays in this week (and bookings cancelled this week) — upcoming first, then checked-in, completed and cancelled.');
     } else {
         $viewTitle = 'All Bookings';
         $viewHint  = ($filterStatus !== ''

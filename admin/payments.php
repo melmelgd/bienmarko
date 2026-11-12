@@ -137,7 +137,11 @@ $statPaidCount = (int) $stmtPaidCount->fetchColumn();
 
 /* ------------------------------------------------------------------
    Main query — all bookings that are confirmed/pending/completed
-   LEFT JOIN payments so unpaid rows still appear
+   LEFT JOIN payments so unpaid rows still appear.
+
+   Order: Unpaid / Partial first (nearest check-in first), and every
+   fully PAID booking goes to the end of the list (most recently paid
+   first), so the rows that still need attention stay on top.
 ------------------------------------------------------------------ */
 $whereClauses = ["b.status IN ('confirmed','pending','completed')"];
 $params       = [];
@@ -214,7 +218,12 @@ $sql = "SELECT
         LEFT JOIN guests     g ON g.id = b.guest_id
         LEFT JOIN payments   p ON p.booking_id = b.id
         {$where}
-        ORDER BY b.check_in ASC, b.created_at DESC
+        ORDER BY
+            (COALESCE(p.payment_status, '') = 'paid') ASC,
+            CASE WHEN p.payment_status = 'paid' THEN p.paid_at END DESC,
+            b.check_in ASC,
+            b.created_at DESC,
+            b.id ASC
         LIMIT {$perPage} OFFSET {$offset}";
 
 $stmt = $pdo->prepare($sql);
