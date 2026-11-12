@@ -244,3 +244,102 @@ function bk_payment_state(PDO $pdo, int $bookingId): array
     $state['fully_paid'] = $paidC >= $billedC;
     return $state;
 }
+
+/* =======================================================================
+   DASHBOARD / BOOKINGS-FILTER HELPERS  (SQL versions of the payment rule)
+   -----------------------------------------------------------------------
+   bk_payment_state() above answers "is THIS booking fully paid?" one
+   booking at a time. The dashboard and the Bookings filters need the same
+   answer for many bookings at once, so these helpers express the SAME rule
+   in SQL. Use them with:
+
+       FROM bookings b
+       LEFT JOIN payments p ON p.booking_id = b.id
+
+   (payments has a UNIQUE key on booking_id, so the join never duplicates
+   a booking row.)
+
+   The rule (identical to bk_payment_state):
+     billed  = room_fee + extra_guest_fee + other_charges - discount
+               (no payments row yet -> bookings.total_amount)
+     paid    = payments.total_paid   (no row -> 0)
+     balance = billed - paid, never negative
+     fully paid = a payments row exists AND paid >= billed
+   ======================================================================= */
+
+/** Makes sure `payments` exists so the LEFT JOINs below can't fatal on a
+ *  fresh install. Same definition as admin/payments.php (CREATE IF NOT EXISTS
+ *  is a no-op once the real table is there). */
+function bk_ensure_payments_table(PDO $pdo): void
+{
+    static $done = false;
+    if ($done) {
+        return;
+    }
+    $done = true;
+
+    try {
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS `payments` (
+                `id`              INT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+                `booking_id`      INT UNSIGNED NOT NULL,
+                `room_fee`        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                `extra_guest_fee` DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                `other_charges`   DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                `discount`        DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                `discount_reason` VARCHAR(255)  NULL,
+                `total_paid`      DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+                `payment_method`  ENUM('cash','gcash') NOT NULL DEFAULT 'cash',
+                `payment_status`  ENUM('unpaid','partial','paid') NOT NULL DEFAULT 'unpaid',
+                `notes`           TEXT NULL,
+                `paid_at`         DATETIME NULL,
+                `created_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                `updated_at`      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE KEY `uq_booking` (`booking_id`),
+                CONSTRAINT `fk_pay_booking` FOREIGN KEY (`booking_id`) REFERENCES `bookings`(`id`) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        ");
+    } catch (\Throwable $e) {
+        error_log('[booking-stay] could not ensure payments table: ' . $e->getMessage());
+    }
+}
+
+/** SQL: amount billed for the booking. */
+function bk_billed_sql(string $b = 'b', string $p = 'p'): string
+{
+    return "(CASE WHEN {$p}.id IS NULL THEN {$b}.total_amount"
+         . " ELSE GREATEST(0, {$p}.room_fee + {$p}.extra_guest_fee + {$p}.other_charges - {$p}.discount) END)";
+}
+
+/** SQL: amount collected so far for the booking. */
+function bk_paid_sql(string $p = 'p'): string
+{
+    return "COALESCE({$p}.total_paid, 0)";
+}
+
+/** SQL boolean: the booking is fully paid. */
+function bk_fully_paid_sql(string $b = 'b', string $p = 'p'): string
+{
+    return "({$p}.id IS NOT NULL AND ROUND(" . bk_paid_sql($p) . " * 100) >= ROUND(" . bk_billed_sql($b, $p) . " * 100))";
+}
+
+/** SQL: unpaid balance (never negative). */
+function bk_balance_sql(string $b = 'b', string $p = 'p'): string
+{
+    return "GREATEST(0, " . bk_billed_sql($b, $p) . " - " . bk_paid_sql($p) . ")";
+}
+
+/** SQL: 'paid' | 'partial' | 'unpaid' for the payment badge. */
+function bk_pay_state_sql(string $b = 'b', string $p = 'p'): string
+{
+    return "(CASE WHEN " . bk_fully_paid_sql($b, $p) . " THEN 'paid'"
+         . " WHEN " . bk_paid_sql($p) . " > 0 THEN 'partial'"
+         . " ELSE 'unpaid' END)";
+}
+
+/** Philippine "today" — the dashboard and its Bookings links must agree on
+ *  the date no matter what timezone the web server is set to. */
+function bk_ph_now(): DateTimeImmutable
+{
+    return new DateTimeImmutable('now', new DateTimeZone('Asia/Manila'));
+}

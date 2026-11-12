@@ -46,6 +46,8 @@ $breadcrumb        = 'Bookings';
 $page_action_label = 'New Booking';
 $show_period_toggle = false;
 
+date_default_timezone_set('Asia/Manila');   // "today" is Philippine time (matches the dashboard)
+
 $pdo   = bienmarko_db();
 $today = date('Y-m-d');
 $csrf  = bienmarko_csrf_token();
@@ -76,6 +78,9 @@ $pdo->exec("
 // Manual front-desk check-in / check-out timestamps (see booking-stay.php).
 bk_stay_migrate($pdo);
 
+// payments table — the Unpaid / Paid filter below joins it.
+bk_ensure_payments_table($pdo);
+
 // Swimming Pool Day / Night session column (bookings.pool_session).
 bk_pool_session_migrate($pdo);
 
@@ -93,6 +98,33 @@ $filterStatus = $_GET['status'] ?? '';
 $filterSearch = trim($_GET['search'] ?? '');
 $allowedStatuses = ['', 'upcoming', 'checked_in', 'completed', 'cancelled'];
 if (!in_array($filterStatus, $allowedStatuses, true)) $filterStatus = '';
+
+/* Dashboard-driven filters (the Dashboard cards link here). All optional and
+   validated; any of them also hides cancelled bookings, to match the counts
+   on the Dashboard (pick the Cancelled status to see those).
+     pay=unpaid|paid   unpaid = NOT fully paid (unpaid or partial)
+     month=YYYY-MM     check-in date falls in that month
+     from=YYYY-MM-DD   check-in date is that day or later
+     arriving=DATE     check-in date is that day (any stage)
+     departing=DATE    check-out date is that day AND Checked-in / Completed */
+$validDate = function ($v): string {
+    $v = trim((string) $v);
+    return (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $v, $m) && checkdate((int) $m[2], (int) $m[3], (int) $m[1])) ? $v : '';
+};
+$filterPay      = in_array($_GET['pay'] ?? '', ['unpaid', 'paid'], true) ? $_GET['pay'] : '';
+$filterMonth    = preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', trim((string) ($_GET['month'] ?? ''))) ? trim((string) $_GET['month']) : '';
+$filterFrom     = $validDate($_GET['from']      ?? '');
+$filterArriving = $validDate($_GET['arriving']  ?? '');
+$filterDeparting= $validDate($_GET['departing'] ?? '');
+$dashFilterKeys = ['pay', 'month', 'from', 'arriving', 'departing'];
+$dashFilters    = array_filter([
+    'pay'       => $filterPay,
+    'month'     => $filterMonth,
+    'from'      => $filterFrom,
+    'arriving'  => $filterArriving,
+    'departing' => $filterDeparting,
+], fn($v) => $v !== '');
+$dashFiltersActive = !empty($dashFilters);
 
 /* Scope: weekly list (default) or every booking, newest first. */
 $scope = ($_GET['scope'] ?? 'week') === 'all' ? 'all' : 'week';
@@ -165,6 +197,25 @@ $statCompleted  = (int) $countRow['completed'];
 $statCancelled  = (int) $countRow['cancelled'];
 
 /* ------------------------------------------------------------------
+   KPI cards — always about TODAY / right now (not the selected week)
+------------------------------------------------------------------ */
+$kpiStmt = $pdo->prepare(
+    "SELECT
+        COALESCE(SUM(b.check_in  = :t1 AND " . bk_stage_sql('upcoming') . "), 0)                       AS arr_pending,
+        COALESCE(SUM(b.check_in  = :t2 AND b.status <> 'cancelled'), 0)                                AS arr_total,
+        COALESCE(SUM(b.check_out = :t3 AND " . bk_stage_sql('checked_in') . "), 0)                      AS dep_pending,
+        COALESCE(SUM(b.check_out = :t4 AND (" . bk_stage_sql('checked_in') . " OR " . bk_stage_sql('completed') . ")), 0) AS dep_total,
+        COALESCE(SUM(" . bk_stage_sql('checked_in') . "), 0)                                            AS active_now,
+        COALESCE(SUM(b.status <> 'cancelled' AND NOT " . bk_fully_paid_sql('b', 'p') . "), 0)           AS pay_count,
+        COALESCE(SUM(CASE WHEN b.status <> 'cancelled' AND NOT " . bk_fully_paid_sql('b', 'p') . "
+                          THEN " . bk_balance_sql('b', 'p') . " ELSE 0 END), 0)                          AS pay_due
+     FROM bookings b
+     LEFT JOIN payments p ON p.booking_id = b.id"
+);
+$kpiStmt->execute(['t1' => $today, 't2' => $today, 't3' => $today, 't4' => $today]);
+$kpi = $kpiStmt->fetch();
+
+/* ------------------------------------------------------------------
    Build main query
 ------------------------------------------------------------------ */
 $whereClauses = [];
@@ -184,6 +235,35 @@ if ($scope === 'week') {
 
 if ($filterStatus !== '') {
     $whereClauses[] = bk_stage_sql($filterStatus);
+}
+
+if ($dashFiltersActive) {
+    if ($filterStatus !== 'cancelled') {
+        $whereClauses[] = "b.status <> 'cancelled'";
+    }
+    if ($filterPay === 'unpaid') {
+        $whereClauses[] = 'NOT ' . bk_fully_paid_sql('b', 'p');
+    } elseif ($filterPay === 'paid') {
+        $whereClauses[] = bk_fully_paid_sql('b', 'p');
+    }
+    if ($filterMonth !== '') {
+        $whereClauses[] = 'b.check_in BETWEEN :f_month_start AND :f_month_end';
+        $params['f_month_start'] = $filterMonth . '-01';
+        $params['f_month_end']   = date('Y-m-t', strtotime($filterMonth . '-01'));
+    }
+    if ($filterFrom !== '') {
+        $whereClauses[] = 'b.check_in >= :f_from';
+        $params['f_from'] = $filterFrom;
+    }
+    if ($filterArriving !== '') {
+        $whereClauses[] = 'b.check_in = :f_arriving';
+        $params['f_arriving'] = $filterArriving;
+    }
+    if ($filterDeparting !== '') {
+        $whereClauses[] = 'b.check_out = :f_departing';
+        $whereClauses[] = '(' . bk_stage_sql('checked_in') . ' OR ' . bk_stage_sql('completed') . ')';
+        $params['f_departing'] = $filterDeparting;
+    }
 }
 
 if ($filterSearch !== '') {
@@ -239,6 +319,7 @@ $countSql = "SELECT COUNT(*)
              FROM bookings b
              JOIN accommodations a ON a.id = b.accommodation_id
              LEFT JOIN guests     g ON g.id = b.guest_id
+             LEFT JOIN payments   p ON p.booking_id = b.id
              {$where}";
 $countStmt = $pdo->prepare($countSql);
 $countStmt->execute($params);
@@ -261,11 +342,15 @@ $sql = "SELECT
             b.companion_names,
             b.pool_session,
             b.created_at,
+            " . bk_billed_sql('b', 'p') . " AS pay_billed,
+            " . bk_paid_sql('p') . "      AS pay_paid,
+            " . bk_pay_state_sql('b', 'p') . " AS pay_state,
             a.name AS room_name, a.type AS room_type, a.price AS room_price,
             g.first_name, g.last_name, g.email AS reg_email, g.phone AS reg_phone
         FROM bookings b
         JOIN accommodations a ON a.id = b.accommodation_id
         LEFT JOIN guests     g ON g.id = b.guest_id
+        LEFT JOIN payments   p ON p.booking_id = b.id
         {$where}
         ORDER BY {$orderBy}
         LIMIT {$perPage} OFFSET {$offset}";
@@ -321,6 +406,18 @@ function bk_date_chip(string $date, string $today, string $overdueLabel): string
         return '<span class="chip chip--red">' . htmlspecialchars($overdueLabel, ENT_QUOTES, 'UTF-8') . '</span>';
     }
     return '';
+}
+
+/** Payment label for the table: "₱2,000.00 · Unpaid". */
+function bk_pay_cell(array $bk): string
+{
+    if (bk_stage($bk) === 'cancelled') {
+        return '<span class="pay-none">—</span>';
+    }
+    $map = ['paid' => ['pay--paid', 'Paid'], 'partial' => ['pay--partial', 'Partial'], 'unpaid' => ['pay--unpaid', 'Unpaid']];
+    [$cls, $lbl] = $map[$bk['pay_state']] ?? $map['unpaid'];
+    return '<span class="pay-amount">₱' . number_format((float) $bk['pay_billed'], 2) . '</span>'
+         . ' <span class="pay-dot">·</span> <span class="' . $cls . '">' . $lbl . '</span>';
 }
 
 /** Check-in time (only when the optional column exists and has a value). */
@@ -381,6 +478,17 @@ require __DIR__ . '/includes/topbar.php';
 .table-head  { display: flex; align-items: center; justify-content: space-between; padding: 18px 20px 0; margin-bottom: 14px; }
 .panel-title { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--text); }
 .results-count { font-size: 12.5px; color: var(--text-secondary); }
+
+/* Active dashboard filters */
+.filter-chips { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.filter-chips-label { font-size: 12.5px; color: var(--text-secondary); }
+.filter-chip {
+    padding: 4px 12px; border-radius: var(--r-full);
+    background: var(--gold-tint-bg); border: 1px solid var(--gold-500);
+    color: var(--gold-400); font-size: 12px; font-weight: 600;
+}
+.filter-chips-clear { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); text-decoration: underline; }
+.filter-chips-clear:hover { color: var(--gold-400); }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; white-space: nowrap; }
 thead th { padding: 10px 14px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--text-tertiary); border-bottom: 1px solid var(--border); text-align: left; }
@@ -569,9 +677,65 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .stay-notice--depart { border-color: var(--emerald); background: var(--emerald-bg); }
 .stay-notice-warn { display: block; margin-top: 6px; color: var(--gold-400); font-weight: 600; }
 
+/* ---------- KPI cards (today at a glance) ---------- */
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 20px 24px; }
+.kpi-label { font-size: 14px; color: var(--text-secondary); }
+.kpi-value { font-family: var(--font-display); font-size: 34px; font-weight: 700; line-height: 1; color: var(--text); margin: 18px 0 8px; display: block; }
+.kpi-value--gold  { color: var(--gold-400); }
+.kpi-value--green { color: var(--emerald); }
+.kpi-sub { font-size: 13px; color: var(--text-secondary); }
+
+/* ---------- Status tabs ---------- */
+.tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-top: -4px; }
+.tab { display: inline-flex; align-items: center; gap: 8px; padding: 12px 14px; font-size: 15px; color: var(--text-secondary); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; font-family: inherit; transition: color var(--transition), border-color var(--transition); }
+.tab:hover { color: var(--text); }
+.tab.is-active { color: var(--text); border-bottom-color: var(--gold-500); }
+.tab-count { min-width: 24px; padding: 1px 8px; border-radius: var(--r-full); background: var(--panel-alt); border: 1px solid var(--border); font-size: 12px; text-align: center; color: var(--text-secondary); }
+.tab.is-active .tab-count { color: var(--gold-400); border-color: var(--gold-600); background: var(--gold-tint-bg); }
+
+/* ---------- Weekly table header ---------- */
+.table-head--week { padding: 22px 28px 18px; margin-bottom: 0; gap: 16px; flex-wrap: wrap; }
+.table-head-title { display: flex; align-items: baseline; gap: 12px; }
+.table-head--week .panel-title { font-size: 26px; }
+.table-head--week .week-nav { padding: 0; flex: 0 0 auto; }
+.table-head--week .week-nav-label { flex: 0 0 auto; min-width: 0; font-size: 15px; }
+.table-head--week .pg-btn { min-height: 40px; padding: 0 16px; }
+.table-head--week .pg-btn:hover { border-color: var(--gold-500); }
+
+/* ---------- Table refinements ---------- */
+.panel table thead th { padding: 14px 16px; }
+.panel table tbody td { padding: 18px 16px; }
+.panel table th:first-child, .panel table td:first-child { padding-left: 28px; }
+.panel table th:last-child,  .panel table td:last-child  { padding-right: 28px; }
+.th-right { text-align: right; }
+.td-guest  { font-size: 16px; font-weight: 700; }
+.td-sub    { font-size: 13px; margin-top: 3px; }
+.td-room   { font-size: 16px; }
+.stay-dates { font-size: 16px; display: flex; align-items: center; gap: 10px; }
+.stay-dates .chip { margin-top: 0; padding: 2px 9px; font-size: 12px; }
+.stay-nights { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
+.pay-amount { font-size: 16px; }
+.pay-dot { color: var(--text-tertiary); }
+.pay--paid    { color: var(--emerald); }
+.pay--unpaid  { color: var(--gold-400); }
+.pay--partial { color: var(--blue); }
+.pay-none     { color: var(--text-tertiary); }
+.td-actions { justify-content: flex-end; align-items: center; gap: 10px; }
+.btn-row { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 130px; height: 50px; padding: 0 18px; border-radius: var(--r-md); font-size: 16px; font-weight: 500; font-family: inherit; cursor: pointer; background: transparent; border: 1px solid; transition: all var(--transition); }
+.btn-row--in  { color: var(--emerald); border-color: var(--emerald); }
+.btn-row--in:hover  { background: var(--emerald-bg); }
+.btn-row--out { color: var(--gold-400); border-color: var(--gold-500); }
+.btn-row--out:hover { background: var(--gold-tint-bg); }
+.btn-row:disabled, .btn-row:disabled:hover { opacity: .45; cursor: not-allowed; background: transparent; }
+.btn-eye { display: inline-flex; align-items: center; justify-content: center; width: 50px; height: 50px; border-radius: var(--r-md); background: transparent; border: 1px solid var(--gold-500); color: var(--gold-400); cursor: pointer; transition: all var(--transition); }
+.btn-eye:hover { background: var(--gold-tint-bg); }
+.btn-x { display: inline-flex; align-items: center; justify-content: center; width: 50px; height: 50px; border-radius: var(--r-md); background: transparent; border: 1px solid var(--red); color: var(--red); cursor: pointer; transition: all var(--transition); }
+.btn-x:hover { background: var(--red-bg); }
+
 /* Responsive */
-@media (max-width: 1100px) { .stat-grid { grid-template-columns: repeat(3, 1fr); } }
-@media (max-width: 700px)  { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 1100px) { .kpi-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 540px)  { .kpi-grid { grid-template-columns: 1fr; } .table-head--week { padding: 18px 16px 14px; } }
 @media (max-width: 540px)  { .detail-grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: 1fr; } }
 </style>
 
@@ -640,26 +804,55 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
 
 <div class="stack">
 
-    <!-- ===== Stat cards (click = filter All Bookings by that status) ===== -->
-    <div class="stat-grid">
+    <!-- ===== KPI cards (today at a glance) ===== -->
+    <?php
+    $arrPending = (int) $kpi['arr_pending'];
+    $arrTotal   = (int) $kpi['arr_total'];
+    $depPending = (int) $kpi['dep_pending'];
+    $depTotal   = (int) $kpi['dep_total'];
+    $activeNow  = (int) $kpi['active_now'];
+    $payCount   = (int) $kpi['pay_count'];
+    $payDue     = (float) $kpi['pay_due'];
+    ?>
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-label">Arriving today</div>
+            <span class="kpi-value"><?php echo $arrTotal; ?></span>
+            <div class="kpi-sub"><?php echo $arrTotal === 0 ? 'No arrivals' : ($arrPending . ' still to check in'); ?></div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Departing today</div>
+            <span class="kpi-value"><?php echo $depTotal; ?></span>
+            <div class="kpi-sub"><?php echo $depTotal === 0 ? 'No departures' : ($depPending . ' still to check out'); ?></div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Active now</div>
+            <span class="kpi-value kpi-value--green"><?php echo $activeNow; ?></span>
+            <div class="kpi-sub">Guests checked in</div>
+        </div>
+        <div class="kpi-card">
+            <div class="kpi-label">Pending payments</div>
+            <span class="kpi-value kpi-value--gold"><?php echo $payCount; ?></span>
+            <div class="kpi-sub">₱<?php echo number_format($payDue, 2); ?> to collect</div>
+        </div>
+    </div>
+
+    <!-- ===== Status tabs (filter the list; counts follow the chosen view) ===== -->
+    <div class="tabs" role="tablist">
         <?php
-        $cards = [
-            ['',           'Total Bookings', $statTotal,     'calendar',       'grey'],
-            ['upcoming',   'Upcoming',       $statUpcoming,  'clock',          'amber'],
-            ['checked_in', 'Checked-in',     $statCheckedIn, 'calendar-check', 'emerald'],
-            ['completed',  'Completed',      $statCompleted, 'check',          'blue'],
-            ['cancelled',  'Cancelled',      $statCancelled, 'close',          'red'],
+        $tabs = [
+            ''           => ['All',        $statTotal],
+            'upcoming'   => ['Upcoming',   $statUpcoming],
+            'checked_in' => ['Checked-in', $statCheckedIn],
+            'completed'  => ['Completed',  $statCompleted],
+            'cancelled'  => ['Cancelled',  $statCancelled],
         ];
-        foreach ($cards as [$key, $label, $val, $ico, $tint]):
+        foreach ($tabs as $key => [$label, $val]):
             $isActive = ($filterStatus === $key);
         ?>
-        <div class="stat-card <?php echo $isActive ? 'is-active' : ''; ?>" onclick="applyStatusFilter('<?php echo $key; ?>')">
-            <div class="stat-card-top">
-                <span class="stat-label"><?php echo $label; ?></span>
-                <span class="stat-icon stat-icon--<?php echo $tint; ?>"><?php echo icon($ico); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $val; ?></span>
-        </div>
+        <button type="button" role="tab" class="tab <?php echo $isActive ? 'is-active' : ''; ?>" aria-selected="<?php echo $isActive ? 'true' : 'false'; ?>" onclick="applyStatusFilter('<?php echo $key; ?>')">
+            <?php echo $label; ?> <span class="tab-count"><?php echo $val; ?></span>
+        </button>
         <?php endforeach; ?>
     </div>
 
@@ -672,16 +865,33 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
         </div>
         <select class="filter-select" id="scopeSelect" aria-label="View">
             <option value="week" <?php echo $scope === 'week' ? 'selected' : ''; ?>>Weekly view</option>
-            <option value="all"  <?php echo $scope === 'all'  ? 'selected' : ''; ?>>All bookings (newest first)</option>
-        </select>
-        <select class="filter-select" id="statusSelect">
-            <option value="">All Statuses</option>
-            <option value="upcoming"   <?php echo $filterStatus === 'upcoming'   ? 'selected' : ''; ?>>Upcoming</option>
-            <option value="checked_in" <?php echo $filterStatus === 'checked_in' ? 'selected' : ''; ?>>Checked-in</option>
-            <option value="completed"  <?php echo $filterStatus === 'completed'  ? 'selected' : ''; ?>>Completed</option>
-            <option value="cancelled"  <?php echo $filterStatus === 'cancelled'  ? 'selected' : ''; ?>>Cancelled</option>
+            <option value="all"  <?php echo $scope === 'all'  ? 'selected' : ''; ?>>All bookings</option>
         </select>
     </div>
+
+    <?php if ($dashFiltersActive):
+        $chipLabels = [];
+        if ($filterPay === 'unpaid')   $chipLabels[] = 'Not fully paid (unpaid or partial)';
+        if ($filterPay === 'paid')     $chipLabels[] = 'Fully paid';
+        if ($filterMonth !== '')       $chipLabels[] = 'Check-in in ' . date('F Y', strtotime($filterMonth . '-01'));
+        if ($filterFrom !== '')        $chipLabels[] = 'Check-in from ' . date('M j, Y', strtotime($filterFrom));
+        if ($filterArriving !== '')    $chipLabels[] = 'Arriving ' . date('M j, Y', strtotime($filterArriving));
+        if ($filterDeparting !== '')   $chipLabels[] = 'Departing ' . date('M j, Y', strtotime($filterDeparting));
+        if ($filterStatus !== 'cancelled') $chipLabels[] = 'Cancelled bookings hidden';
+
+        $clearQuery = $_GET;
+        foreach ($dashFilterKeys as $k) unset($clearQuery[$k]);
+        unset($clearQuery['page']);
+        $clearUrl = 'bookings.php' . ($clearQuery ? '?' . http_build_query($clearQuery) : '');
+    ?>
+    <div class="filter-chips">
+        <span class="filter-chips-label">Filtered by:</span>
+        <?php foreach ($chipLabels as $chip): ?>
+            <span class="filter-chip"><?php echo htmlspecialchars($chip, ENT_QUOTES, 'UTF-8'); ?></span>
+        <?php endforeach; ?>
+        <a class="filter-chips-clear" href="<?php echo htmlspecialchars($clearUrl, ENT_QUOTES, 'UTF-8'); ?>">Clear</a>
+    </div>
+    <?php endif; ?>
 
     <!-- ===== Bookings Table ===== -->
     <?php
@@ -707,53 +917,49 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
     $emptyMsg   = $scope === 'week'
         ? 'Use Prev / Next to browse other weeks, or switch to All bookings.'
         : 'New bookings from guests will appear here automatically.';
-    if ($totalBookings === 0 && ($filterSearch !== '' || $filterStatus !== '')) {
+    if ($totalBookings === 0 && ($filterSearch !== '' || $filterStatus !== '' || $dashFiltersActive)) {
         $emptyIcon  = 'inbox';
         $emptyTitle = 'No bookings match';
         $emptyMsg   = $scope === 'week'
             ? 'Try a different week, a different search term, or clear the filter.'
             : 'Try a different search term or clear the filter.';
     }
-    $colCount = 7;
+    $colCount = 6;
     ?>
     <div class="panel table-wrap">
-        <div class="table-head">
-            <div>
+        <div class="table-head table-head--week">
+            <div class="table-head-title">
                 <h2 class="panel-title"><?php echo $viewTitle; ?></h2>
-                <div class="view-hint"><?php echo htmlspecialchars($viewHint, ENT_QUOTES, 'UTF-8'); ?></div>
+                <span class="results-count" id="resultsCount"><?php echo $totalBookings; ?> booking<?php echo $totalBookings === 1 ? '' : 's'; ?></span>
             </div>
-            <span class="results-count" id="resultsCount">
-                <?php echo $totalBookings; ?> booking<?php echo $totalBookings === 1 ? '' : 's'; ?>
-            </span>
-        </div>
-        <?php if ($scope === 'week'): ?>
-        <div class="week-nav">
-            <a class="pg-btn" href="<?php echo $weekUrl($prevWeek); ?>" aria-label="Previous week">
-                <?php echo icon('chevron-right', 'icon-sm pg-chevron-prev'); ?><span>Prev</span>
-            </a>
-            <div class="week-nav-label">
-                <span><?php echo htmlspecialchars($weekLabel, ENT_QUOTES, 'UTF-8'); ?></span>
-                <?php if ($isCurrentWeek): ?><span class="chip chip--gold">This week</span><?php endif; ?>
+            <?php if ($scope === 'week'): ?>
+            <div class="week-nav">
+                <a class="pg-btn" href="<?php echo $weekUrl($prevWeek); ?>" aria-label="Previous week">
+                    <?php echo icon('chevron-right', 'icon-sm pg-chevron-prev'); ?><span>Prev</span>
+                </a>
+                <div class="week-nav-label">
+                    <span><?php echo htmlspecialchars($weekLabel, ENT_QUOTES, 'UTF-8'); ?></span>
+                    <?php if ($isCurrentWeek): ?><span class="chip chip--gold">This week</span><?php endif; ?>
+                </div>
+                <?php if (!$isCurrentWeek): ?>
+                    <a class="pg-btn" href="<?php echo $weekUrl($thisWeek); ?>">This week</a>
+                <?php endif; ?>
+                <a class="pg-btn" href="<?php echo $weekUrl($nextWeek); ?>" aria-label="Next week">
+                    <span>Next</span><?php echo icon('chevron-right', 'icon-sm'); ?>
+                </a>
             </div>
-            <?php if (!$isCurrentWeek): ?>
-                <a class="pg-btn" href="<?php echo $weekUrl($thisWeek); ?>">This week</a>
             <?php endif; ?>
-            <a class="pg-btn" href="<?php echo $weekUrl($nextWeek); ?>" aria-label="Next week">
-                <span>Next</span><?php echo icon('chevron-right', 'icon-sm'); ?>
-            </a>
         </div>
-        <?php endif; ?>
         <div class="table-scroll">
             <table id="bookingsTable">
                 <thead>
                     <tr>
                         <th>Guest</th>
-                        <th>Room</th>
-                        <th>Check-in</th>
-                        <th>Check-out</th>
-                        <th>Reference</th>
+                        <th>Accommodation</th>
+                        <th>Stay</th>
+                        <th>Payment</th>
                         <th>Status</th>
-                        <th>Actions</th>
+                        <th class="th-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody id="bookingsTbody">
@@ -773,62 +979,58 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                             $timeLbl  = bk_time_label($bk);
                             $rowPay   = $stage === 'checked_in' ? bk_payment_state($pdo, $bid) : null;
                         ?>
+                            <?php
+                                $ciTs   = strtotime($bk['check_in']);
+                                $coTs   = strtotime($bk['check_out']);
+                                $nights = max(1, (int) round(($coTs - $ciTs) / 86400));
+                                $isPool = strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0;
+                                $unit   = $isPool ? 'day' : 'night';
+                                $chip   = $stage === 'upcoming' ? bk_date_chip($bk['check_in'], $today, 'Overdue')
+                                        : ($stage === 'checked_in' ? bk_date_chip($bk['check_out'], $today, 'Overdue') : '');
+                                $payBlocked = $stage === 'checked_in' && $rowPay && !$rowPay['fully_paid'];
+                            ?>
                             <tr data-id="<?php echo $bid; ?>" onclick="openDetail(<?php echo $bid; ?>)">
                                 <td>
                                     <div class="td-guest"><?php echo htmlspecialchars(bk_name($bk), ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <?php if ($email): ?>
-                                        <div class="td-sub"><?php echo htmlspecialchars($email, ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <?php endif; ?>
-                                </td>
-
-                                <td>
-                                    <div><?php echo htmlspecialchars($bk['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <div class="td-sub"><?php echo htmlspecialchars($bk['room_type'], ENT_QUOTES, 'UTF-8'); ?></div>
-                                </td>
-
-                                <td>
-                                    <div><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></div>
-                                    <?php if (strcasecmp(trim((string) $bk['room_type']), 'Swimming Pool') === 0): ?>
-                                        <span class="chip <?php echo ($bk['pool_session'] ?? '') === 'night' ? 'chip--blue' : 'chip--gold'; ?>"><?php echo htmlspecialchars(bk_pool_session_label($bk['pool_session'] ?? '') ?: 'Day & Night', ENT_QUOTES, 'UTF-8'); ?></span>
-                                    <?php endif; ?>
-                                    <?php if ($timeLbl): ?><div class="td-sub"><?php echo $timeLbl; ?></div><?php endif; ?>
-                                    <?php if ($stage === 'upcoming') echo bk_date_chip($bk['check_in'], $today, 'Overdue'); ?>
-                                </td>
-                                <td>
-                                    <div><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></div>
-                                    <?php if ($stage === 'checked_in') echo bk_date_chip($bk['check_out'], $today, 'Overdue'); ?>
-                                </td>
-
-                                <td>
-                                    <span class="ref-code"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></span>
+                                    <div class="td-sub">
+                                        <?php if ($email): ?><?php echo htmlspecialchars($email, ENT_QUOTES, 'UTF-8'); ?> · <?php endif; ?><span class="ref-code"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></span>
+                                    </div>
                                     <?php if ($scope === 'all' && !empty($bk['created_at'])): ?>
                                         <div class="booked-on">Booked <?php echo date('M j, Y g:i A', strtotime($bk['created_at'])); ?></div>
                                     <?php endif; ?>
                                 </td>
+
+                                <td>
+                                    <div class="td-room"><?php echo htmlspecialchars($bk['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php if ($isPool): ?>
+                                        <div class="td-sub"><?php echo htmlspecialchars(bk_pool_session_label($bk['pool_session'] ?? '') ?: 'Day & Night', ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php endif; ?>
+                                </td>
+
+                                <td>
+                                    <div class="stay-dates">
+                                        <span><?php echo date('M j', $ciTs); ?> → <?php echo date('n', $ciTs) === date('n', $coTs) ? date('j', $coTs) : date('M j', $coTs); ?></span>
+                                        <?php echo $chip; ?>
+                                    </div>
+                                    <div class="stay-nights"><?php echo $nights . ' ' . $unit . ($nights === 1 ? '' : 's'); ?><?php if ($timeLbl): ?> · <?php echo $timeLbl; ?><?php endif; ?></div>
+                                </td>
+
+                                <td><?php echo bk_pay_cell($bk); ?></td>
                                 <td><?php echo bk_stage_badge($bk); ?></td>
+
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
                                         <?php if ($stage === 'upcoming'): ?>
-                                            <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest in">
-                                                <?php echo icon('calendar-check', 'icon-sm'); ?> Check-in
-                                            </button>
-                                        <?php elseif ($stage === 'checked_in' && $rowPay && !$rowPay['fully_paid']): ?>
-                                            <button class="btn-sm btn-sm--success" type="button" disabled aria-disabled="true"
-                                                    title="Unpaid balance of ₱<?php echo number_format($rowPay['balance'], 2); ?> — record the payment in Payments before checking out">
-                                                <?php echo icon('logout', 'icon-sm'); ?> Check-out
-                                            </button>
+                                            <button class="btn-row btn-row--in" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest in">Check-in</button>
+                                        <?php elseif ($payBlocked): ?>
+                                            <button class="btn-row btn-row--out" type="button" disabled aria-disabled="true"
+                                                    title="Unpaid balance of ₱<?php echo number_format($rowPay['balance'], 2); ?> — record the payment in Payments before checking out">Check-out</button>
                                         <?php elseif ($stage === 'checked_in'): ?>
-                                            <button class="btn-sm btn-sm--success" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest out">
-                                                <?php echo icon('logout', 'icon-sm'); ?> Check-out
-                                            </button>
+                                            <button class="btn-row btn-row--out" onclick="openDetail(<?php echo $bid; ?>)" title="Review details and check the guest out">Check-out</button>
                                         <?php endif; ?>
-                                        <button class="btn-sm btn-sm--gold" onclick="openDetail(<?php echo $bid; ?>)" title="View Details">
-                                            <?php echo icon('eye', 'icon-sm'); ?>
-                                        </button>
+                                        <button class="btn-eye" onclick="openDetail(<?php echo $bid; ?>)" title="View Details"><?php echo icon('eye', 'icon-sm'); ?></button>
                                         <?php if ($canCancel): ?>
-                                            <button class="btn-sm btn-sm--danger" onclick="quickStatus(<?php echo $bid; ?>, 'cancelled')" title="Cancel">
-                                                <?php echo icon('close', 'icon-sm'); ?>
-                                            </button>
+                                            <button class="btn-x" onclick="quickStatus(<?php echo $bid; ?>, 'cancelled')" title="Cancel booking"><?php echo icon('close', 'icon-sm'); ?></button>
                                         <?php endif; ?>
                                     </div>
                                 </td>
@@ -843,7 +1045,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
             'week'   => $scope === 'week' ? $weekStart : '',
             'status' => $filterStatus,
             'search' => $filterSearch,
-        ], 'booking'); ?>
+        ] + $dashFilters, 'booking'); ?>
     </div>
 
 </div><!-- /.stack -->

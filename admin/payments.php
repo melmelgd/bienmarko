@@ -135,6 +135,23 @@ $stmtPaidCount = $pdo->prepare(
 $stmtPaidCount->execute(['month_start' => date('Y-m-01')]);
 $statPaidCount = (int) $stmtPaidCount->fetchColumn();
 
+// Tab counts — same base set as the list below (ignores the tab + search)
+$tabRow = $pdo->query(
+    "SELECT COUNT(*) AS total,
+            COALESCE(SUM(p.payment_status IS NULL OR p.payment_status = 'unpaid'), 0) AS unpaid,
+            COALESCE(SUM(p.payment_status = 'partial'), 0)                            AS partial,
+            COALESCE(SUM(p.payment_status = 'paid'), 0)                               AS paid
+     FROM bookings b
+     LEFT JOIN payments p ON p.booking_id = b.id
+     WHERE b.status IN ('confirmed','pending','completed')"
+)->fetch();
+$tabCounts = [
+    ''        => (int) $tabRow['total'],
+    'unpaid'  => (int) $tabRow['unpaid'],
+    'partial' => (int) $tabRow['partial'],
+    'paid'    => (int) $tabRow['paid'],
+];
+
 /* ------------------------------------------------------------------
    Main query — all bookings that are confirmed/pending/completed
    LEFT JOIN payments so unpaid rows still appear.
@@ -212,7 +229,8 @@ $sql = "SELECT
             p.payment_method  AS pay_method,
             p.payment_status,
             p.notes           AS pay_notes,
-            p.paid_at
+            p.paid_at,
+            " . bk_billed_sql('b', 'p') . " AS billed_amount
         FROM bookings b
         JOIN accommodations a ON a.id = b.accommodation_id
         LEFT JOIN guests     g ON g.id = b.guest_id
@@ -545,14 +563,56 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .toast--success { background: var(--emerald-bg); border: 1px solid var(--emerald); color: var(--emerald); }
 .toast--error   { background: var(--red-bg);     border: 1px solid var(--red);     color: var(--red); }
 
-@media (max-width: 900px)  { .stat-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 540px)  { .stat-grid { grid-template-columns: 1fr; } .form-row { grid-template-columns: 1fr; } }
+/* ---------- KPI cards ---------- */
+.kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.kpi-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 22px 28px; }
+.kpi-label { font-size: 15px; color: var(--text-secondary); }
+.kpi-value { font-family: var(--font-display); font-size: 46px; font-weight: 700; line-height: 1; margin: 22px 0 12px; display: block; }
+.kpi-value--gold  { color: var(--gold-400); }
+.kpi-value--green { color: var(--emerald); }
+.kpi-sub { font-size: 14px; color: var(--text-secondary); }
+
+/* ---------- Status tabs ---------- */
+.tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-top: -4px; }
+.tab { display: inline-flex; align-items: center; gap: 8px; padding: 12px 14px; font-size: 15px; color: var(--text-secondary); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; font-family: inherit; transition: color var(--transition), border-color var(--transition); }
+.tab:hover { color: var(--text); }
+.tab.is-active { color: var(--text); border-bottom-color: var(--gold-500); }
+.tab-count { min-width: 24px; padding: 1px 8px; border-radius: var(--r-full); background: var(--panel-alt); border: 1px solid var(--border); font-size: 12px; text-align: center; color: var(--text-secondary); }
+.tab.is-active .tab-count { color: var(--gold-400); border-color: var(--gold-600); background: var(--gold-tint-bg); }
+
+/* ---------- Table refinements ---------- */
+.table-head--pay { padding: 22px 28px 18px; margin-bottom: 0; gap: 16px; justify-content: flex-start; }
+.table-head--pay .panel-title { font-size: 26px; }
+.table-head--pay .results-count { font-size: 15px; }
+.panel table thead th { padding: 14px 16px; }
+.panel table tbody td { padding: 18px 16px; }
+.panel table th:first-child, .panel table td:first-child { padding-left: 28px; }
+.panel table th:last-child,  .panel table td:last-child  { padding-right: 28px; }
+.th-right, .td-num { text-align: right; }
+.td-guest { font-size: 16px; font-weight: 700; }
+.td-sub   { font-size: 13px; margin-top: 3px; }
+.td-room  { font-size: 16px; }
+.stay-dates  { font-size: 16px; }
+.stay-nights { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
+.td-num { font-size: 16px; font-weight: 500; }
+.td-amount { font-family: var(--font-display); font-weight: 700; }
+.num-muted { color: var(--text-tertiary); }
+.num-due   { color: var(--gold-400); font-weight: 700; }
+.td-actions { justify-content: flex-end; align-items: center; gap: 10px; }
+.btn-row { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 50px; padding: 0 22px; border-radius: var(--r-md); font-size: 16px; font-weight: 500; font-family: inherit; cursor: pointer; background: transparent; border: 1px solid; white-space: nowrap; transition: all var(--transition); }
+.btn-row--pay { color: var(--gold-400); border-color: var(--gold-500); }
+.btn-row--pay:hover { background: var(--gold-tint-bg); }
+.btn-row--receipt { color: var(--emerald); border-color: var(--emerald); }
+.btn-row--receipt:hover { background: var(--emerald-bg); }
+
+@media (max-width: 700px)  { .kpi-grid { grid-template-columns: 1fr; } }
+@media (max-width: 540px)  { .form-row { grid-template-columns: 1fr; } .table-head--pay { padding: 18px 16px 14px; } }
 @media print {
     /* Print only the receipt — hide the page chrome (top bar, sidebar, toasts) */
     .topbar, .sidebar, .toast-wrap, .topbar-mobile-toggle { display: none !important; }
     .app-main { margin-left: 0 !important; padding-top: 0 !important; }
     .content { padding: 0 !important; }
-    .modal-overlay, .receipt-actions, .stat-grid, .toolbar, .panel { display: none !important; }
+    .modal-overlay, .receipt-actions, .kpi-grid, .tabs, .toolbar, .panel { display: none !important; }
     .receipt-overlay { position: static !important; }
     .receipt-box { box-shadow: none; }
 }
@@ -560,61 +620,46 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 
 <div class="stack">
 
-    <!-- ===== Stat cards ===== -->
-    <div class="stat-grid">
-        <div class="stat-card">
-            <div class="stat-card-top">
-                <span class="stat-label">Outstanding Balance</span>
-                <span class="stat-icon stat-icon--red"><?php echo icon('wallet'); ?></span>
-            </div>
-            <span class="stat-value">₱<?php echo number_format($statOutstanding, 2); ?></span>
-            <span class="stat-sub">Pending collection</span>
+    <!-- ===== KPI cards ===== -->
+    <div class="kpi-grid">
+        <div class="kpi-card">
+            <div class="kpi-label">Outstanding balance</div>
+            <span class="kpi-value kpi-value--gold">₱<?php echo number_format($statOutstanding, 2); ?></span>
+            <div class="kpi-sub"><?php echo $statUnpaid; ?> unpaid booking<?php echo $statUnpaid === 1 ? '' : 's'; ?></div>
         </div>
-        <div class="stat-card">
-            <div class="stat-card-top">
-                <span class="stat-label">Collected This Month</span>
-                <span class="stat-icon stat-icon--emerald"><?php echo icon('wallet'); ?></span>
-            </div>
-            <span class="stat-value">₱<?php echo number_format($statCollected, 2); ?></span>
-            <span class="stat-sub"><?php echo date('F Y'); ?></span>
-        </div>
-        <div class="stat-card <?php echo $filterPay === 'unpaid' ? 'is-active' : ''; ?>" onclick="applyPayFilter('unpaid')">
-            <div class="stat-card-top">
-                <span class="stat-label">Unpaid Bookings</span>
-                <span class="stat-icon stat-icon--amber"><?php echo icon('clock'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statUnpaid; ?></span>
-            <span class="stat-sub">Awaiting payment</span>
-        </div>
-        <div class="stat-card <?php echo $filterPay === 'paid' ? 'is-active' : ''; ?>" onclick="applyPayFilter('paid')">
-            <div class="stat-card-top">
-                <span class="stat-label">Paid This Month</span>
-                <span class="stat-icon stat-icon--blue"><?php echo icon('calendar-check'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statPaidCount; ?></span>
-            <span class="stat-sub">Transactions</span>
+        <div class="kpi-card">
+            <div class="kpi-label">Collected this month</div>
+            <span class="kpi-value kpi-value--green">₱<?php echo number_format($statCollected, 2); ?></span>
+            <div class="kpi-sub"><?php echo $statPaidCount; ?> payment<?php echo $statPaidCount === 1 ? '' : 's'; ?> · <?php echo date('F Y'); ?></div>
         </div>
     </div>
 
-    <!-- ===== Toolbar ===== -->
+    <!-- ===== Payment status tabs ===== -->
+    <div class="tabs" role="tablist">
+        <?php
+        $tabLabels = ['' => 'All', 'unpaid' => 'Unpaid', 'partial' => 'Partial', 'paid' => 'Paid'];
+        foreach ($tabLabels as $key => $label):
+            $isActive = ($filterPay === $key);
+        ?>
+        <button type="button" role="tab" class="tab <?php echo $isActive ? 'is-active' : ''; ?>" aria-selected="<?php echo $isActive ? 'true' : 'false'; ?>" onclick="applyPayFilter('<?php echo $key; ?>')">
+            <?php echo $label; ?> <span class="tab-count"><?php echo $tabCounts[$key]; ?></span>
+        </button>
+        <?php endforeach; ?>
+    </div>
+
+    <!-- ===== Search ===== -->
     <div class="toolbar">
         <div class="toolbar-search">
             <span class="toolbar-search-icon"><?php echo icon('inbox', 'icon-sm'); ?></span>
-            <input type="text" id="searchInput" placeholder="Search by name, email, or booking reference…"
+            <input type="text" id="searchInput" placeholder="Search by name, email, or booking reference"
                    value="<?php echo htmlspecialchars($filterSearch, ENT_QUOTES, 'UTF-8'); ?>">
         </div>
-        <select class="filter-select" id="paySelect">
-            <option value="">All Payment Statuses</option>
-            <option value="unpaid"  <?php echo $filterPay === 'unpaid'  ? 'selected' : ''; ?>>Unpaid</option>
-            <option value="partial" <?php echo $filterPay === 'partial' ? 'selected' : ''; ?>>Partial</option>
-            <option value="paid"    <?php echo $filterPay === 'paid'    ? 'selected' : ''; ?>>Paid</option>
-        </select>
     </div>
 
     <!-- ===== Payments Table ===== -->
     <div class="panel table-wrap">
-        <div class="table-head">
-            <h2 class="panel-title">Payments &amp; Billing</h2>
+        <div class="table-head table-head--pay">
+            <h2 class="panel-title">Payments</h2>
             <span class="results-count"><?php echo $totalRows; ?> record<?php echo $totalRows === 1 ? '' : 's'; ?></span>
         </div>
         <div class="table-scroll">
@@ -622,20 +667,19 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                 <thead>
                     <tr>
                         <th>Guest</th>
-                        <th>Room</th>
-                        <th>Check-in</th>
-                        <th>Check-out</th>
-                        <th>Booking</th>
-                        <th>Total Due</th>
-                        <th>Paid</th>
+                        <th>Accommodation</th>
+                        <th>Stay</th>
+                        <th class="th-right">Total</th>
+                        <th class="th-right">Paid</th>
+                        <th class="th-right">Balance</th>
                         <th>Status</th>
-                        <th>Actions</th>
+                        <th class="th-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($rows)): ?>
                         <tr>
-                            <td colspan="9">
+                            <td colspan="8">
                                 <?php render_empty_state(
                                     'wallet',
                                     'No payment records found',
@@ -644,47 +688,48 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                             </td>
                         </tr>
                     <?php else: ?>
-                        <?php foreach ($rows as $row): ?>
-                            <?php $payStatus = $row['payment_status'] ?? 'unpaid'; ?>
+                        <?php foreach ($rows as $row):
+                            $payStatus = $row['payment_status'] ?? 'unpaid';
+                            $ciTs   = strtotime($row['check_in']);
+                            $coTs   = strtotime($row['check_out']);
+                            $nights = max(1, (int) round(($coTs - $ciTs) / 86400));
+                            $isPool = strcasecmp(trim((string) $row['room_type']), 'Swimming Pool') === 0;
+                            $unit   = $isPool ? 'day' : 'night';
+                            $billed  = (float) $row['billed_amount'];
+                            $paidAmt = (float) ($row['total_paid'] ?? 0);
+                            $balance = max(0, round($billed - $paidAmt, 2));
+                            $em      = pm_email($row);
+                        ?>
                             <tr data-bid="<?php echo (int) $row['booking_id']; ?>" onclick="openBilling(<?php echo (int) $row['booking_id']; ?>)">
                                 <td>
                                     <div class="td-guest"><?php echo htmlspecialchars(pm_name($row), ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <?php $em = pm_email($row); if ($em): ?>
+                                    <?php if ($em): ?>
                                         <div class="td-sub"><?php echo htmlspecialchars($em, ENT_QUOTES, 'UTF-8'); ?></div>
                                     <?php endif; ?>
-                                    <div style="margin-top:3px;">
-                                        <?php if ($row['booking_type'] === 'guest'): ?>
-                                            <span class="type-badge type-badge--guest">Walk-in</span>
-                                        <?php else: ?>
-                                            <span class="type-badge type-badge--registered">Registered</span>
-                                        <?php endif; ?>
-                                    </div>
                                 </td>
                                 <td>
-                                    <div><?php echo htmlspecialchars($row['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <div class="td-sub"><?php echo htmlspecialchars($row['room_type'], ENT_QUOTES, 'UTF-8'); ?></div>
-                                </td>
-                                <td><?php echo date('M j, Y', strtotime($row['check_in'])); ?></td>
-                                <td><?php echo date('M j, Y', strtotime($row['check_out'])); ?></td>
-                                <td><?php echo booking_status_badge($row['booking_status']); ?></td>
-                                <td class="td-amount js-total">₱<?php echo number_format((float) $row['booking_total'], 2); ?></td>
-                                <td class="td-amount js-paid">
-                                    <?php if ($row['pay_id']): ?>
-                                        ₱<?php echo number_format((float) $row['total_paid'], 2); ?>
-                                    <?php else: ?>
-                                        <span style="color:var(--text-tertiary);">—</span>
+                                    <div class="td-room"><?php echo htmlspecialchars($row['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <?php if ($isPool): ?>
+                                        <div class="td-sub"><?php echo htmlspecialchars(bk_pool_session_label($row['pool_session'] ?? '') ?: 'Day & Night', ENT_QUOTES, 'UTF-8'); ?></div>
                                     <?php endif; ?>
                                 </td>
+                                <td>
+                                    <div class="stay-dates"><?php echo date('M j', $ciTs); ?> → <?php echo date('n', $ciTs) === date('n', $coTs) ? date('j', $coTs) : date('M j', $coTs); ?></div>
+                                    <div class="stay-nights"><?php echo $nights . ' ' . $unit . ($nights === 1 ? '' : 's'); ?></div>
+                                </td>
+                                <td class="td-num js-total">₱<?php echo number_format($billed, 2); ?></td>
+                                <td class="td-num js-paid <?php echo $paidAmt > 0 ? '' : 'num-muted'; ?>">₱<?php echo number_format($paidAmt, 2); ?></td>
+                                <td class="td-num js-balance <?php echo $balance > 0 ? 'num-due' : 'num-muted'; ?>">₱<?php echo number_format($balance, 2); ?></td>
                                 <td class="js-status"><?php echo pay_status_badge($payStatus); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
-                                        <button class="btn-sm btn-sm--gold" onclick="openBilling(<?php echo (int) $row['booking_id']; ?>)">
-                                            <?php echo icon('wallet', 'icon-sm'); ?> Billing
-                                        </button>
-                                        <?php if ($row['pay_id']): ?>
-                                            <button class="btn-sm" data-receipt="1" onclick="openReceipt(<?php echo (int) $row['booking_id']; ?>)">
-                                                <?php echo icon('calendar', 'icon-sm'); ?> Receipt
-                                            </button>
+                                        <?php if ($payStatus === 'paid'): ?>
+                                            <button class="btn-row btn-row--receipt" data-receipt="1" onclick="openReceipt(<?php echo (int) $row['booking_id']; ?>)">View receipt</button>
+                                        <?php else: ?>
+                                            <button class="btn-row btn-row--pay" onclick="openBilling(<?php echo (int) $row['booking_id']; ?>)">Record payment</button>
+                                            <?php if ($row['pay_id']): ?>
+                                                <button class="btn-row btn-row--receipt" data-receipt="1" onclick="openReceipt(<?php echo (int) $row['booking_id']; ?>)">Receipt</button>
+                                            <?php endif; ?>
                                         <?php endif; ?>
                                     </div>
                                 </td>
@@ -966,9 +1011,10 @@ function applyPayFilter(val) {
     window.location.href = url.toString();
 }
 
-document.getElementById('paySelect').addEventListener('change', function () {
-    applyPayFilter(this.value);
-});
+var paySelectEl = document.getElementById('paySelect');   // (old dropdown — tabs replaced it)
+if (paySelectEl) {
+    paySelectEl.addEventListener('change', function () { applyPayFilter(this.value); });
+}
 
 var stimer;
 document.getElementById('searchInput').addEventListener('input', function () {
@@ -1247,7 +1293,19 @@ function updateRowAfterSave(bid, r, b) {
     }
 
     var paidCell = tr.querySelector('.js-paid');
-    if (paidCell) paidCell.textContent = '₱' + fmt(r.total_paid || 0);
+    if (paidCell) {
+        paidCell.textContent = '₱' + fmt(r.total_paid || 0);
+        paidCell.classList.toggle('num-muted', !(Number(r.total_paid) > 0));
+    }
+
+    var balCell = tr.querySelector('.js-balance');
+    if (balCell) {
+        var billedNow = Number(r.booking_total) || 0;
+        var bal = Math.max(0, Math.round((billedNow - (Number(r.total_paid) || 0)) * 100) / 100);
+        balCell.textContent = '₱' + fmt(bal);
+        balCell.classList.toggle('num-due', bal > 0);
+        balCell.classList.toggle('num-muted', !(bal > 0));
+    }
 
     var statusCell = tr.querySelector('.js-status');
     if (statusCell) {
@@ -1264,7 +1322,7 @@ function updateRowAfterSave(bid, r, b) {
     var actions = tr.querySelector('.td-actions');
     if (actions && !actions.querySelector('[data-receipt]')) {
         var btn = document.createElement('button');
-        btn.className = 'btn-sm';
+        btn.className = 'btn-row btn-row--receipt';
         btn.setAttribute('data-receipt', '1');
         btn.textContent = 'Receipt';
         btn.onclick = function () { openReceipt(bid); };

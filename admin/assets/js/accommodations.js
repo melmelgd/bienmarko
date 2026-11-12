@@ -160,6 +160,7 @@
   var removeImageRow = document.querySelector('[data-acc-remove-image-row]');
   var removeImageCheckbox = modalForm ? modalForm.querySelector('[name="remove_image"]') : null;
 
+  var modalDeleteBtn = document.querySelector('[data-acc-modal-delete]'); /* Delete button inside the Edit dialog */
   var confirmOverlay = document.querySelector('[data-acc-confirm]');
   var confirmText = document.querySelector('[data-acc-confirm-text]');
   var confirmYesBtn = document.querySelector('[data-acc-confirm-yes]');
@@ -290,6 +291,14 @@
       if (typeSelect && typeSelect.options.length) typeSelect.value = typeSelect.options[0].value;
       setField('status', 'available');
       setField('capacity', 1);
+    }
+
+    /* Delete is only offered while editing an existing accommodation */
+    if (modalDeleteBtn) {
+      var canDelete = mode === 'edit' && data && data.id;
+      modalDeleteBtn.style.display = canDelete ? '' : 'none';
+      modalDeleteBtn.setAttribute('data-acc-delete', canDelete ? data.id : '');
+      modalDeleteBtn.setAttribute('data-acc-delete-name', canDelete ? (data.name || '') : '');
     }
 
     toggleStatusField(mode);
@@ -500,7 +509,7 @@
 
     cards.forEach(function (card) {
       var haystack = card.getAttribute('data-acc-search-text') || '';
-      var cardStatus = card.getAttribute('data-acc-status') || '';
+      var cardStatus = card.getAttribute('data-acc-type') || '';   /* tabs filter by accommodation type */
 
       var matchesTerm = !term || haystack.indexOf(term) !== -1;
 

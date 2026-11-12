@@ -29,6 +29,39 @@ try {
 
 $csrfToken = bienmarko_csrf_token();
 
+/* This page only adds, edits and deletes accommodations. Whether a unit is
+   currently booked is the Bookings page's business, so there is no "Booked"
+   status here: just Active (bookable) and Under maintenance. Any old row
+   still saved as 'booked' is shown as Active. */
+$pageStatuses = ['available' => 'Active', 'maintenance' => 'Under maintenance'];
+$statActive      = (int) $counts['available'] + (int) $counts['booked'];
+$statMaintenance = (int) $counts['maintenance'];
+foreach ($accommodations as &$accRow) {
+    if ($accRow['status'] === 'booked') {
+        $accRow['status'] = 'available';
+    }
+}
+unset($accRow);
+
+/* Type tabs: the preset types first (in this order), then any custom type
+   that exists, each with its count. */
+$typePlural = ['Room' => 'Rooms', 'Cottage' => 'Cottages', 'Event Hall' => 'Event halls', 'Swimming Pool' => 'Pools'];
+$typeCounts = [];
+foreach ($accommodations as $accRow) {
+    $t = trim((string) $accRow['type']);
+    $typeCounts[$t] = ($typeCounts[$t] ?? 0) + 1;
+}
+$typeTabs = [];
+foreach (array_keys($typePlural) as $t) {
+    if (isset($typeCounts[$t])) {
+        $typeTabs[$t] = $typeCounts[$t];
+        unset($typeCounts[$t]);
+    }
+}
+foreach ($typeCounts as $t => $n) {
+    $typeTabs[$t] = $n;
+}
+
 $accommodationTypeOptions = ACC_ACCOMMODATION_TYPES;
 
 $active_page = 'accommodations';
@@ -177,7 +210,6 @@ require_once __DIR__ . '/includes/ui.php';
 .status-select:disabled { opacity: 0.6; cursor: wait; }
 .status-select:focus { outline: none; }
 .status-select--available   { background-color: var(--emerald-bg); color: var(--emerald); }
-.status-select--booked      { background-color: var(--blue-bg); color: var(--blue); }
 .status-select--maintenance { background-color: var(--amber-bg); color: var(--gold-400); }
 .status-select option { background: var(--panel); color: var(--text); }
 
@@ -356,22 +388,69 @@ require_once __DIR__ . '/includes/ui.php';
 .acc-tour-status-text span { font-size: 0.78rem; color: var(--text-secondary); }
 .acc-tour-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
+/* ---------- Layout refresh: KPI cards, tabs, cards ---------- */
+.acc-kpi-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+.acc-kpi { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 24px 28px; }
+.acc-kpi-label { font-size: 15px; color: var(--text-secondary); }
+.acc-kpi-value { display: block; font-family: var(--font-display); font-size: 40px; font-weight: 700; line-height: 1; color: var(--text); margin: 20px 0 10px; }
+.acc-kpi-value--green { color: var(--emerald); }
+.acc-kpi-value--red   { color: var(--red); }
+.acc-kpi-sub { font-size: 14px; color: var(--text-secondary); }
+
+.acc-tabbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-bottom: 24px; }
+.acc-tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.acc-tab { display: inline-flex; align-items: center; gap: 8px; padding: 12px 14px; font-size: 15px; font-weight: 400; color: var(--text-secondary); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; font-family: inherit; transition: color var(--transition), border-color var(--transition); }
+.acc-tab:hover { color: var(--text); }
+.acc-tab.is-active { color: var(--text); border-bottom-color: var(--gold-500); }
+.acc-tab-count { min-width: 24px; padding: 1px 8px; border-radius: var(--r-full); background: var(--panel-alt); border: 1px solid var(--border); font-size: 12px; text-align: center; color: var(--text-secondary); }
+.acc-tab.is-active .acc-tab-count { color: var(--gold-400); border-color: var(--gold-600); background: var(--amber-bg); }
+.acc-tabbar .acc-search { flex: 0 0 350px; max-width: 100%; margin-bottom: 10px; }
+.acc-tabbar .acc-search input { padding: 14px 18px; background: var(--panel); }
+
+.acc-grid { grid-template-columns: repeat(4, 1fr); gap: 24px; }
+.acc-card-media { aspect-ratio: 21 / 9; }
+.acc-card-body { padding: 20px; gap: 14px; }
+.acc-card-name { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
+.acc-card-type { font-size: 15px; margin-top: 6px; }
+.acc-card-meta { font-size: 16px; }
+.acc-status-pill { flex-shrink: 0; font-size: 13px; font-weight: 500; padding: 5px 12px; border-radius: var(--r-full); white-space: nowrap; }
+.acc-status-pill--available   { background: var(--emerald-bg); color: var(--emerald); }
+.acc-status-pill--maintenance { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-bg-strong); }
+.acc-card-actions { align-items: center; padding-top: 14px; }
+.acc-card-actions .icon-btn { width: 44px; height: 44px; border: 1px solid var(--border); border-radius: var(--r-md); }
+.acc-card-actions .icon-btn--edit { margin-left: auto; color: var(--gold-400); border-color: var(--gold-500); }
+.acc-card-actions .icon-btn--edit:hover { background: var(--amber-bg); }
+
+/* Delete lives inside the Edit dialog now */
+.acc-modal-footer .btn-delete { margin-right: auto; display: inline-flex; align-items: center; gap: 6px; }
+
+@media (max-width: 1400px) { .acc-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1050px) { .acc-grid { grid-template-columns: repeat(2, 1fr); } .acc-kpi-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) {
   .acc-field-row { grid-template-columns: 1fr; }
-  .acc-toolbar { flex-direction: column; align-items: stretch; }
-  .acc-search { max-width: none; }
+  .acc-grid { grid-template-columns: 1fr; }
+  .acc-tabbar .acc-search { flex-basis: 100%; }
 }
 </style>
 
 <div class="stack">
 
-  <div class="stat-grid">
-    <?php
-      render_stat_card('Total Units', (string) $counts['total'], 'bed', 'fuchsia');
-      render_stat_card('Available', (string) $counts['available'], 'calendar-check', 'emerald');
-      render_stat_card('Booked', (string) $counts['booked'], 'calendar', 'blue');
-      render_stat_card('Under Maintenance', (string) $counts['maintenance'], 'alert-triangle', 'amber');
-    ?>
+  <div class="acc-kpi-grid">
+    <div class="acc-kpi">
+      <div class="acc-kpi-label">Total units</div>
+      <span class="acc-kpi-value"><?php echo (int) $counts['total']; ?></span>
+      <div class="acc-kpi-sub">All accommodations</div>
+    </div>
+    <div class="acc-kpi">
+      <div class="acc-kpi-label">Active</div>
+      <span class="acc-kpi-value acc-kpi-value--green"><?php echo $statActive; ?></span>
+      <div class="acc-kpi-sub">Bookable</div>
+    </div>
+    <div class="acc-kpi">
+      <div class="acc-kpi-label">Under maintenance</div>
+      <span class="acc-kpi-value"><?php echo $statMaintenance; ?></span>
+      <div class="acc-kpi-sub">Not bookable</div>
+    </div>
   </div>
 
   <?php if ($dbError): ?>
@@ -380,20 +459,19 @@ require_once __DIR__ . '/includes/ui.php';
 
   <?php if (!$dbError && empty($accommodations)): ?>
 
-    <?php render_empty_panel('bed', 'No accommodations yet', 'Add your first room or unit to start managing availability and bookings.'); ?>
+    <?php render_empty_panel('bed', 'No accommodations yet', 'Add your first room or unit to get started.'); ?>
 
   <?php elseif (!$dbError): ?>
 
-    <div class="acc-toolbar">
-      <div class="acc-search">
-        <?php echo acc_icon('search', 'icon-sm'); ?>
-        <input type="text" data-acc-search-input placeholder="Search by name, type, or room number&hellip;">
-      </div>
-      <div class="acc-filters">
-        <button type="button" class="is-active" data-acc-filter="">All</button>
-        <?php foreach (ACC_STATUSES as $s): ?>
-          <button type="button" data-acc-filter="<?php echo htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars(acc_status_label($s), ENT_QUOTES, 'UTF-8'); ?></button>
+    <div class="acc-tabbar">
+      <div class="acc-tabs" role="tablist">
+        <button type="button" class="acc-tab is-active" data-acc-filter="">All <span class="acc-tab-count"><?php echo count($accommodations); ?></span></button>
+        <?php foreach ($typeTabs as $t => $n): ?>
+          <button type="button" class="acc-tab" data-acc-filter="<?php echo htmlspecialchars($t, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars($typePlural[$t] ?? $t, ENT_QUOTES, 'UTF-8'); ?> <span class="acc-tab-count"><?php echo (int) $n; ?></span></button>
         <?php endforeach; ?>
+      </div>
+      <div class="acc-search">
+        <input type="text" data-acc-search-input placeholder="Search by name or unit number">
       </div>
     </div>
 
@@ -422,6 +500,7 @@ require_once __DIR__ . '/includes/ui.php';
         <div class="acc-card" data-acc-card
              data-acc-id="<?php echo (int) $row['id']; ?>"
              data-acc-status="<?php echo htmlspecialchars($row['status'], ENT_QUOTES, 'UTF-8'); ?>"
+             data-acc-type="<?php echo htmlspecialchars(trim((string) $row['type']), ENT_QUOTES, 'UTF-8'); ?>"
              data-acc-search-text="<?php echo htmlspecialchars($searchText, ENT_QUOTES, 'UTF-8'); ?>">
 
           <div class="acc-card-media" data-acc-cover-media>
@@ -440,26 +519,17 @@ require_once __DIR__ . '/includes/ui.php';
 
           <div class="acc-card-body">
             <div class="acc-card-heading">
-              <div>
-                <h3 class="acc-card-name"><?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?></h3>
-                <p class="acc-card-type">
-                  <?php echo htmlspecialchars($row['type'], ENT_QUOTES, 'UTF-8'); ?>
-                  <?php if (acc_type_requires_room_number((string) $row['type']) && $row['room_number'] !== null && $row['room_number'] !== ''): ?>
-                    &nbsp;&middot;&nbsp;Room <?php echo htmlspecialchars($row['room_number'], ENT_QUOTES, 'UTF-8'); ?>
-                  <?php endif; ?>
-                </p>
-              </div>
-              <select class="status-select status-select--<?php echo htmlspecialchars($row['status'], ENT_QUOTES, 'UTF-8'); ?>"
-                      data-acc-status-select="<?php echo (int) $row['id']; ?>"
-                      aria-label="Change status for <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>">
-                <?php foreach (ACC_STATUSES as $s): ?>
-                  <option value="<?php echo htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $s === $row['status'] ? 'selected' : ''; ?>><?php echo htmlspecialchars(acc_status_label($s), ENT_QUOTES, 'UTF-8'); ?></option>
-                <?php endforeach; ?>
-              </select>
+              <h3 class="acc-card-name"><?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?></h3>
+              <span class="acc-status-pill acc-status-pill--<?php echo $row['status'] === 'maintenance' ? 'maintenance' : 'available'; ?>"><?php echo $row['status'] === 'maintenance' ? 'Under maintenance' : 'Active'; ?></span>
             </div>
+            <p class="acc-card-type" style="margin-top:-8px;">
+              <?php echo htmlspecialchars($row['type'], ENT_QUOTES, 'UTF-8'); ?>
+              <?php if (acc_type_requires_room_number((string) $row['type']) && $row['room_number'] !== null && $row['room_number'] !== ''): ?>
+                &nbsp;&middot;&nbsp;Room <?php echo htmlspecialchars($row['room_number'], ENT_QUOTES, 'UTF-8'); ?>
+              <?php endif; ?>
+            </p>
 
             <div class="acc-card-meta">
-              <?php echo icon('users', 'icon-sm'); ?>
               <span><?php echo (int) $row['capacity']; ?> guest<?php echo ((int) $row['capacity'] === 1) ? '' : 's'; ?></span>
             </div>
 
@@ -492,16 +562,10 @@ require_once __DIR__ . '/includes/ui.php';
                       title="360&deg; Tour">
                 <?php echo acc_icon('globe', 'icon-sm'); ?>
               </button>
-              <button type="button" class="icon-btn"
+              <button type="button" class="icon-btn icon-btn--edit"
                       data-acc-edit='<?php echo htmlspecialchars((string) json_encode($editPayload, JSON_UNESCAPED_UNICODE), ENT_QUOTES, 'UTF-8'); ?>'
                       aria-label="Edit <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>" title="Edit">
                 <?php echo acc_icon('edit', 'icon-sm'); ?>
-              </button>
-              <button type="button" class="icon-btn icon-btn--danger"
-                      data-acc-delete="<?php echo (int) $row['id']; ?>"
-                      data-acc-delete-name="<?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>"
-                      aria-label="Delete <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>" title="Delete">
-                <?php echo acc_icon('trash', 'icon-sm'); ?>
               </button>
             </div>
           </div>
@@ -582,8 +646,8 @@ require_once __DIR__ . '/includes/ui.php';
           <div class="field" id="accStatusField" style="display:none;">
             <label class="field-label" for="accStatus">Status</label>
             <select id="accStatus" name="status">
-              <?php foreach (ACC_STATUSES as $s): ?>
-                <option value="<?php echo htmlspecialchars($s, ENT_QUOTES, 'UTF-8'); ?>"><?php echo htmlspecialchars(acc_status_label($s), ENT_QUOTES, 'UTF-8'); ?></option>
+              <?php foreach ($pageStatuses as $val => $label): ?>
+                <option value="<?php echo $val; ?>"><?php echo $label; ?></option>
               <?php endforeach; ?>
             </select>
           </div>
@@ -617,6 +681,9 @@ require_once __DIR__ . '/includes/ui.php';
       </div>
 
       <div class="acc-modal-footer">
+        <button type="button" class="btn btn-danger btn-delete" data-acc-modal-delete data-acc-delete="" data-acc-delete-name="" style="display:none;">
+          <?php echo acc_icon('trash', 'icon-sm'); ?> Delete
+        </button>
         <button type="button" class="btn btn-secondary" data-acc-modal-close>Cancel</button>
         <button type="submit" class="btn btn-primary" data-acc-submit>Add Accommodation</button>
       </div>

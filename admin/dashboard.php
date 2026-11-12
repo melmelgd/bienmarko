@@ -2,15 +2,36 @@
 /**
  * admin/dashboard.php
  * -----------------------------------------------------------------------
- * Full live dashboard: real booking counts, revenue, occupancy rate,
- * notification bell with unread booking alerts, and a recent bookings
- * table — all pulled from the database.
+ * Dashboard Overview — four stat cards, a "Today" panel (Arriving /
+ * Departing) and a "Revenue by accommodation type" panel.
+ *
+ * RULES THIS PAGE FOLLOWS
+ *   • Cancelled bookings are excluded everywhere here. They remain visible
+ *     on the Bookings page.
+ *   • "Today" is Philippine time (Asia/Manila), whatever the server's own
+ *     timezone is.
+ *   • Every card links to the matching filtered view on bookings.php.
+ *   • Stage names (Upcoming / Checked-in / Completed) and the "fully paid"
+ *     rule come from includes/booking-stay.php, so this page, the Bookings
+ *     page and the Payments page can never disagree.
+ *
+ * TOP CARDS
+ *   Upcoming Stays    stage Upcoming AND check-in today or later
+ *   Active Now        stage Checked-in (an overstay stays here until the
+ *                     admin checks the guest out)
+ *   Pending Payments  non-cancelled bookings that are not fully paid
+ *                     (unpaid or partial), in ANY stage — a completed stay
+ *                     that was never fully paid still counts
+ *   Booked This Month non-cancelled bookings whose check-in is this month
  * -----------------------------------------------------------------------
  */
 require_once __DIR__ . '/../includes/auth-common.php';
 
 bienmarko_start_session();
 bienmarko_require_role('admin');
+
+// "Today" must be Philippine time. Set it before anything calls date().
+date_default_timezone_set('Asia/Manila');
 
 require_once __DIR__ . '/../includes/db.php';
 require_once __DIR__ . '/includes/ui.php';
@@ -22,12 +43,23 @@ $breadcrumb         = 'Dashboard';
 $page_action_label  = null;        // No action button on this page
 $show_period_toggle = false;
 
-$pdo   = bienmarko_db();
-$today = date('Y-m-d');
-$now   = date('Y-m-d H:i:s');
+$pdo  = bienmarko_db();
+$csrf = bienmarko_csrf_token();
 
 /* ------------------------------------------------------------------
-   Ensure bookings table exists
+   Dates (Philippine time)
+------------------------------------------------------------------ */
+$phNow      = bk_ph_now();
+$today      = $phNow->format('Y-m-d');
+$monthStart = $phNow->format('Y-m-01');
+$monthEnd   = $phNow->format('Y-m-t');
+$monthKey   = $phNow->format('Y-m');
+$monthLabel = $phNow->format('M Y');
+$todayLabel = $phNow->format('M j, Y');
+
+/* ------------------------------------------------------------------
+   Make sure the tables / columns this page reads exist (additive,
+   idempotent — same guards used by bookings.php and payments.php).
 ------------------------------------------------------------------ */
 $pdo->exec(
     "CREATE TABLE IF NOT EXISTS `bookings` (
@@ -50,222 +82,203 @@ $pdo->exec(
         KEY `idx_status`        (`status`)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
 );
-
-/* ------------------------------------------------------------------
-   Ensure bookings table has guest-details columns (migration guard)
-   Same additive guard used by admin/bookings.php and
-   admin/payments.php: guest (no-account) walk-in bookings store
-   guest_id = NULL plus a name/email directly on the booking row, so
-   the Recent Bookings query below needs these columns to fall back
-   to for that case.
------------------------------------------------------------------- */
+// Walk-in guests have guest_id = NULL and store their name on the booking row.
 $pdo->exec("ALTER TABLE `bookings` MODIFY COLUMN `guest_id` INT UNSIGNED NULL DEFAULT NULL");
 $pdo->exec("
     ALTER TABLE `bookings`
         ADD COLUMN IF NOT EXISTS `guest_name` VARCHAR(200) NULL DEFAULT NULL AFTER `total_amount`,
         ADD COLUMN IF NOT EXISTS `email`      VARCHAR(200) NULL DEFAULT NULL AFTER `guest_name`
 ");
+bk_stay_migrate($pdo);          // checked_in_at / checked_out_at
+bk_ensure_payments_table($pdo); // payments (used for Paid / Unpaid / Partial)
 
-// Manual front-desk check-in / check-out timestamps (see booking-stay.php).
-// The Upcoming / Active Now cards below rely on these columns.
-bk_stay_migrate($pdo);
+/* Shared SQL pieces */
+$notCancelled = "b.status <> 'cancelled'";
+$fullyPaid    = bk_fully_paid_sql('b', 'p');
+$balanceSql   = bk_balance_sql('b', 'p');
+$payStateSql  = bk_pay_state_sql('b', 'p');
 
 /* ------------------------------------------------------------------
-   STAT 1 — Upcoming stays: bookings still waiting for the guest to
-            arrive (not cancelled, NOT yet checked in by the front desk).
-            Uses the same stage rule as admin/bookings.php, so a guest
-            disappears from here the moment "Confirm Check-in" is clicked.
+   TOP CARD 1 — Upcoming Stays
+   Stage Upcoming (not checked in, not cancelled) with check-in today or
+   later. A never-arrived booking from a past date is NOT counted here.
 ------------------------------------------------------------------ */
-$statUpcoming = (int) $pdo->query(
-    "SELECT COUNT(*) FROM bookings WHERE " . bk_stage_sql('upcoming', '')
+$st = $pdo->prepare(
+    "SELECT COUNT(*) FROM bookings b
+     WHERE " . bk_stage_sql('upcoming', 'b') . "
+       AND b.check_in >= :today"
+);
+$st->execute(['today' => $today]);
+$statUpcoming = (int) $st->fetchColumn();
+
+/* ------------------------------------------------------------------
+   TOP CARD 2 — Active Now
+   Everyone currently checked in, regardless of their check-out date, so
+   an overstay stays here until the admin checks them out.
+------------------------------------------------------------------ */
+$st = $pdo->prepare(
+    "SELECT COUNT(*) AS active,
+            COALESCE(SUM(b.check_out < :today), 0) AS overstay
+     FROM bookings b
+     WHERE " . bk_stage_sql('checked_in', 'b')
+);
+$st->execute(['today' => $today]);
+$row          = $st->fetch(\PDO::FETCH_ASSOC);
+$statActive   = (int) $row['active'];
+$statOverstay = (int) $row['overstay'];
+
+/* ------------------------------------------------------------------
+   TOP CARD 3 — Pending Payments
+   Not cancelled and not fully paid (unpaid or partial), in any stage.
+------------------------------------------------------------------ */
+$statPending = (int) $pdo->query(
+    "SELECT COUNT(*)
+     FROM bookings b
+     LEFT JOIN payments p ON p.booking_id = b.id
+     WHERE {$notCancelled} AND NOT {$fullyPaid}"
 )->fetchColumn();
 
 /* ------------------------------------------------------------------
-   STAT 2 — Active now: guests physically checked in and not yet
-            checked out (checked_in_at set, checked_out_at empty).
-            Same stage rule as the "Checked-in" tab on admin/bookings.php.
+   TOP CARD 4 — Booked This Month
+   Not cancelled, check-in date inside the current month.
 ------------------------------------------------------------------ */
-$statActive = (int) $pdo->query(
-    "SELECT COUNT(*) FROM bookings WHERE " . bk_stage_sql('checked_in', '')
-)->fetchColumn();
-
-/* ------------------------------------------------------------------
-   STAT 3 — Pending payments (confirmed, check_in >= today)
-            Payment is settled on arrival/departure in this system.
------------------------------------------------------------------- */
-$stmtPendingPay = $pdo->prepare(
-    "SELECT COUNT(*), COALESCE(SUM(total_amount),0)
-     FROM bookings
-     WHERE status = 'confirmed'
-       AND check_in >= :today"
+$st = $pdo->prepare(
+    "SELECT COUNT(*) FROM bookings b
+     WHERE {$notCancelled}
+       AND b.check_in BETWEEN :ms AND :me"
 );
-$stmtPendingPay->execute(['today' => $today]);
-[$statPendingCount, $statPendingTotal] = $stmtPendingPay->fetch(\PDO::FETCH_NUM);
-$statPendingCount = (int) $statPendingCount;
-$statPendingTotal = (float) $statPendingTotal;
+$st->execute(['ms' => $monthStart, 'me' => $monthEnd]);
+$statMonth = (int) $st->fetchColumn();
 
 /* ------------------------------------------------------------------
-   STAT 4 — Nights booked (sum of nights for all confirmed/pending
-             bookings with check_in in the current month)
+   TODAY — Arriving
+   Non-cancelled bookings whose check-in date is today, whatever their
+   stage. Not-yet-arrived guests first, checked-in guests last.
 ------------------------------------------------------------------ */
-$monthStart = date('Y-m-01');
-$monthEnd   = date('Y-m-t');
-$stmtNights = $pdo->prepare(
-    "SELECT COALESCE(SUM(DATEDIFF(
-        LEAST(check_out, :month_end),
-        GREATEST(check_in, :month_start)
-     )), 0)
-     FROM bookings
-     WHERE status IN ('confirmed','pending')
-       AND check_in  <= :month_end2
-       AND check_out >= :month_start2"
+$todayCols = "b.id, b.reference, b.status, b.check_in, b.check_out,
+              b.checked_in_at, b.checked_out_at,
+              a.name AS room_name, a.type AS room_type,
+              g.first_name, g.last_name, b.guest_name,
+              {$payStateSql} AS pay_state,
+              {$balanceSql}  AS balance";
+$todayFrom = "FROM bookings b
+              JOIN accommodations a ON a.id = b.accommodation_id
+              LEFT JOIN guests   g ON g.id = b.guest_id
+              LEFT JOIN payments p ON p.booking_id = b.id";
+
+$st = $pdo->prepare(
+    "SELECT {$todayCols}
+     {$todayFrom}
+     WHERE {$notCancelled}
+       AND b.check_in = :today
+     ORDER BY CASE WHEN b.checked_in_at  IS NULL THEN 0
+                   WHEN b.checked_out_at IS NULL THEN 1
+                   ELSE 2 END ASC,
+              b.created_at ASC, b.id ASC"
 );
-$stmtNights->execute([
-    'month_start'  => $monthStart,
-    'month_end'    => $monthEnd,
-    'month_start2' => $monthStart,
-    'month_end2'   => $monthEnd,
-]);
-$statNights = (int) $stmtNights->fetchColumn();
+$st->execute(['today' => $today]);
+$arriving = $st->fetchAll(\PDO::FETCH_ASSOC);
 
 /* ------------------------------------------------------------------
-   STAT 5 — Occupancy rate (this month)
-             = nights booked / (total rooms × days in month)
+   TODAY — Departing
+   Check-out date is today and the stage is Checked-in or Completed
+   (checked out). Upcoming bookings are excluded so a no-show never
+   appears as departing. Checked-in first, already checked-out last.
 ------------------------------------------------------------------ */
-$stmtRoomCount = $pdo->query("SELECT COUNT(*) FROM accommodations WHERE status = 'available'");
-$totalRooms    = (int) $stmtRoomCount->fetchColumn();
-$daysInMonth   = (int) date('t');
-$maxNights     = $totalRooms * $daysInMonth;
-$occupancyRate = $maxNights > 0 ? round(($statNights / $maxNights) * 100) : 0;
+$st = $pdo->prepare(
+    "SELECT {$todayCols}
+     {$todayFrom}
+     WHERE {$notCancelled}
+       AND b.check_out = :today
+       AND (" . bk_stage_sql('checked_in', 'b') . " OR " . bk_stage_sql('completed', 'b') . ")
+     ORDER BY CASE WHEN b.checked_out_at IS NULL THEN 0 ELSE 1 END ASC,
+              b.created_at ASC, b.id ASC"
+);
+$st->execute(['today' => $today]);
+$departing = $st->fetchAll(\PDO::FETCH_ASSOC);
+
+const DASH_ROW_LIMIT = 5;
 
 /* ------------------------------------------------------------------
-   Pagination — 10 bookings per page. The dashboard has no filters, so
-   this always walks every booking in the system, grouped by stage
-   (see the ORDER BY below) with the same 10-per-page pattern as
-   admin/bookings.php.
+   REVENUE BY ACCOMMODATION TYPE
+   Period : current month, by CHECK-IN date (same as Booked This Month).
+   Scope  : non-cancelled bookings only.
+   Collected = money received (payments.total_paid).
+   Pending   = unpaid balance (billed - paid, never negative).
 ------------------------------------------------------------------ */
-$perPage     = 10;
-$currentPage = max(1, (int) ($_GET['page'] ?? 1));
-
-$totalRecentBookings = (int) $pdo->query("SELECT COUNT(*) FROM bookings")->fetchColumn();
-$totalPages          = max(1, (int) ceil($totalRecentBookings / $perPage));
-$currentPage         = min($currentPage, $totalPages);
-$offset              = ($currentPage - 1) * $perPage;
-
-/* ------------------------------------------------------------------
-   Bookings table (current page's 10 rows), grouped by stage:
-
-     1 Upcoming    — nearest arrival first (arrivals whose date already
-                     passed but were never checked in go after today's
-                     and future ones — still Upcoming, never auto-moved)
-     2 Checked-in  — soonest expected check-out first
-     3 Cancelled   — most recently booked first
-     4 Completed   — most recent stay first
-
-   Uses bk_stage_sql() — the same stage rule as admin/bookings.php — so
-   the two pages always agree. Every ORDER BY ends in b.id, so the order
-   is stable and identical across pagination pages.
------------------------------------------------------------------- */
-$dashStageRank = 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN 1'
-               . ' WHEN '     . bk_stage_sql('checked_in') . ' THEN 2'
-               . ' WHEN '     . bk_stage_sql('cancelled')  . ' THEN 3'
-               . ' ELSE 4 END';
-$dashOrderBy = $dashStageRank . ' ASC, '
-    . 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN (b.check_in < ' . $pdo->quote($today) . ') ELSE 0 END ASC, '
-    . 'CASE WHEN ' . bk_stage_sql('upcoming')   . ' THEN b.check_in END ASC, '
-    . 'CASE WHEN ' . bk_stage_sql('checked_in') . ' THEN b.check_out END ASC, '
-    . 'CASE WHEN ' . bk_stage_sql('cancelled')  . ' THEN b.created_at END DESC, '
-    . 'CASE WHEN ' . bk_stage_sql('completed')  . ' THEN b.check_in END DESC, '
-    . 'b.created_at DESC, b.id ASC';
-
-$stmtRecent = $pdo->prepare(
-    "SELECT b.id, b.reference, b.check_in, b.check_out,
-            b.guests_count, b.status, b.total_amount, b.created_at,
-            b.checked_in_at, b.checked_out_at,
-            a.name   AS room_name,
-            a.type   AS room_type,
-            g.first_name, g.last_name, g.email AS reg_email,
-            b.guest_name, b.email AS guest_book_email
+$st = $pdo->prepare(
+    "SELECT a.type AS type,
+            COALESCE(SUM(p.total_paid), 0) AS collected,
+            COALESCE(SUM({$balanceSql}), 0) AS pending
      FROM bookings b
      JOIN accommodations a ON a.id = b.accommodation_id
-     LEFT JOIN guests    g ON g.id = b.guest_id
-     ORDER BY {$dashOrderBy}
-     LIMIT :limit OFFSET :offset"
+     LEFT JOIN payments p ON p.booking_id = b.id
+     WHERE {$notCancelled}
+       AND b.check_in BETWEEN :ms AND :me
+     GROUP BY a.type"
 );
-$stmtRecent->bindValue(':limit', $perPage, \PDO::PARAM_INT);
-$stmtRecent->bindValue(':offset', $offset, \PDO::PARAM_INT);
-$stmtRecent->execute();
-$recentBookings = $stmtRecent->fetchAll();
+$st->execute(['ms' => $monthStart, 'me' => $monthEnd]);
 
-/* ------------------------------------------------------------------
-   Booking trend — last 7 days (count per day)
------------------------------------------------------------------- */
-$trend = [];
-for ($i = 6; $i >= 0; $i--) {
-    $d = date('Y-m-d', strtotime("-{$i} days"));
-    $trend[$d] = 0;
-}
-$stmtTrend = $pdo->prepare(
-    "SELECT DATE(created_at) AS day, COUNT(*) AS cnt
-     FROM bookings
-     WHERE created_at >= :since
-     GROUP BY DATE(created_at)"
-);
-$stmtTrend->execute(['since' => date('Y-m-d', strtotime('-6 days'))]);
-foreach ($stmtTrend->fetchAll() as $row) {
-    if (isset($trend[$row['day']])) {
-        $trend[$row['day']] = (int) $row['cnt'];
+// The four categories are always shown, even at ₱0.
+$revCats = [
+    'room'    => ['label' => 'Room',       'color' => 'var(--gold-400)', 'amount' => 0.0],
+    'event'   => ['label' => 'Event hall', 'color' => 'var(--blue)',     'amount' => 0.0],
+    'cottage' => ['label' => 'Cottage',    'color' => 'var(--emerald)',  'amount' => 0.0],
+    'pool'    => ['label' => 'Pool',       'color' => 'var(--fuchsia)',  'amount' => 0.0],
+];
+$revOther      = 0.0;   // custom accommodation types ("Other") — shown only if > 0
+$totalPending  = 0.0;
+$totalCollected = 0.0;
+
+foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $r) {
+    $key = dash_rev_bucket((string) $r['type']);
+    $collected = (float) $r['collected'];
+    if ($key === 'other') {
+        $revOther += $collected;
+    } else {
+        $revCats[$key]['amount'] += $collected;
     }
+    $totalCollected += $collected;
+    $totalPending   += (float) $r['pending'];
 }
-$trendMax    = max(array_values($trend)) ?: 1;
-$trendValues = array_values($trend);
-$trendDays   = array_map(fn($d) => date('D', strtotime($d)), array_keys($trend));
+$totalCollected = round($totalCollected, 2);
+$totalPending   = round($totalPending, 2);
+
+if ($revOther > 0) {
+    $revCats['other'] = ['label' => 'Other', 'color' => 'var(--red)', 'amount' => $revOther];
+}
+foreach ($revCats as $k => $c) {
+    // Zero total => 0% and an empty bar (never divide by zero).
+    $width = $totalCollected > 0 ? min(100, max(0, ($c['amount'] / $totalCollected) * 100)) : 0;
+    $revCats[$k]['width'] = $width;
+    $revCats[$k]['pct']   = (int) round($width);
+}
 
 /* ------------------------------------------------------------------
-   Helper: status badge
+   Helpers
 ------------------------------------------------------------------ */
-function admin_badge(string $status): string
+function dash_e($s): string
 {
-    $map = [
-        'confirmed'  => ['class' => 'ab--green',  'label' => 'Confirmed'],
-        'pending'    => ['class' => 'ab--amber',  'label' => 'Pending'],
-        'cancelled'  => ['class' => 'ab--red',    'label' => 'Cancelled'],
-        'completed'  => ['class' => 'ab--blue',   'label' => 'Completed'],
-    ];
-    $b = $map[$status] ?? ['class' => 'ab--grey', 'label' => ucfirst($status)];
-    return '<span class="ab ' . $b['class'] . '">' . htmlspecialchars($b['label'], ENT_QUOTES, 'UTF-8') . '</span>';
+    return htmlspecialchars((string) $s, ENT_QUOTES, 'UTF-8');
 }
 
-/**
- * Status badge for the Recent Bookings table — Upcoming, Checked-in,
- * Completed or Cancelled.
- *
- * Uses the SAME stage rule as admin/bookings.php (bk_stage() in
- * includes/booking-stay.php), which goes by the front-desk check-in /
- * check-out the admin confirmed. The raw bookings.status column is NOT
- * used for this label: Payments sets it to 'completed' as soon as a
- * booking is fully paid, even though the guest has not arrived yet, which
- * made this table say "Completed" while the Bookings page said "Upcoming".
- */
-function dash_stage_badge(array $bk): string
+function dash_peso(float $n): string
 {
-    $map = [
-        'upcoming'   => ['ab--amber', 'Upcoming'],
-        'checked_in' => ['ab--green', 'Checked-in'],
-        'completed'  => ['ab--blue',  'Completed'],
-        'cancelled'  => ['ab--red',   'Cancelled'],
-    ];
-    [$cls, $lbl] = $map[bk_stage($bk)];
-    return '<span class="ab ' . $cls . '">' . $lbl . '</span>';
+    return '₱' . number_format($n, 2);
 }
 
-/**
- * Guest display name/email for the Recent Bookings table. Registered
- * bookings pull from the joined guests row; guest (no-account) walk-
- * ins fall back to the name/email stored directly on the booking
- * itself. Mirrors bk_name()/bk_email() in admin/bookings.php and
- * pm_name()/pm_email() in admin/payments.php.
- */
+/** Which of the four revenue rows an accommodation type belongs to ('other' = custom type). */
+function dash_rev_bucket(string $type): string
+{
+    $t = strtolower(trim($type));
+    if ($t === 'room')                            return 'room';
+    if ($t === 'event hall')                      return 'event';
+    if ($t === 'cottage')                         return 'cottage';
+    if ($t === 'swimming pool' || $t === 'pool')  return 'pool';
+    return 'other';
+}
+
+/** Guest name — registered guests come from `guests`, walk-ins from the booking row. */
 function dash_guest_name(array $bk): string
 {
     if (!empty($bk['first_name'])) {
@@ -274,9 +287,89 @@ function dash_guest_name(array $bk): string
     return $bk['guest_name'] ?? '—';
 }
 
-function dash_guest_email(array $bk): string
+/** Paid / Unpaid / Partial badge. */
+function dash_pay_badge(string $state): string
 {
-    return $bk['reg_email'] ?? $bk['guest_book_email'] ?? '';
+    $map = [
+        'paid'    => ['ab--green', 'Paid'],
+        'partial' => ['ab--blue',  'Partial'],
+        'unpaid'  => ['ab--amber', 'Unpaid'],
+    ];
+    [$cls, $lbl] = $map[$state] ?? $map['unpaid'];
+    return '<span class="ab ' . $cls . '">' . $lbl . '</span>';
+}
+
+/** URL on the Bookings page. Always scope=all so the list isn't limited to one week. */
+function dash_url(array $params): string
+{
+    return dash_e('bookings.php?' . http_build_query(['scope' => 'all'] + $params));
+}
+
+/**
+ * One row of the Today panel.
+ *   $mode 'arrive' : Check-in button on Upcoming rows, Checked-in badge once arrived.
+ *   $mode 'depart' : Check-out button on Checked-in rows, Checked-out badge when done.
+ */
+function dash_render_row(array $bk, string $mode): void
+{
+    $stage   = bk_stage($bk);
+    $payment = (string) $bk['pay_state'];
+    $balance = (float) $bk['balance'];
+
+    echo '<li class="t-row">';
+    echo   '<div class="t-main">';
+    echo     '<div class="t-name">' . dash_e(dash_guest_name($bk)) . '</div>';
+    echo     '<div class="t-sub">'  . dash_e($bk['room_name'] !== '' ? $bk['room_name'] : $bk['room_type']) . '</div>';
+    echo   '</div>';
+    echo   '<div class="t-side">';
+    echo     dash_pay_badge($payment);
+
+    if ($mode === 'arrive') {
+        if ($stage !== 'upcoming') {
+            echo '<span class="ab ab--green">Checked-in</span>';
+        }
+        if ($stage === 'upcoming') {
+            echo '<button type="button" class="t-btn" data-stay-action="check_in" data-id="' . (int) $bk['id'] . '">Check-in</button>';
+        }
+    } else {
+        if ($stage === 'completed') {
+            echo '<span class="ab ab--grey">Checked-out</span>';
+        }
+        if ($stage === 'checked_in') {
+            if ($payment === 'paid') {
+                echo '<button type="button" class="t-btn" data-stay-action="check_out" data-id="' . (int) $bk['id'] . '">Check-out</button>';
+            } else {
+                // The API refuses check-out until fully paid; mirror that here.
+                echo '<button type="button" class="t-btn" disabled'
+                   . ' title="' . dash_e('Collect ' . dash_peso($balance) . ' in Payments before checking out') . '">Check-out</button>';
+            }
+        }
+    }
+
+    echo   '</div>';
+    echo '</li>';
+}
+
+/** A whole Arriving / Departing column. */
+function dash_render_column(string $title, string $tone, array $rows, string $mode, string $emptyText, string $viewAllUrl): void
+{
+    $total = count($rows);
+    echo '<section class="t-col t-col--' . $tone . '">';
+    echo   '<div class="t-col-head"><h3>' . dash_e($title) . '</h3><span class="t-count">' . $total . '</span></div>';
+
+    if ($total === 0) {
+        echo '<p class="t-empty">' . dash_e($emptyText) . '</p>';
+    } else {
+        echo '<ul class="t-list">';
+        foreach (array_slice($rows, 0, DASH_ROW_LIMIT) as $bk) {
+            dash_render_row($bk, $mode);
+        }
+        echo '</ul>';
+        if ($total > DASH_ROW_LIMIT) {
+            echo '<a class="t-viewall" href="' . $viewAllUrl . '">View all ' . $total . ' &rarr;</a>';
+        }
+    }
+    echo '</section>';
 }
 
 require __DIR__ . '/includes/head.php';
@@ -290,119 +383,72 @@ require __DIR__ . '/includes/topbar.php';
    Uses CSS variables from assets/css/style.css.
    ============================================================ */
 
-/* ---------- Stack + grid ---------- */
-.stack      { display: flex; flex-direction: column; gap: 24px; }
-.dash-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.stack { display: flex; flex-direction: column; gap: 24px; }
 
-/* ---------- Stat cards ---------- */
-.stat-grid      { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
-.stat-card      { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 18px 20px; }
-.stat-card-top  { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.stat-label     { font-size: 12.5px; font-weight: 600; color: var(--text-secondary); }
-.stat-icon      { width: 36px; height: 36px; border-radius: var(--r-md); display: flex; align-items: center; justify-content: center; }
-.stat-icon--emerald { background: var(--emerald-bg); color: var(--emerald); }
-.stat-icon--blue    { background: var(--blue-bg);    color: var(--blue); }
-.stat-icon--amber   { background: var(--amber-bg);   color: var(--gold-400); }
-.stat-icon--red     { background: var(--red-bg);     color: var(--red); }
-.stat-icon--fuchsia { background: var(--fuchsia-bg); color: var(--fuchsia); }
-.stat-value     { font-family: var(--font-display); font-size: 26px; font-weight: 800; color: var(--text); display: block; }
-.stat-sub       { font-size: 11.5px; color: var(--text-tertiary); margin-top: 3px; }
-
-/* ---------- Panel ---------- */
-.panel        { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); overflow: hidden; }
-.panel-pad    { padding: 20px 22px; }
-.panel-title  { font-family: var(--font-display); font-size: 15px; font-weight: 700; color: var(--text); }
-.panel-header {
-    display: flex; align-items: center; justify-content: space-between;
-    margin-bottom: 16px;
+/* ---------- Top stat cards (each one is a link) ---------- */
+.stat-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; }
+.stat-card {
+    display: flex; flex-direction: column; justify-content: space-between; gap: 14px;
+    min-height: 108px; padding: 22px 26px;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 20px;
+    color: inherit; text-decoration: none;
+    transition: border-color var(--transition), transform var(--transition), background var(--transition);
 }
+.stat-card:hover { border-color: var(--gold-500); background: var(--panel-alt); transform: translateY(-2px); }
+.stat-card:focus-visible { outline: 2px solid var(--gold-400); outline-offset: 2px; }
+.stat-label { font-size: 15px; font-weight: 500; color: var(--text-secondary); }
+.stat-value { font-family: var(--font-display); font-size: 38px; font-weight: 700; line-height: 1; color: var(--text); }
+.stat-hint  { font-size: 12px; color: var(--text-tertiary); margin-top: -6px; }
+.stat-hint--warn { color: var(--red); font-weight: 600; }
+
+/* ---------- Panels ---------- */
+.dash-grid { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.panel     { background: var(--panel); border: 1px solid var(--border); border-radius: 20px; padding: 26px 28px; }
+.panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+.panel-title  { margin: 0; font-family: var(--font-display); font-size: 28px; font-weight: 700; color: var(--text); }
 .pill {
-    font-size: 11px; font-weight: 600;
-    padding: 4px 10px; border-radius: var(--r-full);
-    background: var(--panel-alt); border: 1px solid var(--border);
-    color: var(--text-secondary);
+    font-size: 12.5px; font-weight: 500; white-space: nowrap;
+    padding: 6px 14px; border-radius: var(--r-full);
+    background: var(--panel-alt); border: 1px solid var(--border); color: var(--text-secondary);
 }
 
-/* ---------- Bar chart ---------- */
-.chart-frame    { position: relative; height: 140px; margin-bottom: 8px; }
-.chart-bars     { display: flex; align-items: flex-end; gap: 6px; height: 100%; }
-.chart-bar-wrap { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 4px; height: 100%; }
-.chart-bar {
-    width: 100%; border-radius: 4px 4px 0 0;
-    background: linear-gradient(180deg, var(--gold-400), var(--gold-600));
-    min-height: 4px;
-    transition: opacity .15s;
+/* ---------- Today: Arriving | Departing ---------- */
+.t-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.t-col  { padding: 0 22px; min-width: 0; }
+.t-col:first-child { padding-left: 0; border-right: 1px solid var(--border); }
+.t-col:last-child  { padding-right: 0; }
+.t-col-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    padding-bottom: 10px; margin-bottom: 4px; border-bottom: 1px solid var(--border);
 }
-.chart-bar:hover { opacity: .8; }
-.chart-bar--zero { background: var(--border); }
-.chart-days  { display: flex; gap: 6px; }
-.chart-day   { flex: 1; font-size: 10.5px; color: var(--text-tertiary); text-align: center; }
-
-/* ---------- Donut placeholder ---------- */
-.donut-area {
-    display: flex; align-items: center; justify-content: center;
-    height: 120px;
+.t-col-head h3 { margin: 0; font-size: 17px; font-weight: 600; }
+.t-col--arrive .t-col-head h3 { color: var(--emerald); }
+.t-col--depart .t-col-head h3 { color: var(--gold-400); }
+.t-count { font-size: 13px; color: var(--text-secondary); }
+.t-list  { list-style: none; margin: 0; padding: 0; }
+.t-row   { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.t-row:last-child { border-bottom: none; }
+.t-main  { min-width: 0; }
+.t-name  { font-size: 16px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-sub   { margin-top: 2px; font-size: 13px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-side  { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+.t-empty { margin: 0; padding: 16px 0; font-size: 15px; color: var(--text-secondary); }
+.t-viewall { display: inline-block; margin-top: 10px; font-size: 13px; font-weight: 600; color: var(--gold-400); text-decoration: none; }
+.t-viewall:hover { color: var(--gold-300); }
+.t-btn {
+    padding: 5px 14px; border-radius: var(--r-full); border: 1px solid var(--gold-500);
+    background: transparent; color: var(--gold-400);
+    font-family: inherit; font-size: 12px; font-weight: 700; cursor: pointer;
+    transition: background var(--transition), color var(--transition);
 }
-.donut-placeholder-text { font-size: 13px; color: var(--text-tertiary); }
-.revenue-figure {
-    font-family: var(--font-display); font-size: 28px; font-weight: 800;
-    color: var(--gold-400); margin: 10px 0 16px;
-}
-.legend-title { font-size: 12px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; }
-.legend-list  { display: flex; flex-direction: column; gap: 8px; }
-.legend-row   { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
-.legend-label { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
-.legend-dot   { width: 8px; height: 8px; border-radius: 50%; background: var(--gold-500); flex-shrink: 0; }
-.legend-value { font-weight: 600; color: var(--text); }
-
-/* ---------- Revenue pie chart ---------- */
-.pie-chart-row  { display: flex; align-items: center; gap: 24px; }
-.pie-chart-wrap { position: relative; width: 150px; height: 150px; flex-shrink: 0; }
-.pie-chart-svg  { width: 100%; height: 100%; filter: drop-shadow(0 4px 10px rgba(0,0,0,.35)); }
-.pie-slice      { stroke: var(--panel); stroke-width: 1.5; transition: opacity .15s; cursor: pointer; }
-.pie-slice:hover{ opacity: .82; }
-.pie-legend     { flex: 1; min-width: 0; }
-.pie-legend .legend-list { gap: 12px; }
-.pie-legend .legend-row  { font-size: 12.5px; }
-.pie-legend .legend-value{ display: flex; align-items: baseline; gap: 5px; white-space: nowrap; }
-@media (max-width: 560px) {
-    .pie-chart-row { flex-direction: column; align-items: flex-start; }
-}
-
-/* ---------- Recent bookings table ---------- */
-.table-wrap  { overflow: hidden; }
-.table-head  {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 18px 20px 0; margin-bottom: 14px;
-}
-.table-head a {
-    font-size: 12.5px; color: var(--gold-400); font-weight: 600;
-    text-decoration: none;
-}
-.table-head a:hover { color: var(--gold-300); }
-.table-scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; white-space: nowrap; }
-thead th {
-    padding: 10px 16px;
-    font-size: 11px; font-weight: 700; text-transform: uppercase;
-    letter-spacing: .06em; color: var(--text-tertiary);
-    border-bottom: 1px solid var(--border);
-    text-align: left;
-}
-tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; }
-tbody tr:last-child { border-bottom: none; }
-tbody tr:hover { background: var(--panel-alt); }
-tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-align: middle; }
-.td-ref   { font-family: var(--font-display); font-size: 12px; font-weight: 700; color: var(--gold-400); letter-spacing: .04em; }
-.td-guest { font-weight: 600; }
-.td-sub   { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
-.td-amount{ font-family: var(--font-display); font-weight: 700; }
+.t-btn:hover:not(:disabled) { background: var(--gold-500); color: var(--on-accent); }
+.t-btn:disabled { opacity: .45; cursor: not-allowed; border-color: var(--border-strong); color: var(--text-tertiary); }
 
 /* ---------- Status badges ---------- */
 .ab {
     display: inline-flex; align-items: center;
-    padding: 3px 9px; border-radius: var(--r-full);
-    font-size: 11px; font-weight: 700; letter-spacing: .03em;
+    padding: 4px 12px; border-radius: var(--r-full);
+    font-size: 12px; font-weight: 600; letter-spacing: .02em;
 }
 .ab--green { background: var(--emerald-bg); color: var(--emerald); }
 .ab--amber { background: var(--amber-bg);   color: var(--gold-400); }
@@ -410,19 +456,32 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
 .ab--blue  { background: var(--blue-bg);    color: var(--blue); }
 .ab--grey  { background: var(--panel-alt);  color: var(--text-secondary); }
 
-/* ---------- Empty state ---------- */
-.empty-state { padding: 40px 24px; text-align: center; }
-.empty-state-icon { margin: 0 auto 12px; color: var(--text-muted); }
-.empty-state-title   { font-family: var(--font-display); font-size: 15px; font-weight: 700; margin-bottom: 6px; }
-.empty-state-message { font-size: 13.5px; color: var(--text-secondary); }
+/* ---------- Revenue by accommodation type ---------- */
+.rev-figure { margin: 4px 0 2px; font-family: var(--font-display); font-size: 52px; font-weight: 700; line-height: 1.1; color: var(--gold-400); }
+.rev-sub    { margin: 0 0 20px; font-size: 16px; color: var(--text-secondary); }
+.rev-sub .sep { margin: 0 8px; color: var(--text-muted); }
+.rev-list   { list-style: none; margin: 0; padding: 0; }
+.rev-row    { padding: 14px 0; border-top: 1px solid var(--border); }
+.rev-top    { display: flex; align-items: center; gap: 12px; }
+.rev-dot    { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+.rev-name   { flex: 1; font-size: 17px; color: var(--text); }
+.rev-amt    { font-weight: 700; font-size: 16px; color: var(--text); }
+.rev-pct    { width: 54px; text-align: right; font-size: 15px; color: var(--text-secondary); }
+.rev-bar    { height: 6px; margin-top: 10px; border-radius: var(--r-full); background: var(--panel-alt); overflow: hidden; }
+.rev-bar > span { display: block; height: 100%; border-radius: var(--r-full); }
 
 /* ---------- Responsive ---------- */
-@media (max-width: 1100px) {
-    .stat-grid { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 1200px) {
+    .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .dash-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 700px) {
-    .stat-grid { grid-template-columns: repeat(2, 1fr); }
+    .t-cols { grid-template-columns: 1fr; }
+    .t-col, .t-col:first-child, .t-col:last-child { padding: 0; border-right: none; }
+    .t-col:last-child { margin-top: 22px; }
+    .panel { padding: 22px 20px; }
+    .panel-title { font-size: 24px; }
+    .rev-figure { font-size: 40px; }
 }
 @media (max-width: 480px) {
     .stat-grid { grid-template-columns: 1fr; }
@@ -431,219 +490,141 @@ tbody td { padding: 13px 16px; font-size: 13.5px; color: var(--text); vertical-a
 
 <div class="stack">
 
-    <!-- ===== Stat cards ===== -->
+    <!-- ===== Top cards: each opens the matching filtered Bookings view ===== -->
     <div class="stat-grid">
-        <?php
-        render_stat_card('Upcoming Stays',   (string) $statUpcoming,  'calendar-check', 'emerald');
-        render_stat_card('Active Now',       (string) $statActive,    'bed',            'blue');
-        render_stat_card('Pending Payments', (string) $statPendingCount, 'wallet',      'amber');
-        render_stat_card('Nights This Month',(string) $statNights,    'moon',           'red');
-        render_stat_card('Occupancy Rate',   $occupancyRate . '%',    'pie-chart',      'fuchsia');
-        ?>
+        <a class="stat-card" href="<?php echo dash_url(['status' => 'upcoming', 'from' => $today]); ?>">
+            <span class="stat-label">Upcoming stays</span>
+            <span class="stat-value"><?php echo $statUpcoming; ?></span>
+        </a>
+
+        <a class="stat-card" href="<?php echo dash_url(['status' => 'checked_in']); ?>">
+            <span class="stat-label">Active now</span>
+            <span class="stat-value"><?php echo $statActive; ?></span>
+            <?php if ($statOverstay > 0): ?>
+                <span class="stat-hint stat-hint--warn"><?php echo $statOverstay; ?> past check-out date</span>
+            <?php endif; ?>
+        </a>
+
+        <a class="stat-card" href="<?php echo dash_url(['pay' => 'unpaid']); ?>">
+            <span class="stat-label">Pending payments</span>
+            <span class="stat-value"><?php echo $statPending; ?></span>
+        </a>
+
+        <a class="stat-card" href="<?php echo dash_url(['month' => $monthKey]); ?>">
+            <span class="stat-label">Booked this month</span>
+            <span class="stat-value"><?php echo $statMonth; ?></span>
+        </a>
     </div>
 
-    <!-- ===== Charts row ===== -->
     <div class="dash-grid">
 
-        <!-- Booking Trend (last 7 days) -->
-        <div class="panel panel-pad">
+        <!-- ===== Today ===== -->
+        <div class="panel">
             <div class="panel-header">
-                <h2 class="panel-title">Booking Trend</h2>
-                <span class="pill">Last 7 Days</span>
+                <h2 class="panel-title">Today</h2>
+                <span class="pill"><?php echo dash_e($todayLabel); ?></span>
             </div>
-
-            <?php if ($trendMax === 1 && array_sum($trendValues) === 0): ?>
-                <div class="chart-frame" style="display:flex;align-items:center;justify-content:center;">
-                    <div style="text-align:center;color:var(--text-tertiary);">
-                        <?php echo icon('inbox', 'icon-lg'); ?>
-                        <span style="display:block;margin-top:8px;font-size:13px;">No booking data yet</span>
-                    </div>
-                </div>
-            <?php else: ?>
-                <div class="chart-frame">
-                    <div class="chart-bars">
-                        <?php foreach ($trendValues as $i => $val): ?>
-                            <?php
-                            $pct = $trendMax > 0 ? round(($val / $trendMax) * 100) : 0;
-                            $isEmpty = ($val === 0);
-                            ?>
-                            <div class="chart-bar-wrap">
-                                <div class="chart-bar <?php echo $isEmpty ? 'chart-bar--zero' : ''; ?>"
-                                     style="height:<?php echo max(4, $pct); ?>%"
-                                     title="<?php echo htmlspecialchars($trendDays[$i]); ?>: <?php echo $val; ?> booking<?php echo $val === 1 ? '' : 's'; ?>">
-                                </div>
-                            </div>
-                        <?php endforeach; ?>
-                    </div>
-                </div>
-            <?php endif; ?>
-
-            <div class="chart-days">
-                <?php foreach ($trendDays as $day): ?>
-                    <span class="chart-day"><?php echo htmlspecialchars($day); ?></span>
-                <?php endforeach; ?>
+            <div class="t-cols">
+                <?php
+                dash_render_column('Arriving', 'arrive', $arriving, 'arrive',
+                    'No arrivals today', dash_url(['arriving' => $today]));
+                dash_render_column('Departing', 'depart', $departing, 'depart',
+                    'No departures today', dash_url(['departing' => $today]));
+                ?>
             </div>
         </div>
 
-        <!-- Revenue Breakdown -->
-        <div class="panel panel-pad">
+        <!-- ===== Revenue by accommodation type ===== -->
+        <div class="panel">
             <div class="panel-header">
-                <h2 class="panel-title">Revenue Breakdown</h2>
-                <span class="pill"><?php echo date('M Y'); ?></span>
+                <h2 class="panel-title">Revenue by accommodation type</h2>
+                <span class="pill"><?php echo dash_e($monthLabel); ?></span>
             </div>
 
-            <?php
-            /* Revenue this month from confirmed/completed bookings */
-            $stmtRev = $pdo->prepare(
-                "SELECT COALESCE(SUM(b.total_amount), 0) AS revenue,
-                        a.type,
-                        COUNT(*) AS cnt
-                 FROM bookings b
-                 JOIN accommodations a ON a.id = b.accommodation_id
-                 WHERE b.status IN ('confirmed','completed')
-                   AND b.check_in >= :month_start
-                   AND b.check_in <= :month_end
-                 GROUP BY a.type
-                 ORDER BY revenue DESC
-                 LIMIT 5"
-            );
-            $stmtRev->execute(['month_start' => $monthStart, 'month_end' => $monthEnd]);
-            $revenueRows = $stmtRev->fetchAll();
-            $totalRevenue = array_sum(array_column($revenueRows, 'revenue'));
+            <p class="rev-figure"><?php echo dash_peso($totalCollected); ?></p>
+            <p class="rev-sub">collected <span class="sep">|</span> <?php echo dash_peso($totalPending); ?> pending</p>
 
-            /* Build pie-slice geometry (SVG path per accommodation type) */
-            $pieColors  = ['var(--gold-400)', 'var(--blue)', 'var(--emerald)', 'var(--fuchsia)', 'var(--red)'];
-            $pieCx      = 90;
-            $pieCy      = 90;
-            $pieR       = 80;
-            $pieSlices  = [];
-            $cumulative = 0;
-            foreach ($revenueRows as $i => $row) {
-                $fraction    = $totalRevenue > 0 ? ($row['revenue'] / $totalRevenue) : 0;
-                $pct         = $totalRevenue > 0 ? round($fraction * 100) : 0;
-                $startAngle  = $cumulative;
-                $endAngle    = $cumulative + ($fraction * 360);
-                $cumulative  = $endAngle;
-
-                $x1 = $pieCx + $pieR * cos(deg2rad($startAngle - 90));
-                $y1 = $pieCy + $pieR * sin(deg2rad($startAngle - 90));
-                $x2 = $pieCx + $pieR * cos(deg2rad($endAngle - 90));
-                $y2 = $pieCy + $pieR * sin(deg2rad($endAngle - 90));
-                $largeArc = (($endAngle - $startAngle) > 180) ? 1 : 0;
-
-                $pieSlices[] = [
-                    'path'   => sprintf('M%.3F,%.3F L%.3F,%.3F A%d,%d 0 %d,1 %.3F,%.3F Z', $pieCx, $pieCy, $x1, $y1, $pieR, $pieR, $largeArc, $x2, $y2),
-                    'color'  => $pieColors[$i % count($pieColors)],
-                    'type'   => $row['type'],
-                    'amount' => $row['revenue'],
-                    'pct'    => $pct,
-                ];
-            }
-            ?>
-            <p class="revenue-figure">₱<?php echo number_format($totalRevenue, 2); ?></p>
-
-            <?php if (empty($revenueRows)): ?>
-                <div class="donut-area">
-                    <span class="donut-placeholder-text">No revenue data yet</span>
-                </div>
-            <?php else: ?>
-                <div class="pie-chart-row">
-                    <div class="pie-chart-wrap">
-                        <svg class="pie-chart-svg" viewBox="0 0 180 180" role="img" aria-label="Revenue breakdown by accommodation type">
-                            <?php if (count($pieSlices) === 1): ?>
-                                <circle class="pie-slice" cx="<?php echo $pieCx; ?>" cy="<?php echo $pieCy; ?>" r="<?php echo $pieR; ?>"
-                                        fill="<?php echo $pieSlices[0]['color']; ?>">
-                                    <title><?php echo htmlspecialchars($pieSlices[0]['type']); ?>: ₱<?php echo number_format($pieSlices[0]['amount'], 2); ?> (<?php echo $pieSlices[0]['pct']; ?>%)</title>
-                                </circle>
-                            <?php else: ?>
-                                <?php foreach ($pieSlices as $slice): ?>
-                                    <path class="pie-slice" d="<?php echo $slice['path']; ?>" fill="<?php echo $slice['color']; ?>">
-                                        <title><?php echo htmlspecialchars($slice['type']); ?>: ₱<?php echo number_format($slice['amount'], 2); ?> (<?php echo $slice['pct']; ?>%)</title>
-                                    </path>
-                                <?php endforeach; ?>
-                            <?php endif; ?>
-                        </svg>
-                    </div>
-                    <div class="pie-legend">
-                        <span class="legend-title">By Accommodation Type</span>
-                        <div class="legend-list">
-                            <?php foreach ($pieSlices as $slice): ?>
-                                <div class="legend-row">
-                                    <span class="legend-label">
-                                        <span class="legend-dot" style="background:<?php echo $slice['color']; ?>;"></span>
-                                        <?php echo htmlspecialchars($slice['type']); ?>
-                                    </span>
-                                    <span class="legend-value">
-                                        ₱<?php echo number_format($slice['amount'], 2); ?>
-                                        <span style="color:var(--text-tertiary);font-weight:500;">(<?php echo $slice['pct']; ?>%)</span>
-                                    </span>
-                                </div>
-                            <?php endforeach; ?>
+            <ul class="rev-list">
+                <?php foreach ($revCats as $c): ?>
+                    <li class="rev-row">
+                        <div class="rev-top">
+                            <span class="rev-dot" style="background:<?php echo $c['color']; ?>;"></span>
+                            <span class="rev-name"><?php echo dash_e($c['label']); ?></span>
+                            <span class="rev-amt"><?php echo dash_peso($c['amount']); ?></span>
+                            <span class="rev-pct"><?php echo $c['pct']; ?>%</span>
                         </div>
-                    </div>
-                </div>
-            <?php endif; ?>
+                        <div class="rev-bar">
+                            <span style="width:<?php echo number_format($c['width'], 2, '.', ''); ?>%;background:<?php echo $c['color']; ?>;"></span>
+                        </div>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
         </div>
 
-    </div>
-
-    <!-- ===== Recent Bookings Table ===== -->
-    <div class="panel table-wrap">
-        <div class="table-head">
-            <h2 class="panel-title">Recent Bookings</h2>
-            <a href="bookings.php">View all →</a>
-        </div>
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Guest</th>
-                        <th>Room</th>
-                        <th>Check-in</th>
-                        <th>Check-out</th>
-                        <th>Guests</th>
-                        <th>Status</th>
-                        <th>Amount</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php if (empty($recentBookings)): ?>
-                        <tr>
-                            <td colspan="7">
-                                <?php render_empty_state(
-                                    'calendar',
-                                    'No bookings yet',
-                                    'New bookings from guests will appear here automatically.'
-                                ); ?>
-                            </td>
-                        </tr>
-                    <?php else: ?>
-                        <?php foreach ($recentBookings as $bk): ?>
-                            <tr>
-                                <td>
-                                    <div class="td-guest">
-                                        <?php echo htmlspecialchars(dash_guest_name($bk), ENT_QUOTES, 'UTF-8'); ?>
-                                    </div>
-                                    <div class="td-sub"><?php echo htmlspecialchars(dash_guest_email($bk), ENT_QUOTES, 'UTF-8'); ?></div>
-                                </td>
-                                <td>
-                                    <div><?php echo htmlspecialchars($bk['room_name'], ENT_QUOTES, 'UTF-8'); ?></div>
-                                    <div class="td-sub"><?php echo htmlspecialchars($bk['room_type'], ENT_QUOTES, 'UTF-8'); ?></div>
-                                </td>
-                                <td><?php echo date('M j, Y', strtotime($bk['check_in'])); ?></td>
-                                <td><?php echo date('M j, Y', strtotime($bk['check_out'])); ?></td>
-                                <td><?php echo (int) $bk['guests_count']; ?></td>
-                                <td><?php echo dash_stage_badge($bk); ?></td>
-                                <td class="td-amount">₱<?php echo number_format((float) $bk['total_amount'], 2); ?></td>
-                            </tr>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </tbody>
-            </table>
-        </div>
-        <?php render_pagination('dashboard.php', $currentPage, $perPage, $totalRecentBookings, [], 'booking'); ?>
     </div>
 
 </div><!-- /.stack -->
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+(function () {
+    var CSRF = <?php echo json_encode($csrf); ?>;
+
+    function toast(msg, type) {
+        var wrap = document.getElementById('toastWrap');
+        var el   = document.createElement('div');
+        el.className = 'toast toast--' + (type || 'success');
+        el.textContent = msg;
+        wrap.appendChild(el);
+        setTimeout(function () { el.classList.add('show'); }, 20);
+        setTimeout(function () {
+            el.classList.remove('show');
+            setTimeout(function () { if (el.parentNode) el.parentNode.removeChild(el); }, 400);
+        }, 3500);
+    }
+
+    // Check-in / Check-out buttons in the Today panel. Same endpoint and rules
+    // as the Bookings page (api/bookings.php); the page reloads on success so
+    // every card and list comes straight from the database.
+    document.querySelectorAll('[data-stay-action]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+            var action = btn.getAttribute('data-stay-action');
+            var id     = parseInt(btn.getAttribute('data-id'), 10);
+            var label  = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
+
+            fetch('api/bookings.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: action, id: id, csrf_token: CSRF })
+            })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+                if (data.success) {
+                    toast(action === 'check_in'
+                        ? 'Guest checked in.'
+                        : 'Guest checked out — booking completed.', 'success');
+                    setTimeout(function () { window.location.reload(); }, 700);
+                } else {
+                    toast(data.error || 'Could not update the booking.', 'error');
+                    if (data.refresh) {
+                        setTimeout(function () { window.location.reload(); }, 1800);
+                    } else {
+                        btn.disabled = false;
+                        btn.textContent = label;
+                    }
+                }
+            })
+            .catch(function () {
+                toast('Network error. Please try again.', 'error');
+                btn.disabled = false;
+                btn.textContent = label;
+            });
+        });
+    });
+})();
+</script>
 
 <?php require __DIR__ . '/includes/foot.php'; ?>
