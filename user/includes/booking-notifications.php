@@ -9,6 +9,8 @@
  *   2. 1 week before check-in (type 'booking_reminder_week')
  *   3. 1 night before check-in (type 'booking_reminder_night')
  *        -> shown from 6:00 PM the evening before (see BM_BN_NIGHT_BEFORE_HOUR)
+ *   4. Day of check-in        (type 'booking_reminder_today')
+ *        -> "Check-in today!", shown from midnight on the check-in date
  *
  * Every notification is created ONCE per booking (and once per check-in date,
  * so a guest who reschedules gets fresh reminders for the new date). Dedupe is
@@ -155,13 +157,13 @@ function bm_bn_notify_confirmation(PDO $pdo, int $bookingId): bool
 /* ------------------------------------------------------------------
    2 + 3. Reminders (plus safety-net confirmations and cleanup)
    $guestId = null means "all guests" (handy for a cron job).
-   Returns ['confirmed' => int, 'week' => int, 'night' => int, 'removed' => int]
+   Returns ['confirmed' => int, 'week' => int, 'night' => int, 'today' => int, 'removed' => int]
 ------------------------------------------------------------------ */
 function bm_bn_sync(PDO $pdo, ?int $guestId = null): array
 {
     bm_bn_ensure_schema($pdo);
 
-    $result = ['confirmed' => 0, 'week' => 0, 'night' => 0, 'removed' => 0];
+    $result = ['confirmed' => 0, 'week' => 0, 'night' => 0, 'today' => 0, 'removed' => 0];
 
     $tz      = new DateTimeZone(BM_BN_TIMEZONE);
     $now     = new DateTimeImmutable('now', $tz);
@@ -176,7 +178,7 @@ function bm_bn_sync(PDO $pdo, ?int $guestId = null): array
     $clean = $pdo->prepare(
         "DELETE n FROM guest_notifications n
          JOIN bookings b ON b.id = n.booking_id
-         WHERE n.type IN ('booking_reminder_week', 'booking_reminder_night')
+         WHERE n.type IN ('booking_reminder_week', 'booking_reminder_night', 'booking_reminder_today')
            AND n.is_read = 0
            AND (b.status = 'cancelled'
                 OR SUBSTRING_INDEX(n.remind_key, ':', -1) <> DATE_FORMAT(b.check_in, '%Y-%m-%d'))"
@@ -258,6 +260,17 @@ function bm_bn_sync(PDO $pdo, ?int $guestId = null): array
                   . '. Reference no. ' . $b['reference'] . '. See you soon!';
             if (bm_bn_insert($pdo, $gid, $bid, 'booking_reminder_night', 'night:' . $b['check_in'], $msg)) {
                 $result['night']++;
+            }
+        }
+
+        // Day of check-in (its own notice, so it still shows even though
+        // "check-in tomorrow" appeared the evening before). Skipped when the
+        // booking was made on the check-in day itself: the confirmation covers it.
+        if ($daysUntil === 0 && $createdTs <= $checkIn->getTimestamp()) {
+            $msg = 'Check-in today! ' . $b['room_name'] . ' · ' . $nice
+                 . '. Reference no. ' . $b['reference'] . '. See you soon!';
+            if (bm_bn_insert($pdo, $gid, $bid, 'booking_reminder_today', 'today:' . $b['check_in'], $msg)) {
+                $result['today']++;
             }
         }
     }

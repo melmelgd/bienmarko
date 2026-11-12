@@ -153,15 +153,30 @@ function bienmarko_email_load_payment(PDO $pdo, int $bookingId): ?array
     return is_array($row) ? $row : null;
 }
 
+/** Whole days from today (Manila) to $checkIn: 0 = today, 1 = tomorrow. */
+function bienmarko_email_days_until(string $checkIn): int
+{
+    $tz    = new DateTimeZone('Asia/Manila');
+    $today = new DateTimeImmutable('today', $tz);
+    $in    = new DateTimeImmutable(substr($checkIn, 0, 10) . ' 00:00:00', $tz);
+    return (int) $today->diff($in)->format('%r%a');
+}
+
 /**
  * Confirmed bookings checking in on $checkInDate that have an email address
- * and have not already been sent a reminder (failed attempts are retried,
- * up to 3 times).
+ * and have not already been sent this kind of reminder (failed attempts are
+ * retried, up to 3 times).
+ *
+ * $kind: 'reminder' (the "coming up" email, N days before) or
+ *        'reminder_today' (the day-of email). Each is sent once per booking.
  *
  * @return int[]
  */
-function bienmarko_email_due_reminders(PDO $pdo, string $checkInDate): array
+function bienmarko_email_due_reminders(PDO $pdo, string $checkInDate, string $kind = 'reminder'): array
 {
+    if (!in_array($kind, ['reminder', 'reminder_today'], true)) {
+        $kind = 'reminder';
+    }
     bienmarko_gmail_ensure_tables($pdo);
 
     $stmt = $pdo->prepare(
@@ -172,12 +187,12 @@ function bienmarko_email_due_reminders(PDO $pdo, string $checkInDate): array
            AND b.status = 'confirmed'
            AND COALESCE(NULLIF(TRIM(b.email), ''), NULLIF(TRIM(g.email), ''), '') <> ''
            AND NOT EXISTS (SELECT 1 FROM `email_log` l
-                           WHERE l.booking_id = b.id AND l.kind = 'reminder' AND l.status = 'sent')
+                           WHERE l.booking_id = b.id AND l.kind = :k1 AND l.status = 'sent')
            AND (SELECT COUNT(*) FROM `email_log` l2
-                WHERE l2.booking_id = b.id AND l2.kind = 'reminder' AND l2.status = 'failed') < 3
+                WHERE l2.booking_id = b.id AND l2.kind = :k2 AND l2.status = 'failed') < 3
          ORDER BY b.id"
     );
-    $stmt->execute(['d' => $checkInDate]);
+    $stmt->execute(['d' => $checkInDate, 'k1' => $kind, 'k2' => $kind]);
 
     return array_map('intval', $stmt->fetchAll(PDO::FETCH_COLUMN));
 }
@@ -245,10 +260,20 @@ function bienmarko_email_render(string $kind, array $b, array $site): array
             break;
 
         case 'reminder':
+            $d       = bienmarko_email_days_until($ciRaw);
+            $when    = $d <= 0 ? 'today' : ($d === 1 ? 'tomorrow' : 'in ' . $d . ' days');
             $eyebrow = 'ARRIVAL REMINDER';
-            $subject = 'Reminder: your stay starts ' . date('D, M j', (int) strtotime($ciRaw)) . " — {$ref}";
+            $subject = 'Reminder: your stay starts ' . ($d === 1 ? 'tomorrow, ' : '')
+                     . date('D, M j', (int) strtotime($ciRaw)) . " — {$ref}";
             $heading = 'Your stay is coming up';
-            $intro   = "Hi {$first}, this is a friendly reminder that your stay at {$prop} starts on {$ci}. We look forward to seeing you!";
+            $intro   = "Hi {$first}, this is a friendly reminder that your stay at {$prop} starts {$when}, on {$ci}. We look forward to seeing you!";
+            break;
+
+        case 'reminder_today':
+            $eyebrow = 'CHECK-IN TODAY';
+            $subject = "Check-in today — your stay starts today ({$ref})";
+            $heading = 'Your stay starts today';
+            $intro   = "Hi {$first}, today is the day! Your stay at {$prop} starts today, {$ci}. Please have your reference number {$ref} ready at check-in. We look forward to welcoming you!";
             break;
 
         case 'receipt':
@@ -462,7 +487,7 @@ function bienmarko_email_render(string $kind, array $b, array $site): array
 
 /**
  * Load a booking, render the email for $kind, send it and log the result.
- * $kind: 'confirmation' | 'modified' | 'cancelled' | 'reminder' | 'receipt'.
+ * $kind: 'confirmation' | 'modified' | 'cancelled' | 'reminder' | 'reminder_today' | 'receipt'.
  * Never throws.
  *
  * @return array{ok:bool,skipped:bool,error:string}

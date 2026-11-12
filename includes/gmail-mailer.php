@@ -43,6 +43,11 @@ function bienmarko_gmail_config(): array
         'redirect_uri'         => '',
         'site_url'             => '',
         'reminder_days_before' => 1,
+        // Also send a "your stay starts TODAY" reminder on the morning of check-in.
+        'reminder_day_of'      => true,
+        // The day-of reminder is only sent before this hour (Manila, 24h clock)
+        // so a late-evening cron run never says "today" to a guest who already arrived.
+        'reminder_day_of_until_hour' => 12,
         'cron_key'             => '',
         'ca_bundle'            => '',
         'timeout'              => 15,

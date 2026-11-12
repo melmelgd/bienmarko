@@ -15,7 +15,8 @@
  *   modified      booking edited (guest or admin)         yes   yes
  *   cancelled     booking cancelled (guest or admin)      yes   yes
  *   receipt       booking fully paid                      yes   (already pushed by payments API)
- *   reminder      cron/send-reminders.php                 yes   yes
+ *   reminder      cron/send-reminders.php (N days before) yes   yes
+ *   reminder_today cron/send-reminders.php (check-in day) yes   yes
  *   feedback      "How was your stay?" email              yes   (already created by feedback-reminders.php)
  *
  * Guests who booked WITHOUT an account have no dashboard, so they only get
@@ -285,6 +286,12 @@ function bienmarko_sms_compose(PDO $pdo, array $b, string $kind, array $extra = 
             $when = $d === 0 ? 'today' : ($d === 1 ? 'tomorrow' : 'in ' . $d . ' days (' . date('D, M j', strtotime((string) $b['check_in'])) . ')');
             return "{$site}: Reminder - your stay starts {$when}. {$room}, {$dates}. Ref {$ref}. See you soon!";
 
+        case 'reminder_today':
+            if (bienmarko_sms_days_until((string) $b['check_in']) !== 0) {
+                return null; // only ever sent on the morning of check-in
+            }
+            return "{$site}: Check-in TODAY! Your stay starts today. {$room}, {$dates}. Ref {$ref}. Please show this ref at check-in. See you soon!";
+
         case 'feedback':
             $link = trim((string) ($extra['link'] ?? ''));
             return "{$site}: Hi {$first}, thanks for staying with us! How was it? "
@@ -312,7 +319,7 @@ function bienmarko_sms_send_booking(PDO $pdo, int $bookingId, string $kind, arra
     if ($kind !== 'cancelled' && $status === 'cancelled') {
         return ['ok' => false, 'status' => 'skipped', 'error' => 'Booking is cancelled.'];
     }
-    if ($kind === 'reminder' && $status !== 'confirmed') {
+    if (in_array($kind, ['reminder', 'reminder_today'], true) && $status !== 'confirmed') {
         return ['ok' => false, 'status' => 'skipped', 'error' => 'Booking is not confirmed.'];
     }
 
@@ -322,7 +329,7 @@ function bienmarko_sms_send_booking(PDO $pdo, int $bookingId, string $kind, arra
 
     // What makes this "the same message" - so it is never sent twice.
     $key = '';
-    if ($kind === 'reminder') {
+    if ($kind === 'reminder' || $kind === 'reminder_today') {
         $key = (string) $b['check_in'];
     } elseif ($kind === 'modified') {
         $key = date('YmdHi'); // each edit may text again, but a double-click will not
@@ -426,7 +433,7 @@ function bienmarko_guest_notify_ensure_schema(PDO $pdo): void
  */
 function bienmarko_guest_notify_booking(PDO $pdo, int $bookingId, string $kind): bool
 {
-    if (!in_array($kind, ['confirmation', 'modified', 'cancelled', 'reminder'], true)) {
+    if (!in_array($kind, ['confirmation', 'modified', 'cancelled', 'reminder', 'reminder_today'], true)) {
         return false;
     }
     bienmarko_guest_notify_ensure_schema($pdo);
@@ -464,7 +471,7 @@ function bienmarko_guest_notify_booking(PDO $pdo, int $bookingId, string $kind):
         case 'cancelled':
             // Pull back any unread "your stay is coming up" notice for this booking.
             $pdo->prepare("DELETE FROM guest_notifications WHERE booking_id = :b AND is_read = 0
-                           AND type IN ('booking_reminder','booking_reminder_week','booking_reminder_night')")
+                           AND type IN ('booking_reminder','booking_reminder_week','booking_reminder_night','booking_reminder_today')")
                 ->execute(['b' => $bookingId]);
             $type = 'booking_cancelled';
             $rkey = 'cancelled';
@@ -493,6 +500,18 @@ function bienmarko_guest_notify_booking(PDO $pdo, int $bookingId, string $kind):
                 $msg  = 'Reminder: your stay at ' . $room . ' starts in ' . $d . ' days (' . $nice
                       . '). Reference no. ' . $ref . '.';
             }
+            break;
+
+        case 'reminder_today':
+            if ($status !== 'confirmed' || bienmarko_sms_days_until((string) $b['check_in']) !== 0) {
+                return false;
+            }
+            // Its own type/key (not the night-before one) so it still appears
+            // on check-in day even though "check-in tomorrow" was shown yesterday.
+            $type = 'booking_reminder_today';
+            $rkey = 'today:' . $b['check_in'];
+            $msg  = 'Check-in today! ' . $room . ' · ' . date('D, M j, Y', strtotime((string) $b['check_in']))
+                  . '. Reference no. ' . $ref . '. See you soon!';
             break;
 
         default:

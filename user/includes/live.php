@@ -156,7 +156,7 @@ function bm_live_user_bell(PDO $pdo, int $guestId, bool $withItems = true): arra
         return $out;
     }
 
-    $bookingTypes = ['booking_confirmed', 'booking_modified', 'booking_cancelled', 'booking_reminder', 'booking_reminder_week', 'booking_reminder_night'];
+    $bookingTypes = ['booking_confirmed', 'booking_modified', 'booking_cancelled', 'booking_reminder', 'booking_reminder_week', 'booking_reminder_night', 'booking_reminder_today'];
     $items = [];
     foreach ($rows as $n) {
         if ($n['type'] === 'feedback_reminder' && $n['booking_id']) {
