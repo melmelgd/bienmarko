@@ -704,33 +704,39 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .table-head--week .pg-btn:hover { border-color: var(--gold-500); }
 
 /* ---------- Table refinements ---------- */
-.panel table thead th { padding: 14px 16px; }
-.panel table tbody td { padding: 18px 16px; }
-.panel table th:first-child, .panel table td:first-child { padding-left: 28px; }
-.panel table th:last-child,  .panel table td:last-child  { padding-right: 28px; }
+.panel table { table-layout: auto; }
+.panel table thead th { padding: 12px 10px; }
+.panel table tbody td { padding: 14px 10px; vertical-align: middle; }
+.panel table th:first-child, .panel table td:first-child { padding-left: 20px; }
+.panel table th:last-child,  .panel table td:last-child  { padding-right: 20px; }
+/* Let the guest line wrap instead of forcing the table wider than the screen */
+#bookingsTable td:first-child { white-space: normal; min-width: 180px; max-width: 300px; }
+#bookingsTable .td-sub { white-space: normal; overflow-wrap: anywhere; line-height: 1.4; }
+/* Actions column hugs its buttons */
+#bookingsTable th:last-child, #bookingsTable td:last-child { width: 1%; white-space: nowrap; }
 .th-right { text-align: right; }
-.td-guest  { font-size: 16px; font-weight: 700; }
-.td-sub    { font-size: 13px; margin-top: 3px; }
-.td-room   { font-size: 16px; }
-.stay-dates { font-size: 16px; display: flex; align-items: center; gap: 10px; }
+.td-guest  { font-size: 15px; font-weight: 700; }
+.td-sub    { font-size: 12.5px; margin-top: 3px; }
+.td-room   { font-size: 14.5px; }
+.stay-dates { font-size: 14.5px; display: flex; align-items: center; gap: 8px; }
 .stay-dates .chip { margin-top: 0; padding: 2px 9px; font-size: 12px; }
 .stay-nights { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
-.pay-amount { font-size: 16px; }
+.pay-amount { font-size: 14.5px; }
 .pay-dot { color: var(--text-tertiary); }
 .pay--paid    { color: var(--emerald); }
 .pay--unpaid  { color: var(--gold-400); }
 .pay--partial { color: var(--blue); }
 .pay-none     { color: var(--text-tertiary); }
-.td-actions { justify-content: flex-end; align-items: center; gap: 10px; }
-.btn-row { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 130px; height: 50px; padding: 0 18px; border-radius: var(--r-md); font-size: 16px; font-weight: 500; font-family: inherit; cursor: pointer; background: transparent; border: 1px solid; transition: all var(--transition); }
+.td-actions { justify-content: flex-end; align-items: center; gap: 8px; flex-wrap: nowrap; }
+.btn-row { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-width: 96px; height: 40px; padding: 0 14px; border-radius: var(--r-md); font-size: 14px; font-weight: 500; font-family: inherit; cursor: pointer; background: transparent; border: 1px solid; transition: all var(--transition); }
 .btn-row--in  { color: var(--emerald); border-color: var(--emerald); }
 .btn-row--in:hover  { background: var(--emerald-bg); }
 .btn-row--out { color: var(--gold-400); border-color: var(--gold-500); }
 .btn-row--out:hover { background: var(--gold-tint-bg); }
 .btn-row:disabled, .btn-row:disabled:hover { opacity: .45; cursor: not-allowed; background: transparent; }
-.btn-eye { display: inline-flex; align-items: center; justify-content: center; width: 50px; height: 50px; border-radius: var(--r-md); background: transparent; border: 1px solid var(--gold-500); color: var(--gold-400); cursor: pointer; transition: all var(--transition); }
+.btn-eye { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: var(--r-md); background: transparent; border: 1px solid var(--gold-500); color: var(--gold-400); cursor: pointer; transition: all var(--transition); }
 .btn-eye:hover { background: var(--gold-tint-bg); }
-.btn-x { display: inline-flex; align-items: center; justify-content: center; width: 50px; height: 50px; border-radius: var(--r-md); background: transparent; border: 1px solid var(--red); color: var(--red); cursor: pointer; transition: all var(--transition); }
+.btn-x { display: inline-flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: var(--r-md); background: transparent; border: 1px solid var(--red); color: var(--red); cursor: pointer; transition: all var(--transition); }
 .btn-x:hover { background: var(--red-bg); }
 
 /* Responsive */
