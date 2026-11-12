@@ -9,6 +9,9 @@
  */
 $page_title = $page_title ?? 'Admin Dashboard';
 require_once __DIR__ . '/../../includes/site-settings.php';
+require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/backup-data.php';
+backup_lazy_trigger(); // scheduled backup fallback (runs after the page is sent, only when due)
 ?>
 <!DOCTYPE html>
 <html lang="en">

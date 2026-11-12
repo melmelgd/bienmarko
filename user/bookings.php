@@ -148,6 +148,8 @@ try {
 
 $csrfToken = bienmarko_csrf_token();
 $today     = date('Y-m-d');
+// Self-service window: modify/cancel allowed up to this many days before check-in (mirrors user/api/bookings.php).
+$selfServiceMinDays = 7;
 $imgBase   = '../admin/assets/uploads/accommodations/';
 
 // Status badge colors (colour key comes from bk_stage_badge())
@@ -1568,6 +1570,8 @@ require __DIR__ . '/includes/head.php';
     </div><!-- #newBookingWrap -->
 
     <!-- ===== My Bookings: filter tabs + cards ===== -->
+    <p class="bk-policy-note" style="margin:0 0 14px;font-size:13px;color:var(--paper-faint);">You can modify or cancel a booking up to <strong>1 week</strong> before check-in. Within that period, please contact the resort directly.</p>
+
     <div class="bkp-tabs" id="bkTabs" role="tablist" aria-label="Filter bookings">
         <button type="button" class="bkp-tab" role="tab" data-filter="all"       aria-selected="true">All Bookings</button>
         <button type="button" class="bkp-tab" role="tab" data-filter="upcoming"  aria-selected="false">Upcoming</button>
@@ -1585,7 +1589,7 @@ require __DIR__ . '/includes/head.php';
             $isActive   = in_array($bk['status'], ['pending', 'confirmed'], true) && $stage !== 'completed';
             $isCheckedIn = $stage === 'checked_in';
             // Once the admin has checked the guest in, the booking can no longer be edited / cancelled online.
-            $canModify  = $isActive && !$isCheckedIn && strtotime($bk['check_in']) >= strtotime($today);
+            $canModify  = $isActive && !$isCheckedIn && (int) round((strtotime($bk['check_in']) - strtotime($today)) / 86400) >= $selfServiceMinDays;
             $hasReceipt = $stage !== 'cancelled' && in_array((int) $bk['id'], $receiptBookingIds, true);
 
             // Contact details saved with the booking; older bookings fall back to the profile.
@@ -1677,7 +1681,7 @@ require __DIR__ . '/includes/head.php';
                                 Checked in<?php echo !empty($bk['checked_in_at']) ? ' ' . htmlspecialchars(date('M j, g:i A', strtotime($bk['checked_in_at']))) : ''; ?>
                             </span>
                         <?php elseif ($isActive): ?>
-                            <span class="bk-item__note">Contact us to modify</span>
+                            <span class="bk-item__note">Within 1 week of check-in — contact us to modify</span>
                         <?php endif; ?>
 
                         <?php if ($hasReceipt): ?>
@@ -3613,7 +3617,7 @@ require __DIR__ . '/includes/head.php';
           '<button type="button" class="bk-btn bk-btn--cream" data-bk-edit>' + BK_ICON.edit + ' Modify</button>' +
           '<button type="button" class="bk-btn bk-btn--red" data-bk-cancel>' + BK_ICON.cancel + ' Cancel</button>' +
         '</span>'
-      : '<span class="bk-item__note">Contact us to modify</span>';
+      : '<span class="bk-item__note">Within 1 week of check-in — contact us to modify</span>';
 
     var imgHtml = (room && room.image_filename)
       ? '<img src="' + imgBase + encodeURIComponent(room.image_filename) + '" alt="' + escHtml(data.room_name) + '" loading="lazy">'
@@ -3732,15 +3736,17 @@ require __DIR__ . '/includes/head.php';
   };
 
   /**
-   * Client-side mirror of the server's bk_can_self_manage() — used only
+   * Client-side mirror of the server's bk_can_self_manage() (1-week window) — used only
    * to decide whether to show Edit/Cancel controls right after a booking
    * is created (no page reload yet); the server re-checks this on every
    * update/cancel request regardless.
    */
+  var EDIT_WINDOW_DAYS = <?php echo (int) $selfServiceMinDays; ?>;
   function bkCanModifyClient(checkInStr) {
     var ci = new Date(checkInStr + 'T00:00:00');
     var t0 = new Date(todayStr() + 'T00:00:00');
-    return ci >= t0;
+    var diffDays = Math.round((ci - t0) / 86400000);
+    return diffDays >= EDIT_WINDOW_DAYS;
   }
 
   function editOpenModal() {
@@ -4184,7 +4190,7 @@ require __DIR__ . '/includes/head.php';
       if (actions) {
         var note = document.createElement('span');
         note.className = 'bk-item__note';
-        note.textContent = 'Contact us to modify';
+        note.textContent = 'Within 1 week of check-in — contact us to modify';
         actions.replaceWith(note);
       }
     }

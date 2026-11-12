@@ -247,3 +247,166 @@ function backup_restore_from_sql(PDO $pdo, string $sql): int
 
     return $executed;
 }
+
+
+/* ======================================================================
+   SCHEDULED (AUTOMATIC) BACKUPS
+   ----------------------------------------------------------------------
+   Runs a full backup on a fixed interval without anyone clicking
+   "Create Backup". Two triggers share the same function:
+     1. admin/cron/scheduled-backup.php  - real cron / Windows Task
+        Scheduler job (recommended once the system is hosted).
+     2. backup_lazy_trigger()            - fallback called from
+        admin/includes/head.php, so backups still happen on hosts with
+        no cron access as long as an admin opens the panel.
+   Scheduled files are named bienmarko-auto-backup-*.sql and are the
+   only ones ever pruned; manual backups and uploaded restore files
+   are never touched. created_by is NULL, which the Backup page already
+   labels "System".
+   ====================================================================== */
+
+const BACKUP_SCHEDULE_INTERVAL_HOURS = 24; // one automatic backup per day
+const BACKUP_SCHEDULE_KEEP           = 14; // newest automatic backups to retain
+const BACKUP_AUTO_PREFIX             = 'bienmarko-auto-backup-';
+
+/** Writes a full dump to storage and logs it in `backups`. Returns [id, filename, file_size]. */
+function backup_create_file(PDO $pdo, string $prefix, ?int $createdBy): array
+{
+    backup_ensure_table($pdo);
+    backup_ensure_storage_dir();
+
+    $sql      = backup_generate_dump($pdo);
+    $stamp    = date('Y-m-d_His');
+    $filename = $prefix . $stamp . '.sql';
+    for ($n = 2; is_file(BACKUP_STORAGE_DIR . '/' . $filename); $n++) {
+        $filename = $prefix . $stamp . '-' . $n . '.sql'; // never overwrite a file from the same second
+    }
+    $path     = BACKUP_STORAGE_DIR . '/' . $filename;
+
+    if (@file_put_contents($path, $sql) === false) {
+        throw new \RuntimeException('Could not write backup file to admin/storage/backups.');
+    }
+
+    $size = (int) filesize($path);
+
+    try {
+        $ins = $pdo->prepare(
+            'INSERT INTO backups (filename, file_size, created_by) VALUES (:filename, :file_size, :created_by)'
+        );
+        $ins->execute(['filename' => $filename, 'file_size' => $size, 'created_by' => $createdBy]);
+    } catch (\Throwable $e) {
+        @unlink($path);
+        throw $e;
+    }
+
+    return ['id' => (int) $pdo->lastInsertId(), 'filename' => $filename, 'file_size' => $size];
+}
+
+/** DATETIME (DB clock) of the newest automatic backup, or null if none yet. */
+function backup_last_auto_at(PDO $pdo): ?string
+{
+    backup_ensure_table($pdo);
+    $stmt = $pdo->prepare('SELECT MAX(created_at) FROM backups WHERE filename LIKE :p');
+    $stmt->execute(['p' => BACKUP_AUTO_PREFIX . '%']);
+    $v = $stmt->fetchColumn();
+    return $v ? (string) $v : null;
+}
+
+/** Human-readable time of the next automatic backup ("Due now" if overdue / none yet). */
+function backup_next_auto_label(PDO $pdo): string
+{
+    $last = backup_last_auto_at($pdo);
+    if ($last === null) {
+        return 'Due now';
+    }
+    $next = strtotime($last) + BACKUP_SCHEDULE_INTERVAL_HOURS * 3600;
+    $now  = (int) strtotime((string) $pdo->query('SELECT NOW()')->fetchColumn());
+    return $next <= $now ? 'Due now' : date('M j, Y g:i A', $next);
+}
+
+/** Deletes automatic backups beyond the newest BACKUP_SCHEDULE_KEEP. */
+function backup_prune_auto(PDO $pdo): int
+{
+    $stmt = $pdo->prepare('SELECT id, filename FROM backups WHERE filename LIKE :p ORDER BY created_at DESC, id DESC');
+    $stmt->execute(['p' => BACKUP_AUTO_PREFIX . '%']);
+    $rows = $stmt->fetchAll();
+
+    $removed = 0;
+    foreach (array_slice($rows, BACKUP_SCHEDULE_KEEP) as $row) {
+        $path = BACKUP_STORAGE_DIR . '/' . basename($row['filename']);
+        if (is_file($path)) {
+            @unlink($path);
+        }
+        $del = $pdo->prepare('DELETE FROM backups WHERE id = :id');
+        $del->execute(['id' => (int) $row['id']]);
+        $removed++;
+    }
+    return $removed;
+}
+
+/**
+ * Creates an automatic backup if the newest one is older than the
+ * interval (or $force). Returns the new backup's info, or null when
+ * nothing was due / another process is already running one.
+ */
+function backup_run_scheduled(PDO $pdo, bool $force = false): ?array
+{
+    backup_ensure_table($pdo);
+
+    $lock = $pdo->query("SELECT GET_LOCK('bienmarko_scheduled_backup', 0)")->fetchColumn();
+    if ((int) $lock !== 1) {
+        return null; // someone else is already backing up
+    }
+
+    try {
+        if (!$force) {
+            $stmt = $pdo->prepare(
+                'SELECT COUNT(*) FROM backups
+                 WHERE filename LIKE :p AND created_at > (NOW() - INTERVAL ' . (int) BACKUP_SCHEDULE_INTERVAL_HOURS . ' HOUR)'
+            );
+            $stmt->execute(['p' => BACKUP_AUTO_PREFIX . '%']);
+            if ((int) $stmt->fetchColumn() > 0) {
+                return null; // not due yet
+            }
+        }
+
+        $result = backup_create_file($pdo, BACKUP_AUTO_PREFIX, null);
+        backup_prune_auto($pdo);
+        return $result;
+    } finally {
+        $pdo->query("SELECT RELEASE_LOCK('bienmarko_scheduled_backup')");
+    }
+}
+
+/**
+ * Fallback scheduler for hosts without cron: called on admin page loads,
+ * checks at most once per 30 minutes per session, and runs the backup
+ * AFTER the page has been sent so the admin never waits on it.
+ */
+function backup_lazy_trigger(): void
+{
+    if (PHP_SAPI === 'cli' || ($_SESSION['auth_role'] ?? null) !== 'admin') {
+        return;
+    }
+    $now = time();
+    if (($_SESSION['backup_checked_at'] ?? 0) > $now - 1800) {
+        return;
+    }
+    $_SESSION['backup_checked_at'] = $now;
+
+    register_shutdown_function(static function (): void {
+        ignore_user_abort(true);
+        @set_time_limit(120);
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_write_close(); // don't hold the session lock during the dump
+        }
+        if (function_exists('fastcgi_finish_request')) {
+            fastcgi_finish_request();
+        }
+        try {
+            backup_run_scheduled(bienmarko_db());
+        } catch (\Throwable $e) {
+            error_log('[scheduled backup] ' . $e->getMessage());
+        }
+    });
+}

@@ -2,16 +2,25 @@
 /**
  * admin/bookings.php
  * -----------------------------------------------------------------------
- * Bookings management — ONE list of every booking (no view tabs), always
- * ordered by stage:
+ * Bookings management. Two scopes (the "View" dropdown):
  *
- *   1. Upcoming    — guest has NOT checked in (nearest arrival first)
- *   2. Checked-in  — admin recorded the check-in (earliest check-out first)
- *   3. Completed   — admin recorded the check-out (most recent first)
- *   4. Cancelled   — (most recent first)
+ *   WEEKLY (default) — one Monday–Sunday week at a time, with Prev / Next /
+ *     This week buttons. A booking belongs to a week when its stay overlaps
+ *     that week (check-in <= Sunday AND check-out >= Monday), so a guest who
+ *     is still checked-in from last week stays visible. Ordered by stage:
  *
- * The stat cards, the status dropdown and the search box narrow the list;
- * the stage order always applies.
+ *       1. Upcoming    — guest has NOT checked in (nearest arrival first)
+ *       2. Checked-in  — admin recorded the check-in (earliest check-out first)
+ *       3. Completed   — admin recorded the check-out (most recent first)
+ *       4. Cancelled   — (most recent first)
+ *
+ *   ALL BOOKINGS — every booking ever made, NEWEST BOOKED FIRST
+ *     (bookings.created_at DESC), so new reservations are always on top.
+ *
+ * The stat cards, the status dropdown and the search box narrow the list
+ * inside the chosen scope; the stat-card counts follow the scope too.
+ *
+ * URL params:  scope=week|all   week=YYYY-MM-DD (any date inside the week)
  *
  * Statuses are NEVER changed by a date or a clock. A guest moves
  * Upcoming → Checked-in → Completed only when the admin confirms it in the
@@ -82,6 +91,43 @@ $filterSearch = trim($_GET['search'] ?? '');
 $allowedStatuses = ['', 'upcoming', 'checked_in', 'completed', 'cancelled'];
 if (!in_array($filterStatus, $allowedStatuses, true)) $filterStatus = '';
 
+/* Scope: weekly list (default) or every booking, newest first. */
+$scope = ($_GET['scope'] ?? 'week') === 'all' ? 'all' : 'week';
+
+/* Week window (Monday → Sunday). `week` may be any date inside the week;
+   an empty or invalid value falls back to the current week. */
+$weekParam = trim((string) ($_GET['week'] ?? ''));
+$anchorTs  = strtotime($today);
+if (preg_match('/^(\d{4})-(\d{2})-(\d{2})$/', $weekParam, $wm)
+    && checkdate((int) $wm[2], (int) $wm[3], (int) $wm[1])) {
+    $anchorTs = strtotime($weekParam);
+}
+$weekStart = date('Y-m-d', strtotime('-' . ((int) date('N', $anchorTs) - 1) . ' days', $anchorTs));
+$weekEnd   = date('Y-m-d', strtotime($weekStart . ' +6 days'));
+$prevWeek  = date('Y-m-d', strtotime($weekStart . ' -7 days'));
+$nextWeek  = date('Y-m-d', strtotime($weekStart . ' +7 days'));
+$thisWeek  = date('Y-m-d', strtotime('-' . ((int) date('N', strtotime($today)) - 1) . ' days', strtotime($today)));
+$isCurrentWeek = ($weekStart === $thisWeek);
+
+/* "Nov 9 – 15, 2026" / "Oct 26 – Nov 1, 2026" / "Dec 28, 2026 – Jan 3, 2027" */
+$tsA = strtotime($weekStart);
+$tsB = strtotime($weekEnd);
+if (date('Y', $tsA) !== date('Y', $tsB)) {
+    $weekLabel = date('M j, Y', $tsA) . ' – ' . date('M j, Y', $tsB);
+} elseif (date('n', $tsA) !== date('n', $tsB)) {
+    $weekLabel = date('M j', $tsA) . ' – ' . date('M j, Y', $tsB);
+} else {
+    $weekLabel = date('M j', $tsA) . ' – ' . date('j, Y', $tsB);
+}
+
+/* Builds a bookings.php URL for the week buttons (keeps status + search). */
+$weekUrl = function (string $ws) use ($filterStatus, $filterSearch): string {
+    $q = ['scope' => 'week', 'week' => $ws];
+    if ($filterStatus !== '') $q['status'] = $filterStatus;
+    if ($filterSearch !== '') $q['search'] = $filterSearch;
+    return htmlspecialchars('bookings.php?' . http_build_query($q), ENT_QUOTES, 'UTF-8');
+};
+
 /* Pagination — 10 bookings per page, like the Payments and Dashboard tables */
 $perPage     = 10;
 $currentPage = max(1, (int) ($_GET['page'] ?? 1));
@@ -91,15 +137,19 @@ $currentPage = max(1, (int) ($_GET['page'] ?? 1));
    from the same stage conditions as the lists, on every page load, so a
    status change is reflected the moment the page refreshes.
 ------------------------------------------------------------------ */
-$countRow = $pdo->query(
+$countScope  = $scope === 'week' ? 'WHERE check_in <= :we AND check_out >= :ws' : '';
+$countStmtSt = $pdo->prepare(
     "SELECT
         COUNT(*)                                          AS total,
         COALESCE(SUM(" . bk_stage_sql('upcoming',   '') . "), 0) AS upcoming,
         COALESCE(SUM(" . bk_stage_sql('checked_in', '') . "), 0) AS checked_in,
         COALESCE(SUM(" . bk_stage_sql('completed',  '') . "), 0) AS completed,
         COALESCE(SUM(" . bk_stage_sql('cancelled',  '') . "), 0) AS cancelled
-     FROM bookings"
-)->fetch();
+     FROM bookings
+     {$countScope}"
+);
+$countStmtSt->execute($scope === 'week' ? ['we' => $weekEnd, 'ws' => $weekStart] : []);
+$countRow = $countStmtSt->fetch();
 $statTotal      = (int) $countRow['total'];
 $statUpcoming   = (int) $countRow['upcoming'];
 $statCheckedIn  = (int) $countRow['checked_in'];
@@ -111,6 +161,13 @@ $statCancelled  = (int) $countRow['cancelled'];
 ------------------------------------------------------------------ */
 $whereClauses = [];
 $params       = [];
+
+if ($scope === 'week') {
+    // Stay overlaps the selected Monday–Sunday week.
+    $whereClauses[] = '(b.check_in <= :week_end AND b.check_out >= :week_start)';
+    $params['week_end']   = $weekEnd;
+    $params['week_start'] = $weekStart;
+}
 
 if ($filterStatus !== '') {
     $whereClauses[] = bk_stage_sql($filterStatus);
@@ -157,6 +214,11 @@ $orderBy  = $stageRank . ' ASC, '
           . 'CASE WHEN ' . bk_stage_sql('upcoming') . ' OR ' . bk_stage_sql('checked_in') . ' THEN b.check_in END ASC, '
           . 'CASE WHEN ' . bk_stage_sql('completed') . ' OR ' . bk_stage_sql('cancelled') . ' THEN b.check_in END DESC, '
           . $timeSort . 'b.created_at ASC, b.id ASC';
+
+/* ALL BOOKINGS scope: newest booking on top, regardless of stage or stay date. */
+if ($scope === 'all') {
+    $orderBy = 'b.created_at DESC, b.id DESC';
+}
 
 /* Total matching rows (all filters applied, no LIMIT) — drives the
    pagination bar and the "N bookings" count in the table header. */
@@ -468,6 +530,18 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 /* Table sub-heading */
 .view-hint { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
 
+/* Weekly navigator */
+.week-nav { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 0 20px 14px; }
+.week-nav-label { display: flex; align-items: center; gap: 8px; flex: 1; justify-content: center; min-width: 180px; font-family: var(--font-display); font-size: 14px; font-weight: 700; color: var(--text); text-align: center; }
+.week-nav-label .chip { margin-top: 0; }
+.week-nav .pg-btn { min-height: 34px; }
+.booked-on { font-size: 11px; color: var(--text-tertiary); margin-top: 3px; }
+@media (max-width: 540px) {
+    .week-nav { padding: 0 14px 12px; }
+    .week-nav-label { order: -1; flex-basis: 100%; }
+    .week-nav .pg-btn { flex: 1; justify-content: center; }
+}
+
 /* Small date tags + reference code */
 .chip { display: inline-block; margin-top: 3px; padding: 1px 7px; border-radius: var(--r-full); font-size: 10.5px; font-weight: 700; letter-spacing: .03em; }
 .chip--gold { background: var(--gold-tint-bg); color: var(--gold-400); }
@@ -583,6 +657,10 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
             <input type="text" id="searchInput" placeholder="Search by name, email, reference, or accommodation…"
                    value="<?php echo htmlspecialchars($filterSearch, ENT_QUOTES, 'UTF-8'); ?>">
         </div>
+        <select class="filter-select" id="scopeSelect" aria-label="View">
+            <option value="week" <?php echo $scope === 'week' ? 'selected' : ''; ?>>Weekly view</option>
+            <option value="all"  <?php echo $scope === 'all'  ? 'selected' : ''; ?>>All bookings (newest first)</option>
+        </select>
         <select class="filter-select" id="statusSelect">
             <option value="">All Statuses</option>
             <option value="upcoming"   <?php echo $filterStatus === 'upcoming'   ? 'selected' : ''; ?>>Upcoming</option>
@@ -600,17 +678,28 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
         'completed'  => 'Completed',
         'cancelled'  => 'Cancelled',
     ];
-    $viewTitle = 'Bookings';
-    $viewHint  = $filterStatus !== ''
-        ? 'Showing ' . $statusLabels[$filterStatus] . ' bookings only.'
-        : 'Upcoming stays first, then checked-in, completed and cancelled.';
+    if ($scope === 'week') {
+        $viewTitle = 'Weekly Bookings';
+        $viewHint  = ($filterStatus !== ''
+            ? $statusLabels[$filterStatus] . ' bookings with a stay in this week.'
+            : 'Stays in this week — upcoming first, then checked-in, completed and cancelled.');
+    } else {
+        $viewTitle = 'All Bookings';
+        $viewHint  = ($filterStatus !== ''
+            ? $statusLabels[$filterStatus] . ' bookings, newest booked first.'
+            : 'Every booking, newest booked first.');
+    }
     $emptyIcon  = 'calendar';
-    $emptyTitle = 'No bookings yet';
-    $emptyMsg   = 'New bookings from guests will appear here automatically.';
+    $emptyTitle = $scope === 'week' ? 'No bookings this week' : 'No bookings yet';
+    $emptyMsg   = $scope === 'week'
+        ? 'Use Prev / Next to browse other weeks, or switch to All bookings.'
+        : 'New bookings from guests will appear here automatically.';
     if ($totalBookings === 0 && ($filterSearch !== '' || $filterStatus !== '')) {
         $emptyIcon  = 'inbox';
         $emptyTitle = 'No bookings match';
-        $emptyMsg   = 'Try a different search term or clear the filter.';
+        $emptyMsg   = $scope === 'week'
+            ? 'Try a different week, a different search term, or clear the filter.'
+            : 'Try a different search term or clear the filter.';
     }
     $colCount = 7;
     ?>
@@ -624,6 +713,23 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                 <?php echo $totalBookings; ?> booking<?php echo $totalBookings === 1 ? '' : 's'; ?>
             </span>
         </div>
+        <?php if ($scope === 'week'): ?>
+        <div class="week-nav">
+            <a class="pg-btn" href="<?php echo $weekUrl($prevWeek); ?>" aria-label="Previous week">
+                <?php echo icon('chevron-right', 'icon-sm pg-chevron-prev'); ?><span>Prev</span>
+            </a>
+            <div class="week-nav-label">
+                <span><?php echo htmlspecialchars($weekLabel, ENT_QUOTES, 'UTF-8'); ?></span>
+                <?php if ($isCurrentWeek): ?><span class="chip chip--gold">This week</span><?php endif; ?>
+            </div>
+            <?php if (!$isCurrentWeek): ?>
+                <a class="pg-btn" href="<?php echo $weekUrl($thisWeek); ?>">This week</a>
+            <?php endif; ?>
+            <a class="pg-btn" href="<?php echo $weekUrl($nextWeek); ?>" aria-label="Next week">
+                <span>Next</span><?php echo icon('chevron-right', 'icon-sm'); ?>
+            </a>
+        </div>
+        <?php endif; ?>
         <div class="table-scroll">
             <table id="bookingsTable">
                 <thead>
@@ -680,7 +786,12 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                                     <?php if ($stage === 'checked_in') echo bk_date_chip($bk['check_out'], $today, 'Overdue'); ?>
                                 </td>
 
-                                <td><span class="ref-code"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></span></td>
+                                <td>
+                                    <span class="ref-code"><?php echo htmlspecialchars($bk['reference'], ENT_QUOTES, 'UTF-8'); ?></span>
+                                    <?php if ($scope === 'all' && !empty($bk['created_at'])): ?>
+                                        <div class="booked-on">Booked <?php echo date('M j, Y g:i A', strtotime($bk['created_at'])); ?></div>
+                                    <?php endif; ?>
+                                </td>
                                 <td><?php echo bk_stage_badge($bk); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
@@ -715,6 +826,8 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
             </table>
         </div>
         <?php render_pagination('bookings.php', $currentPage, $perPage, $totalBookings, [
+            'scope'  => $scope,
+            'week'   => $scope === 'week' ? $weekStart : '',
             'status' => $filterStatus,
             'search' => $filterSearch,
         ], 'booking'); ?>
@@ -1129,6 +1242,19 @@ function applyStatusFilter(status) {
     else url.searchParams.delete('search');
     url.searchParams.delete('page');
     window.location.href = url.toString();
+}
+
+// Weekly view <-> All bookings. Keeps the status filter and search; leaving
+// the weekly view drops the week position, entering it starts at this week.
+var scopeSelect = document.getElementById('scopeSelect');
+if (scopeSelect) {
+    scopeSelect.addEventListener('change', function () {
+        var url = new URL(window.location.href);
+        url.searchParams.set('scope', this.value);
+        url.searchParams.delete('week');
+        url.searchParams.delete('page');
+        window.location.href = url.toString();
+    });
 }
 
 var statusSelect = document.getElementById('statusSelect');

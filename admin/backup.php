@@ -30,6 +30,7 @@ $rows = $pdo->query(
 )->fetchAll();
 
 $lastBackup = $rows[0] ?? null;
+$nextAutoLabel = backup_next_auto_label($pdo);
 
 $rowsForJs = array_map(static function ($row) {
     return [
@@ -164,6 +165,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
         <h2 class="panel-title">Backup &amp; Restore</h2>
         <p class="backup-meta">
           Last backup: <strong><?php echo $lastBackup ? htmlspecialchars(date('M j, Y g:i A', strtotime($lastBackup['created_at'])), ENT_QUOTES, 'UTF-8') : 'Never'; ?></strong>
+          <br>Automatic backup: <strong>every <?php echo (int) BACKUP_SCHEDULE_INTERVAL_HOURS; ?> hours</strong> &middot; Next: <strong><?php echo htmlspecialchars($nextAutoLabel, ENT_QUOTES, 'UTF-8'); ?></strong>
         </p>
       </div>
       <div class="backup-actions">

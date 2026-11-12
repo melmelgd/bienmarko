@@ -235,14 +235,23 @@ function bk_validate_dates(string $checkIn, string $checkOut): ?string
 }
 
 /**
- * Registered users may modify or cancel their own pending/confirmed
- * bookings at any time up until the scheduled check-in date. Once
- * check-in has passed, self-service changes are blocked and the guest
- * is directed to contact resort management instead.
+ * Self-service window: registered users may modify or cancel their own
+ * pending/confirmed bookings up to one (1) week prior to the scheduled
+ * check-in date (see PURPOSE AND DESCRIPTION / SCOPE AND DELIMITATIONS of
+ * the study). Inside that window — i.e. fewer than BK_SELF_SERVICE_MIN_DAYS
+ * full days before check-in — requests must be coordinated directly with
+ * resort management, who can still edit the booking from the admin panel.
  */
+const BK_SELF_SERVICE_MIN_DAYS = 7;
+
 function bk_can_self_manage(string $checkIn): bool
 {
-    return strtotime($checkIn) >= strtotime(date('Y-m-d'));
+    $checkInTs = strtotime($checkIn);
+    if ($checkInTs === false) {
+        return false;
+    }
+    $daysUntil = (int) round(($checkInTs - strtotime(date('Y-m-d'))) / 86400);
+    return $daysUntil >= BK_SELF_SERVICE_MIN_DAYS;
 }
 
 /**
@@ -1038,8 +1047,8 @@ function bk_action_book(PDO $pdo, array $input, int $guestId): never
 /**
  * Lets a registered user modify the accommodation, dates, guest count,
  * notes, and companion names of their own pending/confirmed booking,
- * any time up until check-in (see bk_can_self_manage()). Once check-in
- * has passed, changes must go through management.
+ * up to 1 week before check-in (see bk_can_self_manage()). Inside that
+ * window, changes must go through management.
  *
  * `accommodation_id` is optional: omit it (or send the current id) to
  * keep the same room; send a different id to move the booking to that
@@ -1077,7 +1086,7 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
     bk_assert_not_checked_in($pdo, (int) $booking['id']);
 
     if (!bk_can_self_manage($booking['old_check_in'])) {
-        bk_fail(403, 'This booking\'s check-in date has already passed. Please contact the resort directly for changes.');
+        bk_fail(403, 'Bookings can only be modified up to 1 week before check-in. Please contact the resort directly for changes within this period.');
     }
 
     $checkIn        = bk_parse_date($input['check_in']  ?? null);
@@ -1300,8 +1309,8 @@ function bk_action_update(PDO $pdo, array $input, int $guestId): never
 // ---- Action: cancel -----------------------------------------------------------
 
 /**
- * Lets a registered user cancel their own pending/confirmed booking, any
- * time up until check-in (see bk_can_self_manage()). Cancellation just
+ * Lets a registered user cancel their own pending/confirmed booking up to
+ * 1 week before check-in (see bk_can_self_manage()). Cancellation just
  * flips status — the row (and its reference number) is kept for the
  * guest's history and admin records.
  */
@@ -1337,7 +1346,7 @@ function bk_action_cancel(PDO $pdo, array $input, int $guestId): never
     bk_assert_not_checked_in($pdo, (int) $booking['id']);
 
     if (!bk_can_self_manage($booking['check_in'])) {
-        bk_fail(403, 'This booking\'s check-in date has already passed. Please contact the resort directly for changes.');
+        bk_fail(403, 'Bookings can only be cancelled up to 1 week before check-in. Please contact the resort directly for changes within this period.');
     }
 
     $upd = $pdo->prepare(
