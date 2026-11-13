@@ -594,12 +594,12 @@ if ($action === 'update') {
         : ($existing['payment_method'] ?? 'cash');
     $notes           = trim($body['notes'] ?? '');
 
-    // Registered-user bookings keep the guest_name/email/phone/address
-    // columns tied to the account (they're NULL/blank on that booking
-    // row by design — bk_name()/bk_email()/bk_phone() pull from the
-    // guests table instead). Only guest (no-account) bookings let the
-    // admin edit contact details directly here.
-    if ($existing['booking_type'] === 'guest') {
+    // Guest (no-account) bookings store the contact details on the booking
+    // row. Registered-account bookings keep name / email / phone on the
+    // guest's profile (guests table); the admin can edit those too, and the
+    // change is saved to that profile (see $profileUpdate below).
+    $profileUpdate = null;
+    if ($existing['booking_type'] === 'guest' || empty($existing['guest_id'])) {
         $guestName = trim($body['guest_name'] ?? (string) $existing['guest_name']);
         $phone     = trim($body['phone']      ?? (string) $existing['phone']);
         $email     = trim($body['email']      ?? (string) $existing['email']);
@@ -624,11 +624,75 @@ if ($action === 'update') {
         if (mb_strlen($address) > 255)     { $address     = mb_substr($address, 0, 255); }
         if (mb_strlen($nationality) > 80)  { $nationality = mb_substr($nationality, 0, 80); }
     } else {
+        // Booking row keeps its own (blank) name / email / phone columns.
         $guestName = $existing['guest_name'];
         $phone     = $existing['phone'];
         $email     = $existing['email'];
-        $address   = $existing['address'];
-        $nationality = $existing['nationality'] ?? null;   // owned by the account's own booking; admin can't change it here
+
+        // Address & nationality are stored on the booking itself, so they are
+        // always editable.
+        $address     = trim($body['address'] ?? (string) $existing['address']);
+        $nationality = trim($body['nationality'] ?? (string) ($existing['nationality'] ?? ''));
+        if (mb_strlen($address) > 255)    { $address     = mb_substr($address, 0, 255); }
+        if (mb_strlen($nationality) > 80) { $nationality = mb_substr($nationality, 0, 80); }
+
+        // Name / email / phone live on the guest's account profile.
+        $gp = $pdo->prepare("SELECT id, first_name, last_name, email, phone FROM guests WHERE id = :gid");
+        $gp->execute(['gid' => (int) $existing['guest_id']]);
+        $gp = $gp->fetch();
+
+        if ($gp) {
+            $newName  = trim((string) ($body['guest_name'] ?? ''));
+            $newPhone = trim((string) ($body['phone'] ?? (string) $gp['phone']));
+            $newEmail = trim((string) ($body['email'] ?? (string) $gp['email']));
+
+            $oldFirst = trim((string) $gp['first_name']);
+            $oldLast  = trim((string) $gp['last_name']);
+            $oldFull  = trim($oldFirst . ' ' . $oldLast);
+
+            $first = $oldFirst;
+            $last  = $oldLast;
+            if ($newName !== '' && $newName !== $oldFull) {
+                // Keep the existing surname when the new name still ends with
+                // it (handles "Dela Cruz"); otherwise split at the last space.
+                if ($oldLast !== '' && mb_strtolower(mb_substr($newName, -mb_strlen($oldLast))) === mb_strtolower($oldLast)
+                    && mb_strlen($newName) > mb_strlen($oldLast)) {
+                    $last  = $oldLast;
+                    $first = trim(mb_substr($newName, 0, mb_strlen($newName) - mb_strlen($oldLast)));
+                } elseif (($pos = mb_strrpos($newName, ' ')) !== false) {
+                    $first = trim(mb_substr($newName, 0, $pos));
+                    $last  = trim(mb_substr($newName, $pos + 1));
+                } else {
+                    $first = $newName;
+                    $last  = '';
+                }
+            }
+
+            if ($newEmail !== '' && !filter_var($newEmail, FILTER_VALIDATE_EMAIL)) {
+                echo json_encode(['success' => false, 'error' => 'Please enter a valid email address.']);
+                exit;
+            }
+            if ($newEmail !== '' && strcasecmp($newEmail, (string) $gp['email']) !== 0) {
+                $dup = $pdo->prepare("SELECT COUNT(*) FROM guests WHERE email = :e AND id != :gid");
+                $dup->execute(['e' => $newEmail, 'gid' => (int) $gp['id']]);
+                if ((int) $dup->fetchColumn() > 0) {
+                    echo json_encode(['success' => false, 'error' => 'Another guest account already uses that email address.']);
+                    exit;
+                }
+            }
+            if ($newEmail === '') { $newEmail = (string) $gp['email']; }   // never blank a login email
+
+            if ($first !== $oldFirst || $last !== $oldLast
+                || $newPhone !== (string) $gp['phone'] || $newEmail !== (string) $gp['email']) {
+                $profileUpdate = [
+                    'first' => mb_substr($first, 0, 100),
+                    'last'  => mb_substr($last, 0, 100),
+                    'phone' => mb_substr($newPhone, 0, 40),
+                    'email' => $newEmail,
+                    'gid'   => (int) $gp['id'],
+                ];
+            }
+        }
     }
 
     $companionNamesJson = bm_parse_companion_names((string) ($body['companion_names'] ?? ''));
@@ -765,6 +829,14 @@ if ($action === 'update') {
                 echo json_encode(['success' => false, 'error' => 'Room is already booked for the selected dates.']);
                 exit;
             }
+        }
+
+        if ($profileUpdate !== null) {
+            $pdo->prepare(
+                "UPDATE guests SET first_name = :first, last_name = :last,
+                                   phone = :phone, email = :email
+                 WHERE id = :gid"
+            )->execute($profileUpdate);
         }
 
         $upd = $pdo->prepare(

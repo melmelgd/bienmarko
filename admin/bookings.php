@@ -1331,7 +1331,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                 <div class="modal-section">
                     <div class="modal-section-title">Guest Information</div>
                     <span class="form-label" id="edAccountHint" style="display:none;color:var(--text-tertiary);margin-bottom:8px;">
-                        This booking belongs to a registered account, so guest details are linked to their profile and shown here for reference only.
+                        This booking belongs to a registered account — changes to the name, email and phone are also saved to the guest's account profile.
                     </span>
                     <div class="form-row">
                         <div class="form-group">
@@ -2168,9 +2168,11 @@ function openEdit(id) {
     // Registered accounts own their profile details — the admin can
     // still see them here for reference, but only guest (no-account)
     // bookings allow editing the name/contact fields directly.
+    // Every field is editable. For registered accounts, name / email / phone
+    // are saved to the guest's account profile, so show a note about that.
     var isGuestBooking = b.booking_type === 'guest';
     ['edGuestName', 'edPhone', 'edEmail', 'edAddress', 'edNationality'].forEach(function (id) {
-        document.getElementById(id).readOnly = !isGuestBooking;
+        document.getElementById(id).readOnly = false;
     });
     document.getElementById('edAccountHint').style.display = isGuestBooking ? 'none' : '';
 
