@@ -606,15 +606,18 @@ if ($action === 'update') {
         $address   = trim($body['address']    ?? (string) $existing['address']);
         $nationality = trim($body['nationality'] ?? (string) ($existing['nationality'] ?? ''));
 
-        if ($guestName === '') {
+        if ($guestName === '' && trim((string) ($existing['guest_name'] ?? '')) !== '') {
             echo json_encode(['success' => false, 'error' => 'Guest name is required.']);
             exit;
         }
-        if ($address === '') {
+        // Older bookings may have no address / nationality on file. Don't let
+        // that block an edit: only insist on them when the booking already
+        // has a value (so a filled-in field can't be accidentally wiped).
+        if ($address === '' && trim((string) ($existing['address'] ?? '')) !== '') {
             echo json_encode(['success' => false, 'error' => 'Address is required (the barangay is enough).']);
             exit;
         }
-        if ($nationality === '') {
+        if ($nationality === '' && trim((string) ($existing['nationality'] ?? '')) !== '') {
             echo json_encode(['success' => false, 'error' => 'Nationality is required.']);
             exit;
         }
@@ -634,7 +637,11 @@ if ($action === 'update') {
         echo json_encode(['success' => false, 'error' => 'Check-in and check-out dates are required.']);
         exit;
     }
-    if ($checkOut <= $checkIn) {
+    // Only enforced when the dates are actually being changed, so an old
+    // booking with odd dates can still have its other details edited.
+    $datesUntouched = substr((string) $checkIn, 0, 10)  === substr((string) $existing['check_in'], 0, 10)
+                   && substr((string) $checkOut, 0, 10) === substr((string) $existing['check_out'], 0, 10);
+    if ($checkOut <= $checkIn && !$datesUntouched) {
         echo json_encode(['success' => false, 'error' => 'Check-out must be after check-in.']);
         exit;
     }
@@ -648,7 +655,19 @@ if ($action === 'update') {
         echo json_encode(['success' => false, 'error' => 'Accommodation not found.']);
         exit;
     }
-    if ($guestsCount > (int) $room['capacity']) {
+    /* Did anything that affects availability / price actually change?
+       Admins can always edit a booking (notes, contact details, ...), so the
+       strict checks below only run when the room, dates or guest count move. */
+    $roomChanged   = $accommodationId !== (int) $existing['accommodation_id'];
+    $datesChanged  = substr((string) $checkIn, 0, 10)  !== substr((string) $existing['check_in'], 0, 10)
+                  || substr((string) $checkOut, 0, 10) !== substr((string) $existing['check_out'], 0, 10);
+    $guestsChanged = $guestsCount !== (int) $existing['guests_count'];
+    $schedChanged  = $roomChanged || $datesChanged || $guestsChanged;
+
+    // Capacity is only enforced when the room changes or the party grows,
+    // so an old booking that is already over capacity can still be edited.
+    if ($guestsCount > (int) $room['capacity']
+        && ($roomChanged || $guestsCount > (int) $existing['guests_count'])) {
         echo json_encode(['success' => false, 'error' => "This accommodation holds up to {$room['capacity']} guest(s)."]);
         exit;
     }
@@ -656,29 +675,50 @@ if ($action === 'update') {
     $isPool = strcasecmp(trim((string) $room['type']), 'Swimming Pool') === 0;
 
     // Pool bookings are for the DAY or the NIGHT session (see create).
-    // An old pool booking with no session on file must be given one the
-    // first time it is edited.
+    // An old pool booking with no session on file can still be edited
+    // (it stays blank); a session is only demanded when the booking's
+    // room / dates / guests change.
     $poolSession = null;
     if ($isPool) {
         $poolSession = strtolower(trim((string) ($body['pool_session'] ?? $existing['pool_session'] ?? '')));
-        if (!in_array($poolSession, BK_POOL_SESSIONS, true)) {
+        if ($poolSession === '') {
+            if ($schedChanged) {
+                echo json_encode(['success' => false, 'error' => 'Please choose Day or Night for the swimming pool.']);
+                exit;
+            }
+            $poolSession = null;
+        } elseif (!in_array($poolSession, BK_POOL_SESSIONS, true)) {
             echo json_encode(['success' => false, 'error' => 'Please choose Day or Night for the swimming pool.']);
             exit;
+        }
+        if ($poolSession !== ($existing['pool_session'] ?: null)) {
+            $schedChanged = true;
         }
     }
 
     $nights = max(1, (int) ceil((strtotime($checkOut) - strtotime($checkIn)) / 86400));
     // Pool = flat ₱1,000 for 1-10 guests; 11+ guests pay the per-person
     // price each (see bk_pool_fee), for each day booked. Others per night.
-    $total  = $isPool
-        ? bk_pool_fee((float) $room['price'], $guestsCount, $nights)
-        : round((float) $room['price'] * $nights, 2);
+    // If nothing price-related changed, keep the stored total so billing for
+    // an existing (e.g. checked-out) booking is never silently altered.
+    if (!$schedChanged) {
+        $total = (float) $existing['total_amount'];
+    } else {
+        $total = $isPool
+            ? bk_pool_fee((float) $room['price'], $guestsCount, $nights)
+            : round((float) $room['price'] * $nights, 2);
+    }
 
     /* --- Conflict / capacity check, excluding this booking itself --- */
     // A cancelled booking doesn't hold the room, so editing it (notes, guest
     // details, dates...) must never be blocked by another booking on the
     // same dates. Anything else is still checked so no double-booking occurs.
-    $skipConflictCheck = (($existing['status'] ?? '') === 'cancelled');
+    // It is also skipped when the room / dates / guests didn't change, and for
+    // checked-out bookings (their stay is over), so an admin can always save
+    // notes or contact fixes on any booking.
+    $skipConflictCheck = (($existing['status'] ?? '') === 'cancelled')
+        || !$schedChanged
+        || !empty($existing['checked_out_at']);
 
     $pdo->beginTransaction();
     try {

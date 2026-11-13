@@ -1352,11 +1352,11 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                         </div>
                         <div class="form-group full">
                             <label class="form-label">Address <span style="color:var(--red)">*</span></label>
-                            <input class="form-input" type="text" name="address" placeholder="Barangay, Municipality, Province (can be just the barangay)" id="edAddress" required>
+                            <input class="form-input" type="text" name="address" placeholder="Barangay, Municipality, Province (can be just the barangay)" id="edAddress">
                         </div>
                         <div class="form-group full">
                             <label class="form-label">Nationality <span style="color:var(--red)">*</span></label>
-                            <input class="form-input" type="text" name="nationality" placeholder="Filipino" id="edNationality" list="adminNationalityList" autocomplete="off" required>
+                            <input class="form-input" type="text" name="nationality" placeholder="Filipino" id="edNationality" list="adminNationalityList" autocomplete="off">
                         </div>
                     </div>
                 </div>
