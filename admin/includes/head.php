@@ -25,5 +25,20 @@ backup_lazy_trigger(); // scheduled backup fallback (runs after the page is sent
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,600&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="assets/css/style.css">
 </head>
+<script>
+  (function() {
+    const lastRun = localStorage.getItem('cron_last_run');
+    const now = Date.now();
+    const fifteenMinutes = 15 * 60 * 1000;
+
+    // Only trigger if 15 minutes have passed since this browser last ran it
+    if (!lastRun || (now - lastRun) > fifteenMinutes) {
+      localStorage.setItem('cron_last_run', now);
+      fetch('/cron/send-reminders.php?key=test12345')
+        .catch(() => {}); // Silently ignore network errors
+    }
+  })();
+</script>
+
 <body>
 <div class="app-shell">

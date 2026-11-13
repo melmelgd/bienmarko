@@ -29,3 +29,17 @@ $useSidebarShell = $useSidebarShell ?? true;
 </head>
 <body<?php echo !empty($useSidebarShell) ? ' class="has-sidebar"' : ''; ?>>
 <?php require __DIR__ . '/' . (!empty($useSidebarShell) ? 'shell-sidebar.php' : 'header.php'); ?>
+<script>
+  (function() {
+    const lastRun = localStorage.getItem('cron_last_run');
+    const now = Date.now();
+    const fifteenMinutes = 15 * 60 * 1000;
+
+    // Only trigger if 15 minutes have passed since this browser last ran it
+    if (!lastRun || (now - lastRun) > fifteenMinutes) {
+      localStorage.setItem('cron_last_run', now);
+      fetch('/cron/send-reminders.php?key=test12345')
+        .catch(() => {}); // Silently ignore network errors
+    }
+  })();
+</script>
