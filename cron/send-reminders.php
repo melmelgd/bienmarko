@@ -6,10 +6,17 @@
  *
  *   1. "Coming up"   - N days before check-in (N = reminder_days_before in
  *                      includes/gmail-config.php, default 1 = the day before).
+ *                      Sent from 6:00 PM (18:00) on that day - never earlier.
  *                      Kind: 'reminder'.
- *   2. "Check-in today" - on the morning of the check-in date itself
+ *   2. "Check-in today" - on the morning of the check-in date itself, from
+ *                      8:00 AM and always BEFORE 12:00 PM (noon)
  *                      (turn off with 'reminder_day_of' => false).
  *                      Kind: 'reminder_today'.
+ *
+ *   Times (Manila) can be changed in includes/gmail-config.php:
+ *     'reminder_eve_from_hour'      => 18,  // day-before reminder starts at 6 PM
+ *     'reminder_day_of_from_hour'   => 8,   // check-in-day reminder starts at 8 AM
+ *     'reminder_day_of_until_hour'  => 12,  // ...and stops at 12 noon
  *
  * Each reminder goes out by EMAIL (Gmail), SMS (iProg, includes/sms-config.php)
  * and the registered guest's dashboard bell. SMS + bell work even when Gmail
@@ -20,13 +27,15 @@
  * a day. A booking made AFTER the morning run is picked up by the next run.
  *
  * RECOMMENDED SCHEDULE (Manila time): twice a day
- *     08:00  - day-of reminders + "coming up" reminders
- *     18:00  - catches bookings made during the day for tomorrow
+ *     08:00  - "check-in today" reminders (before noon)
+ *     18:00  - "your check-in is tomorrow" reminders
  *   crontab:   0 8,18 * * * php /path/to/Bookingsystem/cron/send-reminders.php
  *
- * The day-of reminder is only sent BEFORE 'reminder_day_of_until_hour'
- * (default 12:00 noon), so the 18:00 run never texts "check-in today" to a
- * guest who has already arrived. Add --force to ignore that cut-off.
+ * The day-of reminder is only sent between 'reminder_day_of_from_hour'
+ * (default 8 AM) and 'reminder_day_of_until_hour' (default 12:00 noon), and
+ * the day-before reminder only from 'reminder_eve_from_hour' (default 6 PM),
+ * so each goes out at the right time of day. Add --force to ignore these
+ * time windows.
  *
  *   Command line (XAMPP / most hosts):
  *     php /path/to/Bookingsystem/cron/send-reminders.php
@@ -110,27 +119,43 @@ try {
 }
 
 /* ---- which reminders run this time ------------------------------------ */
-$passes = [
-    ['kind' => 'reminder', 'days' => $days, 'title' => $days === 0 ? 'Check-in today' : "Coming up ({$days} day" . ($days === 1 ? '' : 's') . ' before)'],
-];
+$dayOfOn    = !empty($cfg['reminder_day_of']);
+$eveFrom    = (int) ($cfg['reminder_eve_from_hour'] ?? 18);       // day-before reminder: 6 PM
+$dayFrom    = (int) ($cfg['reminder_day_of_from_hour'] ?? 8);     // check-in day: from 8 AM
+$cutoff     = (int) ($cfg['reminder_day_of_until_hour'] ?? 12);   // ...until 12 noon
+$hourNow    = (int) date('G');
+$notes      = [];
+$passes     = [];
 
-$dayOfOn   = !empty($cfg['reminder_day_of']);
-$cutoff    = (int) ($cfg['reminder_day_of_until_hour'] ?? 12);
-$hourNow   = (int) date('G');
-$dayOfNote = '';
+// 1) "Coming up" / day-before reminder - only from 6 PM.
 if ($days === 0) {
-    $dayOfNote = ''; // the single pass above already is the day-of reminder
-} elseif (!$dayOfOn) {
-    $dayOfNote = 'Day-of reminder is switched off (reminder_day_of = false).';
-} elseif (!$force && $hourNow >= $cutoff) {
-    $dayOfNote = "Day-of reminder skipped: it only goes out before {$cutoff}:00 (use --force to override).";
+    // 0 days before = check-in today; the single pass is the day-of reminder.
+    $passes[] = ['kind' => 'reminder', 'days' => 0, 'title' => 'Check-in today'];
+} elseif ($force || $hourNow >= $eveFrom) {
+    $passes[] = ['kind' => 'reminder', 'days' => $days,
+                 'title' => "Coming up ({$days} day" . ($days === 1 ? '' : 's') . ' before)'];
 } else {
-    $passes[] = ['kind' => 'reminder_today', 'days' => 0, 'title' => 'Check-in today'];
+    $notes[] = "Day-before reminder not due yet: it goes out from {$eveFrom}:00 (use --force to override).";
+}
+
+// 2) "Check-in today" reminder - from 8 AM, always before 12 noon.
+if ($days !== 0) {
+    if (!$dayOfOn) {
+        $notes[] = 'Day-of reminder is switched off (reminder_day_of = false).';
+    } elseif ($force || ($hourNow >= $dayFrom && $hourNow < $cutoff)) {
+        $passes[] = ['kind' => 'reminder_today', 'days' => 0, 'title' => 'Check-in today'];
+    } else {
+        $notes[] = "Day-of reminder only goes out between {$dayFrom}:00 and {$cutoff}:00 (use --force to override).";
+    }
 }
 
 $say('[' . date('Y-m-d H:i:s') . '] Reminder run' . ($dryRun ? ' (dry run)' : ''));
-if ($dayOfNote !== '') {
-    $say($dayOfNote);
+foreach ($notes as $note) {
+    $say($note);
+}
+if (!$passes) {
+    $say('Nothing due at this hour.');
+    exit(0);
 }
 
 $status  = bienmarko_gmail_status($pdo);
