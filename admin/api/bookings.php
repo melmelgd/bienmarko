@@ -675,9 +675,16 @@ if ($action === 'update') {
         : round((float) $room['price'] * $nights, 2);
 
     /* --- Conflict / capacity check, excluding this booking itself --- */
+    // A cancelled booking doesn't hold the room, so editing it (notes, guest
+    // details, dates...) must never be blocked by another booking on the
+    // same dates. Anything else is still checked so no double-booking occurs.
+    $skipConflictCheck = (($existing['status'] ?? '') === 'cancelled');
+
     $pdo->beginTransaction();
     try {
-        if ($isPool) {
+        if ($skipConflictCheck) {
+            // nothing to check
+        } elseif ($isPool) {
             $conflict = $pdo->prepare(
                 "SELECT COALESCE(SUM(guests_count), 0) FROM bookings
                  WHERE accommodation_id = :aid

@@ -754,9 +754,9 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
     $pay = $stage === 'checked_in'
         ? bk_payment_state($pdo, (int) $bk['id'])
         : ['has_record' => false, 'billed' => 0.0, 'paid' => 0.0, 'balance' => 0.0, 'fully_paid' => false];
-    // Same rules the old page used: only confirmed/pending bookings can be
-    // edited or cancelled. New: once a guest has checked in, the booking can
-    // still be edited (e.g. a stay extension) but can no longer be cancelled.
+    // Cancelling is only allowed before check-in. Editing is ALWAYS allowed
+    // for an admin, whatever the stage (upcoming, checked in, checked out or
+    // cancelled), so records can be corrected at any time.
     $live = in_array($bk['status'], ['confirmed', 'pending'], true);
     $fmt  = static function ($ts) {
         return $ts ? date('M j, Y g:i A', strtotime($ts)) : '';
@@ -774,7 +774,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
         'pay_balance'   => number_format($pay['balance'], 2),
         'pay_paid'      => number_format($pay['paid'], 2),
         'can_cancel'    => $stage === 'upcoming' && $live,
-        'can_edit'      => in_array($stage, ['upcoming', 'checked_in'], true) && $live,
+        'can_edit'      => true,
         'can_restore'   => $stage === 'cancelled',
         'checked_in_at'  => $fmt($bk['checked_in_at']),
         'checked_out_at' => $fmt($bk['checked_out_at']),
