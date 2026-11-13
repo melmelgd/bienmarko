@@ -22,20 +22,17 @@ function initNotifications() {
   var toggle = document.getElementById('notifToggle');
   var panel = document.getElementById('notifPanel');
   if (!toggle || !panel) return;
-  var marking = false;
+  var busy = false;
 
   toggle.addEventListener('click', function (e) {
     e.stopPropagation();
     var isOpen = !panel.hidden;
     panel.hidden = isOpen;
     toggle.setAttribute('aria-expanded', String(!isOpen));
-    if (!isOpen) {
-      markNotificationsRead();
-    }
   });
 
   document.addEventListener('click', function (e) {
-    if (!panel.hidden && !panel.contains(e.target) && e.target !== toggle) {
+    if (!panel.hidden && !panel.contains(e.target) && e.target !== toggle && !toggle.contains(e.target)) {
       panel.hidden = true;
       toggle.setAttribute('aria-expanded', 'false');
     }
@@ -48,28 +45,83 @@ function initNotifications() {
     }
   });
 
-  // Marks every unread notification as read once the panel is opened.
-  // The badge is looked up at click time (not cached at page load) because
-  // live-refresh.js can add or remove it while the page is open; no badge
-  // means nothing is unread, so no wasted request.
-  function markNotificationsRead() {
-    var badge = toggle.querySelector('.topbar__badge');
-    if (marking || !badge) return;
-    marking = true;
-    var csrf = toggle.getAttribute('data-csrf') || '';
+  // Buttons are looked up through event delegation because live-refresh.js
+  // re-renders the panel contents while the page is open.
+  panel.addEventListener('click', function (e) {
+    var actionBtn = e.target.closest('[data-notif-action]');
+    var delBtn = e.target.closest('[data-notif-delete]');
+
+    if (actionBtn && !actionBtn.disabled) {
+      var action = actionBtn.getAttribute('data-notif-action');
+      if (action === 'delete_all' && !window.confirm('Delete all notifications?')) return;
+      send({ action: action }, function () {
+        if (action === 'mark_all_read') {
+          var unreadItems = panel.querySelectorAll('.topbar__notif-list li.is-unread');
+          for (var i = 0; i < unreadItems.length; i++) unreadItems[i].classList.remove('is-unread');
+        } else {
+          var list = panel.querySelector('.topbar__notif-list');
+          if (list && list.parentNode) list.parentNode.removeChild(list);
+        }
+        refreshState();
+      });
+    } else if (delBtn) {
+      var id = parseInt(delBtn.getAttribute('data-notif-delete'), 10);
+      if (!id) return;
+      send({ action: 'delete', id: id }, function () {
+        var li = delBtn.closest('li');
+        if (li && li.parentNode) li.parentNode.removeChild(li);
+        refreshState();
+      });
+    }
+  });
+
+  function send(payload, done) {
+    if (busy) return;
+    busy = true;
+    payload.csrf_token = toggle.getAttribute('data-csrf') || '';
     fetch('api/notifications.php', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'mark_all_read', csrf_token: csrf })
-    }).then(function () {
-      var b = toggle.querySelector('.topbar__badge');
-      if (b && b.parentNode) b.parentNode.removeChild(b);
-      var items = panel.querySelectorAll('.topbar__notif-list li.is-unread');
-      for (var i = 0; i < items.length; i++) {
-        items[i].classList.remove('is-unread');
+      body: JSON.stringify(payload)
+    }).then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.success) done();
+        else window.alert((data && data.error) || 'Could not update notifications.');
+      })
+      .catch(function () { window.alert('Could not update notifications. Please try again.'); })
+      .then(function () { busy = false; });
+  }
+
+  // Syncs badge, button states and the empty message with what is on screen.
+  function refreshState() {
+    var items = panel.querySelectorAll('.topbar__notif-list li');
+    var unread = panel.querySelectorAll('.topbar__notif-list li.is-unread').length;
+
+    var markBtn = panel.querySelector('[data-notif-action="mark_all_read"]');
+    var clearBtn = panel.querySelector('[data-notif-action="delete_all"]');
+    if (markBtn) markBtn.disabled = unread === 0;
+    if (clearBtn) clearBtn.disabled = items.length === 0;
+
+    var badge = toggle.querySelector('.topbar__badge');
+    if (unread === 0 && badge && badge.parentNode) {
+      badge.parentNode.removeChild(badge);
+    } else if (unread > 0 && badge && !toggle.classList.contains('shell-bell')) {
+      badge.textContent = String(unread);
+    }
+
+    if (items.length === 0) {
+      var list = panel.querySelector('.topbar__notif-list');
+      if (list && list.parentNode) list.parentNode.removeChild(list);
+      if (!panel.querySelector('.empty-state')) {
+        var empty = document.createElement('div');
+        empty.className = 'empty-state empty-state--compact';
+        var p = document.createElement('p');
+        p.className = 'empty-state__message';
+        p.textContent = 'No new notifications';
+        empty.appendChild(p);
+        panel.appendChild(empty);
       }
-    }).catch(function () { /* try again on the next open */ })
-      .then(function () { marking = false; });
+    }
   }
 }
 

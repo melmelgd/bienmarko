@@ -257,8 +257,13 @@
     if (!toggle || !panel) return;
 
     var items = bell.items || [];
-    var title = panel.querySelector('.topbar__notif-title');
-    while (title && title.nextSibling) panel.removeChild(title.nextSibling);
+    var head = panel.querySelector('.topbar__notif-head') || panel.querySelector('.topbar__notif-title');
+    while (head && head.nextSibling) panel.removeChild(head.nextSibling);
+
+    var markBtn = panel.querySelector('[data-notif-action="mark_all_read"]');
+    var clearBtn = panel.querySelector('[data-notif-action="delete_all"]');
+    if (markBtn) markBtn.disabled = unread === 0;
+    if (clearBtn) clearBtn.disabled = items.length === 0;
 
     if (!items.length) {
       var empty = document.createElement('div');
@@ -274,6 +279,7 @@
       items.forEach(function (n) {
         var li = document.createElement('li');
         if (!n.is_read) li.className = 'is-unread';
+        li.setAttribute('data-notif-id', String(n.id));
         var inner;
         if (n.href) {
           inner = document.createElement('a');
@@ -289,6 +295,13 @@
         t.className = 'topbar__notif-time';
         t.textContent = n.time || '';
         li.appendChild(t);
+        var d = document.createElement('button');
+        d.type = 'button';
+        d.className = 'topbar__notif-del';
+        d.setAttribute('data-notif-delete', String(n.id));
+        d.setAttribute('aria-label', 'Delete notification');
+        d.innerHTML = '&times;';
+        li.appendChild(d);
         ul.appendChild(li);
       });
       panel.appendChild(ul);

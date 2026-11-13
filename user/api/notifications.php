@@ -78,6 +78,26 @@ switch ($action) {
         echo json_encode(['success' => true]);
         break;
 
+    case 'delete':
+        $id = filter_var($input['id'] ?? null, FILTER_VALIDATE_INT);
+        if (!$id || $id < 1) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'Invalid notification id.']);
+            break;
+        }
+        $stmt = $pdo->prepare(
+            "DELETE FROM guest_notifications WHERE id = :id AND guest_id = :gid"
+        );
+        $stmt->execute(['id' => $id, 'gid' => $guestId]);
+        echo json_encode(['success' => true]);
+        break;
+
+    case 'delete_all':
+        $stmt = $pdo->prepare("DELETE FROM guest_notifications WHERE guest_id = :gid");
+        $stmt->execute(['gid' => $guestId]);
+        echo json_encode(['success' => true]);
+        break;
+
     default:
         http_response_code(400);
         echo json_encode(['success' => false, 'error' => 'Unknown action.']);

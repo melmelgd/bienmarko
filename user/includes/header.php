@@ -54,7 +54,13 @@ $navCurrent       = $currentPage ?? '';
                     <?php endif; ?>
                 </button>
                 <div class="topbar__notif-panel" id="notifPanel" hidden>
-                    <p class="topbar__notif-title">Notifications</p>
+                    <div class="topbar__notif-head">
+                        <p class="topbar__notif-title">Notifications</p>
+                        <div class="topbar__notif-tools">
+                            <button type="button" class="topbar__notif-btn" data-notif-action="mark_all_read"<?php echo $notifUnreadCount > 0 ? '' : ' disabled'; ?>>Mark all as read</button>
+                            <button type="button" class="topbar__notif-btn topbar__notif-btn--danger" data-notif-action="delete_all"<?php echo $notifCount > 0 ? '' : ' disabled'; ?>>Clear all</button>
+                        </div>
+                    </div>
                     <?php if ($notifCount === 0): ?>
                         <div class="empty-state empty-state--compact">
                             <span class="empty-state__icon"><?php render_icon('inbox'); ?></span>
@@ -63,13 +69,14 @@ $navCurrent       = $currentPage ?? '';
                     <?php else: ?>
                         <ul class="topbar__notif-list">
                             <?php foreach ($notifications as $notif): ?>
-                                <li class="<?php echo empty($notif['is_read']) ? 'is-unread' : ''; ?>">
+                                <li class="<?php echo empty($notif['is_read']) ? 'is-unread' : ''; ?>" data-notif-id="<?php echo (int) $notif['id']; ?>">
                                     <?php if (!empty($notif['href'])): ?>
                                         <a href="<?php echo htmlspecialchars($notif['href']); ?>" style="color:inherit;text-decoration:underline"><?php echo htmlspecialchars($notif['message']); ?></a>
                                     <?php else: ?>
                                         <span><?php echo htmlspecialchars($notif['message']); ?></span>
                                     <?php endif; ?>
                                     <span class="topbar__notif-time"><?php echo htmlspecialchars($notif['time']); ?></span>
+                                    <button type="button" class="topbar__notif-del" data-notif-delete="<?php echo (int) $notif['id']; ?>" aria-label="Delete notification">&times;</button>
                                 </li>
                             <?php endforeach; ?>
                         </ul>
