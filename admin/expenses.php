@@ -19,9 +19,9 @@ require_once __DIR__ . '/includes/ui.php';
 require_once __DIR__ . '/includes/expense-link.php';
 
 $active_page        = 'expenses';
-$page_title          = 'Expense Tracking';
+$page_title          = 'Expenses';
 $breadcrumb          = 'Expenses';
-$page_action_label   = 'Add Expense';
+$page_action_label   = 'Add expense';
 $show_period_toggle  = false;
 
 $pdo  = bienmarko_db();
@@ -108,11 +108,62 @@ $statInventoryMonth = (float) $invStmt->fetchColumn();
 $statCategoryCount = count(EXP_CATEGORIES);
 $statAveragePerCat = $statCategoryCount > 0 ? ($statThisMonth / $statCategoryCount) : 0.0;
 
+/* Last calendar month — for the second summary card */
+$lastStart = date('Y-m-01', strtotime('first day of last month'));
+$lastEnd   = date('Y-m-t',  strtotime('first day of last month'));
+$sumStmt->execute(['start' => $lastStart, 'end' => $lastEnd]);
+$statLastMonth      = (float) $sumStmt->fetchColumn();
+$statLastMonthLabel = date('F Y', strtotime($lastStart));
+$statManualMonth    = max(0, $statThisMonth - $statInventoryMonth);
+
 /* ------------------------------------------------------------------
-   Main list query — most recent expenses first
+   Filters — month (default: this month), category, search in notes
 ------------------------------------------------------------------ */
-$stmt = $pdo->query('SELECT * FROM expenses ORDER BY expense_date DESC, id DESC');
+$filterMonth    = trim($_GET['month'] ?? date('Y-m'));
+$filterCategory = trim($_GET['category'] ?? '');
+$filterSearch   = trim($_GET['search'] ?? '');
+if ($filterMonth !== 'all' && !preg_match('/^\d{4}-(0[1-9]|1[0-2])$/', $filterMonth)) {
+    $filterMonth = date('Y-m');
+}
+if (!in_array($filterCategory, EXP_CATEGORIES, true)) {
+    $filterCategory = '';
+}
+
+/* Months that have expenses (+ this month, + the one being viewed) */
+$monthOptions = [date('Y-m') => date('F Y')];
+foreach ($pdo->query("SELECT DISTINCT DATE_FORMAT(expense_date, '%Y-%m') AS ym FROM expenses ORDER BY ym DESC")->fetchAll(PDO::FETCH_COLUMN) as $ym) {
+    $monthOptions[$ym] = date('F Y', strtotime($ym . '-01'));
+}
+if ($filterMonth !== 'all' && !isset($monthOptions[$filterMonth])) {
+    $monthOptions[$filterMonth] = date('F Y', strtotime($filterMonth . '-01'));
+}
+krsort($monthOptions);
+
+$where  = [];
+$params = [];
+if ($filterMonth !== 'all') {
+    $where[] = 'expense_date BETWEEN :ms AND :me';
+    $params['ms'] = $filterMonth . '-01';
+    $params['me'] = date('Y-m-t', strtotime($filterMonth . '-01'));
+}
+if ($filterCategory !== '') {
+    $where[] = 'category = :cat';
+    $params['cat'] = $filterCategory;
+}
+if ($filterSearch !== '') {
+    $where[] = 'notes LIKE :q';
+    $params['q'] = '%' . $filterSearch . '%';
+}
+$whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
+
+/* Main list — most recent expenses first */
+$stmt = $pdo->prepare("SELECT * FROM expenses {$whereSql} ORDER BY expense_date DESC, id DESC");
+$stmt->execute($params);
 $rows = $stmt->fetchAll();
+
+$totalAllExpenses = (int) $pdo->query('SELECT COUNT(*) FROM expenses')->fetchColumn();
+$totalShown = 0.0;
+foreach ($rows as $r) { $totalShown += (float) $r['amount']; }
 
 require __DIR__ . '/includes/head.php';
 require __DIR__ . '/includes/sidebar.php';
@@ -245,110 +296,152 @@ textarea.form-input { resize: vertical; min-height: 80px; }
 .toast--success { background: var(--emerald-bg); border: 1px solid var(--emerald); color: var(--emerald); }
 .toast--error   { background: var(--red-bg);     border: 1px solid var(--red);     color: var(--red); }
 
+/* ---------- Summary cards ---------- */
+.exp-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.exp-kpi { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 22px 28px; }
+.exp-kpi-label { font-size: 15px; color: var(--text-secondary); }
+.exp-kpi-value { display: block; font-family: var(--font-display); font-size: 40px; font-weight: 700; line-height: 1; color: var(--text); margin: 20px 0 12px; }
+.exp-kpi-sub { font-size: 13.5px; color: var(--text-secondary); }
+
+/* ---------- Filters ---------- */
+.exp-filters { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.exp-filters .filter-select { padding: 15px 18px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text); font-size: 15px; cursor: pointer; }
+.exp-filters .filter-select:focus { outline: none; border-color: var(--gold-500); }
+.exp-search { flex: 1; min-width: 220px; }
+.exp-search input { width: 100%; padding: 15px 18px; background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text); font-size: 15px; transition: border-color var(--transition); }
+.exp-search input:focus { outline: none; border-color: var(--gold-500); }
+.exp-search input::placeholder { color: var(--text-tertiary); }
+
+/* ---------- Records table ---------- */
+.table-head--exp { justify-content: flex-start; gap: 12px; padding: 22px 28px 14px; margin-bottom: 0; }
+.table-head--exp .panel-title { font-size: 24px; }
+.table-head--exp .results-count { font-size: 14px; }
+.exp-table thead th { padding: 12px 12px; font-size: 13.5px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.exp-table tbody td { padding: 18px 12px; font-size: 15px; vertical-align: middle; }
+.exp-table th:first-child, .exp-table td:first-child { padding-left: 28px; }
+.exp-table th:last-child,  .exp-table td:last-child  { padding-right: 28px; }
+.exp-table .th-right, .exp-table .td-right { text-align: right; }
+.exp-table .td-date  { color: var(--text); white-space: nowrap; }
+.exp-table .td-notes { color: var(--text); max-width: none; white-space: normal; }
+.exp-table .td-amount { font-family: inherit; font-weight: 700; white-space: nowrap; }
+.exp-table .td-actions { justify-content: flex-end; }
+.exp-table .td-locked { font-size: 15px; color: var(--text-secondary); }
+.pill { display: inline-flex; align-items: center; padding: 4px 13px; border-radius: var(--r-full); font-size: 13px; font-weight: 400; white-space: nowrap; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text-secondary); }
+a.pill--inventory, .pill--inventory { background: var(--blue-bg); color: var(--blue); border-color: transparent; text-decoration: none; }
+a.pill--inventory:hover { text-decoration: underline; }
+.exp-btn-edit { width: 40px; height: 40px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: transparent; border: 1px solid var(--gold-500); color: var(--gold-400); cursor: pointer; transition: background var(--transition); }
+.exp-btn-edit:hover { background: var(--amber-bg); }
+.exp-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 18px 28px; border-top: 1px solid var(--border); font-size: 15px; color: var(--text-secondary); }
+.exp-foot strong { color: var(--text); }
+
+/* Delete now lives inside the Edit dialog */
+.modal-actions .btn-delete { margin-right: auto; display: inline-flex; align-items: center; gap: 6px; }
+
+@media (max-width: 700px) { .exp-kpi-grid { grid-template-columns: 1fr; } .table-head--exp, .exp-foot { padding-left: 16px; padding-right: 16px; } }
 @media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
 </style>
 
 <div class="stack">
 
-    <!-- ===== Stat cards ===== -->
-    <div class="stat-grid">
-        <div class="stat-card">
-            <div class="stat-card-top">
-                <span class="stat-label">Total Expenses</span>
-                <span class="stat-icon stat-icon--red"><?php echo icon('trend-down'); ?></span>
-            </div>
-            <span class="stat-value">₱<?php echo number_format($statThisMonth, 2); ?></span>
-            <span class="stat-sub">This Month<?php if ($statInventoryMonth > 0): ?> &middot; ₱<?php echo number_format($statInventoryMonth, 2); ?> from Inventory<?php endif; ?></span>
+    <!-- ===== Summary cards ===== -->
+    <div class="exp-kpi-grid">
+        <div class="exp-kpi">
+            <div class="exp-kpi-label">This month</div>
+            <span class="exp-kpi-value">₱<?php echo number_format($statThisMonth, 2); ?></span>
+            <div class="exp-kpi-sub">₱<?php echo number_format($statInventoryMonth, 2); ?> inventory · ₱<?php echo number_format($statManualMonth, 2); ?> manual</div>
         </div>
-        <div class="stat-card">
-            <div class="stat-card-top">
-                <span class="stat-label">Categories</span>
-                <span class="stat-icon stat-icon--blue"><?php echo icon('trend-up'); ?></span>
-            </div>
-            <span class="stat-value"><?php echo $statCategoryCount; ?></span>
-            <span class="stat-sub">Active Expenses Types</span>
+        <div class="exp-kpi">
+            <div class="exp-kpi-label">Last month</div>
+            <span class="exp-kpi-value">₱<?php echo number_format($statLastMonth, 2); ?></span>
+            <div class="exp-kpi-sub"><?php echo htmlspecialchars($statLastMonthLabel, ENT_QUOTES, 'UTF-8'); ?></div>
         </div>
-        <div class="stat-card">
-            <div class="stat-card-top">
-                <span class="stat-label">Average per Category</span>
-                <span class="stat-icon stat-icon--blue"><?php echo icon('trend-up'); ?></span>
-            </div>
-            <span class="stat-value">₱<?php echo number_format($statAveragePerCat, 2); ?></span>
-            <span class="stat-sub">Average Spending</span>
+    </div>
+
+    <!-- ===== Filters ===== -->
+    <div class="exp-filters">
+        <select class="filter-select" id="monthSelect" aria-label="Month">
+            <?php foreach ($monthOptions as $ym => $label): ?>
+                <option value="<?php echo htmlspecialchars($ym, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $filterMonth === $ym ? 'selected' : ''; ?>><?php echo htmlspecialchars($label, ENT_QUOTES, 'UTF-8'); ?></option>
+            <?php endforeach; ?>
+            <option value="all" <?php echo $filterMonth === 'all' ? 'selected' : ''; ?>>All time</option>
+        </select>
+        <select class="filter-select" id="categorySelect" aria-label="Category">
+            <option value="">All categories</option>
+            <?php foreach (EXP_CATEGORIES as $cat): ?>
+                <option value="<?php echo htmlspecialchars($cat, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $filterCategory === $cat ? 'selected' : ''; ?>><?php echo htmlspecialchars($cat, ENT_QUOTES, 'UTF-8'); ?></option>
+            <?php endforeach; ?>
+        </select>
+        <div class="exp-search">
+            <input type="text" id="searchInput" placeholder="Search notes" value="<?php echo htmlspecialchars($filterSearch, ENT_QUOTES, 'UTF-8'); ?>">
         </div>
     </div>
 
     <!-- ===== Expense Records Table ===== -->
     <div class="panel table-wrap">
-        <div class="table-head">
-            <h2 class="panel-title">Expense Records</h2>
-            <button type="button" class="btn btn-primary" onclick="openAdd()">
-                <?php echo icon('plus', 'icon-sm'); ?> Add Expense
-            </button>
+        <div class="table-head table-head--exp">
+            <h2 class="panel-title">Expense records</h2>
+            <span class="results-count"><?php echo count($rows); ?> expense<?php echo count($rows) === 1 ? '' : 's'; ?></span>
         </div>
 
-        <?php if (empty($rows)): ?>
-            <div class="table-scroll">
-                <table>
-                    <thead>
-                        <tr><th>Date</th><th>Category</th><th>Amount</th><th>Notes</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody>
+        <div class="table-scroll">
+            <table class="exp-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Category</th>
+                        <th>Notes</th>
+                        <th>Source</th>
+                        <th class="th-right">Amount</th>
+                        <th class="th-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php if (empty($rows)): ?>
                         <tr>
-                            <td colspan="5">
-                                <?php render_empty_state('trend-down', 'No expenses recorded', 'Log operational costs here to keep track of your spending.'); ?>
+                            <td colspan="6">
+                                <?php
+                                $hasFilters = ($filterSearch !== '' || $filterCategory !== '' || $filterMonth !== date('Y-m'));
+                                render_empty_state('trend-down', $hasFilters ? 'No matching expenses' : 'No expenses recorded', $hasFilters ? 'Try a different month, category or search.' : 'Log operational costs here to keep track of your spending.');
+                                ?>
                             </td>
                         </tr>
-                    </tbody>
-                </table>
-            </div>
-        <?php else: ?>
-            <div class="table-scroll">
-                <table>
-                    <thead>
-                        <tr>
-                            <th>Date</th>
-                            <th>Category</th>
-                            <th>Amount</th>
-                            <th>Notes</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+                    <?php else: ?>
                         <?php foreach ($rows as $row): ?>
+                            <?php $isInv = (($row['source'] ?? 'manual') === 'inventory'); ?>
                             <tr>
-                                <td class="td-date"><?php echo htmlspecialchars(date('m-d-Y', strtotime($row['expense_date'])), ENT_QUOTES, 'UTF-8'); ?></td>
-                                <td><?php echo exp_category_badge($row['category']); ?></td>
-                                <td class="td-amount">₱<?php echo number_format((float) $row['amount'], 2); ?></td>
-                                <?php $isInv = (($row['source'] ?? 'manual') === 'inventory'); ?>
-                                <td class="td-notes">
-                                    <?php echo htmlspecialchars($row['notes'], ENT_QUOTES, 'UTF-8'); ?>
+                                <td class="td-date"><?php echo htmlspecialchars(date('M j, Y', strtotime($row['expense_date'])), ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td><span class="pill"><?php echo htmlspecialchars($row['category'], ENT_QUOTES, 'UTF-8'); ?></span></td>
+                                <td class="td-notes"><?php echo htmlspecialchars($row['notes'], ENT_QUOTES, 'UTF-8'); ?></td>
+                                <td>
                                     <?php if ($isInv): ?>
-                                        <a class="cb cb--inventory" href="inventory.php" title="Created from an Inventory purchase">Inventory</a>
+                                        <a class="pill pill--inventory" href="inventory.php" title="Created from an Inventory purchase">Inventory</a>
+                                    <?php else: ?>
+                                        <span class="pill">Manual</span>
                                     <?php endif; ?>
                                 </td>
-                                <td>
+                                <td class="td-right td-amount">₱<?php echo number_format((float) $row['amount'], 2); ?></td>
+                                <td class="td-right">
                                     <?php if ($isInv): ?>
                                         <span class="td-locked" title="Managed from the Inventory page">Auto-recorded</span>
                                     <?php else: ?>
-                                    <div class="td-actions">
-                                        <button class="icon-btn-sm icon-btn-sm--edit" onclick="openEdit(<?php echo (int) $row['id']; ?>)"
-                                                title="Edit" aria-label="Edit expense">
-                                            <?php echo icon('edit', 'icon-sm'); ?>
-                                        </button>
-                                        <button class="icon-btn-sm icon-btn-sm--danger" onclick="openDeleteConfirm(<?php echo (int) $row['id']; ?>)"
-                                                title="Delete" aria-label="Delete expense">
-                                            <?php echo exp_icon('trash', 'icon-sm'); ?>
-                                        </button>
-                                    </div>
+                                        <div class="td-actions">
+                                            <button class="exp-btn-edit" onclick="openEdit(<?php echo (int) $row['id']; ?>)" title="Edit" aria-label="Edit expense">
+                                                <?php echo icon('edit', 'icon-sm'); ?>
+                                            </button>
+                                        </div>
                                     <?php endif; ?>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
-                    </tbody>
-                </table>
-            </div>
-        <?php endif; ?>
+                    <?php endif; ?>
+                </tbody>
+            </table>
+        </div>
+
+        <div class="exp-foot">
+            <span>Showing <?php echo count($rows); ?> of <?php echo $totalAllExpenses; ?> expense<?php echo $totalAllExpenses === 1 ? '' : 's'; ?></span>
+            <span>Total shown <strong>₱<?php echo number_format($totalShown, 2); ?></strong></span>
+        </div>
     </div>
 
 </div><!-- /.stack -->
@@ -397,6 +490,9 @@ textarea.form-input { resize: vertical; min-height: 80px; }
             </form>
         </div>
         <div class="modal-actions">
+            <button type="button" class="btn btn-danger btn-delete" id="formDeleteBtn" style="display:none;" onclick="openDeleteConfirm(editingId)">
+                <?php echo exp_icon('trash', 'icon-sm'); ?> Delete
+            </button>
             <button class="btn btn-secondary" onclick="closeExpenseForm()">Cancel</button>
             <button class="btn btn-primary" id="formSubmitBtn" onclick="submitExpenseForm(event)">
                 <?php echo icon('plus', 'icon-sm'); ?> Add Expense
@@ -449,6 +545,7 @@ function openAdd() {
     document.getElementById('formIconBox').innerHTML    = <?php echo json_encode(icon('plus', 'icon-sm')); ?>;
     document.getElementById('formSubmitBtn').innerHTML  = <?php echo json_encode(icon('plus', 'icon-sm') . ' Add Expense'); ?>;
     document.getElementById('formSubmitBtn').className  = 'btn btn-primary';
+    document.getElementById('formDeleteBtn').style.display = 'none';
     hideFormAlert();
     document.getElementById('expenseFormModal').classList.add('is-open');
 }
@@ -468,6 +565,7 @@ function openEdit(id) {
     document.getElementById('formIconBox').innerHTML    = <?php echo json_encode(icon('edit', 'icon-sm')); ?>;
     document.getElementById('formSubmitBtn').innerHTML  = <?php echo json_encode(icon('save', 'icon-sm') . ' Save Changes'); ?>;
     document.getElementById('formSubmitBtn').className  = 'btn btn-success';
+    document.getElementById('formDeleteBtn').style.display = '';
     hideFormAlert();
     document.getElementById('expenseFormModal').classList.add('is-open');
 }
@@ -591,6 +689,26 @@ function toast(msg, type) {
         setTimeout(function () { try { wrap.removeChild(el); } catch (e) {} }, 400);
     }, 3500);
 }
+
+/* ---------- Filters (month / category / search notes) ---------- */
+function applyFilter(key, val) {
+    var url = new URL(window.location.href);
+    if (val) url.searchParams.set(key, val);
+    else url.searchParams.delete(key);
+    window.location.href = url.toString();
+}
+document.getElementById('monthSelect').addEventListener('change', function () {
+    var url = new URL(window.location.href);
+    url.searchParams.set('month', this.value);
+    window.location.href = url.toString();
+});
+document.getElementById('categorySelect').addEventListener('change', function () { applyFilter('category', this.value); });
+var searchTimer;
+document.getElementById('searchInput').addEventListener('input', function () {
+    clearTimeout(searchTimer);
+    var v = this.value.trim();
+    searchTimer = setTimeout(function () { applyFilter('search', v); }, 500);
+});
 
 /* Topbar's own "+ Add Expense" action button (page_action_label) opens
    the same modal as the one above the table. */

@@ -205,9 +205,19 @@ $whereSql = $where ? ('WHERE ' . implode(' AND ', $where)) : '';
 
 $stmt = $pdo->prepare("SELECT * FROM inventory_items {$whereSql} ORDER BY created_at DESC, id DESC");
 $stmt->execute($params);
+/* Units added by restocking, per item (from the stock log) */
+$restockedMap = [];
+foreach ($pdo->query("SELECT item_id, SUM(change_qty) AS q FROM inventory_logs WHERE reason = 'restock' AND change_qty > 0 GROUP BY item_id")->fetchAll() as $rs) {
+    $restockedMap[(int) $rs['item_id']] = (int) $rs['q'];
+}
+
 $rows = [];
+/* Tab counts follow the search + category, but not the status tab itself */
+$tabCounts = ['' => 0, 'in_stock' => 0, 'low_stock' => 0, 'out_of_stock' => 0];
 foreach ($stmt->fetchAll() as $r) {
     $status = inv_status($r);
+    $tabCounts['']++;
+    $tabCounts[$status]++;
     if ($filterStatus !== '' && $status !== $filterStatus) {
         continue;
     }
@@ -215,7 +225,21 @@ foreach ($stmt->fetchAll() as $r) {
     /* Total received can never be less than what is on hand */
     $r['total_quantity'] = max((int) ($r['total_quantity'] ?? 0), (int) $r['quantity']);
     $r['total_cost']     = round($r['total_quantity'] * (float) $r['cost_per_unit'], 2);
+    /* Opening stock + restocked = total received; used / lost = received - remaining */
+    $r['restocked']      = min($r['total_quantity'], $restockedMap[(int) $r['id']] ?? 0);
+    $r['opening']        = max(0, $r['total_quantity'] - $r['restocked']);
+    $r['used_lost']      = max(0, $r['total_quantity'] - (int) $r['quantity']);
     $rows[] = $r;
+}
+$statNeedsRestock = 0;
+foreach ($allItems as $it) {
+    if (in_array(inv_status($it), ['low_stock', 'out_of_stock'], true)) { $statNeedsRestock++; }
+}
+$statLowOnly = 0; $statOutOnly = 0;
+foreach ($allItems as $it) {
+    $st = inv_status($it);
+    if ($st === 'low_stock') { $statLowOnly++; }
+    if ($st === 'out_of_stock') { $statOutOnly++; }
 }
 
 require __DIR__ . '/includes/head.php';
@@ -366,69 +390,122 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .toast--success { background: var(--emerald-bg); border: 1px solid var(--emerald); color: var(--emerald); }
 .toast--error   { background: var(--red-bg);     border: 1px solid var(--red);     color: var(--red); }
 
-@media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } }
+/* ---------- KPI cards ---------- */
+.inv-kpi-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.inv-kpi { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 20px 24px; }
+.inv-kpi-label { font-size: 15px; color: var(--text-secondary); }
+.inv-kpi-value { display: block; font-family: var(--font-display); font-size: 38px; font-weight: 700; line-height: 1; color: var(--text); margin: 18px 0 10px; }
+.inv-kpi-value--gold { color: var(--gold-400); }
+.inv-kpi-value--blue { color: var(--blue); }
+.inv-kpi-sub { font-size: 14px; color: var(--text-secondary); }
+
+/* ---------- Status tabs ---------- */
+.tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin-top: -4px; }
+.tab { display: inline-flex; align-items: center; gap: 8px; padding: 12px 14px; font-size: 15px; color: var(--text-secondary); background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; font-family: inherit; transition: color var(--transition), border-color var(--transition); }
+.tab:hover { color: var(--text); }
+.tab.is-active { color: var(--text); border-bottom-color: var(--gold-500); }
+.tab-count { min-width: 24px; padding: 1px 8px; border-radius: var(--r-full); background: var(--panel-alt); border: 1px solid var(--border); font-size: 12px; text-align: center; color: var(--text-secondary); }
+.tab.is-active .tab-count { color: var(--gold-400); border-color: var(--gold-600); background: var(--amber-bg); }
+
+/* ---------- Items table ---------- */
+.table-head--inv { justify-content: flex-start; gap: 12px; padding: 20px 24px 12px; margin-bottom: 0; }
+.table-head--inv .panel-title { font-size: 22px; }
+.table-head--inv .results-count { font-size: 13px; }
+.inv-table thead th { padding: 10px 12px; font-size: 13px; font-weight: 600; color: var(--text-secondary); white-space: nowrap; }
+.inv-table tbody td { padding: 12px 12px; font-size: 14px; vertical-align: middle; }
+.inv-table th:first-child, .inv-table td:first-child { padding-left: 24px; }
+.inv-table th:last-child,  .inv-table td:last-child  { padding-right: 24px; width: 1%; white-space: nowrap; }
+.inv-table .th-num, .inv-table .td-num { text-align: left; font-variant-numeric: tabular-nums; }
+.inv-opening { color: var(--gold-400); font-weight: 600; }
+.inv-table .th-right { text-align: right; }
+.inv-table td:first-child { white-space: normal; min-width: 150px; }
+.inv-item-name { font-size: 15px; font-weight: 700; }
+.inv-item-sub  { font-size: 13px; color: var(--text-secondary); margin-top: 2px; }
+.inv-remaining { font-weight: 700; }
+.inv-restocked { color: var(--emerald); }
+.inv-dash      { color: var(--text-tertiary); }
+.inv-table .td-actions { justify-content: flex-end; gap: 8px; }
+.inv-btn { width: 36px; height: 36px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-md); background: transparent; border: 1px solid; cursor: pointer; transition: background var(--transition); }
+.inv-btn--edit { color: var(--gold-400); border-color: var(--border); }
+.inv-btn--edit:hover { background: var(--amber-bg); border-color: var(--gold-500); }
+.inv-btn--view { color: var(--gold-400); border-color: var(--border); }
+.inv-btn--view:hover { background: var(--amber-bg); border-color: var(--gold-500); }
+
+@media (max-width: 700px) { .inv-kpi-grid { grid-template-columns: 1fr; } }
+@media (max-width: 640px) { .form-row { grid-template-columns: 1fr; } .table-head--inv { padding: 18px 16px 14px; } }
 </style>
 
 <div class="stack">
 
-    <!-- ===== Stat cards ===== -->
-    <div class="stat-grid stat-grid--5">
-        <?php
-            render_stat_card('Total Items', (string) $statTotal, 'boxes', 'blue');
-            render_stat_card('Low Stock Items', (string) $statLowStock, 'alert-triangle', 'amber');
-            render_stat_card('Inventory Value', '₱' . number_format($statValue, 2), 'wallet', 'emerald');
-            render_stat_card('Monthly Usage', (string) $statMonthlyUsage, 'pie-chart', 'fuchsia');
-            render_stat_card('Restock Spend (Month)', '₱' . number_format($statRestockSpend, 2), 'trend-down', 'red');
-        ?>
+    <!-- ===== KPI cards ===== -->
+    <div class="inv-kpi-grid">
+        <div class="inv-kpi">
+            <div class="inv-kpi-label">Total Items</div>
+            <span class="inv-kpi-value inv-kpi-value--blue"><?php echo $statTotal; ?></span>
+            <div class="inv-kpi-sub">Tracked in inventory</div>
+        </div>
+        <div class="inv-kpi">
+            <div class="inv-kpi-label">Needs Restocking</div>
+            <span class="inv-kpi-value inv-kpi-value--gold"><?php echo $statNeedsRestock; ?></span>
+            <div class="inv-kpi-sub"><?php echo $statLowOnly; ?> low · <?php echo $statOutOnly; ?> out of stock</div>
+        </div>
     </div>
 
-    <!-- ===== Toolbar ===== -->
+    <!-- ===== Stock status tabs ===== -->
+    <div class="tabs" role="tablist">
+        <?php
+        $tabLabels = ['' => 'All', 'in_stock' => 'In Stock', 'low_stock' => 'Low Stock', 'out_of_stock' => 'Out of Stock'];
+        foreach ($tabLabels as $key => $label):
+            $isActive = ($filterStatus === $key);
+        ?>
+        <button type="button" role="tab" class="tab <?php echo $isActive ? 'is-active' : ''; ?>" aria-selected="<?php echo $isActive ? 'true' : 'false'; ?>" onclick="applyFilter('stock_status', '<?php echo $key; ?>')">
+            <?php echo $label; ?> <span class="tab-count"><?php echo (int) $tabCounts[$key]; ?></span>
+        </button>
+        <?php endforeach; ?>
+    </div>
+
+    <!-- ===== Search + category ===== -->
     <div class="toolbar">
         <div class="toolbar-search">
             <span class="toolbar-search-icon"><?php echo inv_icon('search', 'icon-sm'); ?></span>
-            <input type="text" id="searchInput" placeholder="Search items…"
+            <input type="text" id="searchInput" placeholder="Search items"
                    value="<?php echo htmlspecialchars($filterSearch, ENT_QUOTES, 'UTF-8'); ?>">
         </div>
-        <select class="filter-select" id="categorySelect">
-            <option value="">All Items</option>
+        <select class="filter-select" id="categorySelect" aria-label="Category">
+            <option value="">All categories</option>
             <?php foreach (INV_CATEGORIES as $cat): ?>
                 <option value="<?php echo htmlspecialchars($cat, ENT_QUOTES, 'UTF-8'); ?>" <?php echo $filterCategory === $cat ? 'selected' : ''; ?>>
                     <?php echo htmlspecialchars($cat, ENT_QUOTES, 'UTF-8'); ?>
                 </option>
             <?php endforeach; ?>
         </select>
-        <select class="filter-select" id="statusSelect">
-            <option value="">All Status</option>
-            <option value="in_stock"     <?php echo $filterStatus === 'in_stock'     ? 'selected' : ''; ?>>In Stock</option>
-            <option value="low_stock"    <?php echo $filterStatus === 'low_stock'    ? 'selected' : ''; ?>>Low Stock</option>
-            <option value="out_of_stock" <?php echo $filterStatus === 'out_of_stock' ? 'selected' : ''; ?>>Out of Stock</option>
-        </select>
     </div>
 
     <!-- ===== Inventory Table ===== -->
     <div class="panel table-wrap">
-        <div class="table-head">
-            <h2 class="panel-title">Inventory Items</h2>
+        <div class="table-head table-head--inv">
+            <h2 class="panel-title">Items</h2>
             <span class="results-count"><?php echo count($rows); ?> item<?php echo count($rows) === 1 ? '' : 's'; ?></span>
         </div>
         <div class="table-scroll">
-            <table>
+            <table class="inv-table">
                 <thead>
                     <tr>
-                        <th>Item Name</th>
-                        <th>Category</th>
-                        <th>Total Qty</th>
+                        <th>Item</th>
+                        <th>Beginning Stock</th>
+                        <th>Added Stock</th>
+                        <th>Total Stock</th>
+                        <th>Used</th>
                         <th>Remaining</th>
-                        <th>Min Stock</th>
-                        <th>Total Cost</th>
+                        <th>Total Stock Cost</th>
                         <th>Status</th>
-                        <th>Actions</th>
+                        <th class="th-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     <?php if (empty($rows)): ?>
                         <tr>
-                            <td colspan="8">
+                            <td colspan="9">
                                 <?php
                                     $hasFilters = ($filterSearch !== '' || $filterCategory !== '' || $filterStatus !== '');
                                     render_empty_state(
@@ -442,22 +519,28 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     <?php else: ?>
                         <?php foreach ($rows as $row): ?>
                             <tr onclick="openView(<?php echo (int) $row['id']; ?>)">
-                                <td class="td-name"><?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                <td class="td-sub"><?php echo htmlspecialchars($row['category'], ENT_QUOTES, 'UTF-8'); ?></td>
-                                <td><?php echo (int) $row['total_quantity']; ?> units</td>
-                                <td><?php echo (int) $row['quantity']; ?> units</td>
-                                <td><?php echo (int) $row['min_stock_level']; ?> units</td>
-                                <td class="td-amount">₱<?php echo number_format((float) $row['total_cost'], 2); ?></td>
+                                <td>
+                                    <div class="inv-item-name"><?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?></div>
+                                    <div class="inv-item-sub"><?php echo htmlspecialchars($row['category'], ENT_QUOTES, 'UTF-8'); ?></div>
+                                </td>
+                                <td class="td-num inv-opening"><?php echo (int) $row['opening']; ?></td>
+                                <td class="td-num">
+                                    <?php if ((int) $row['restocked'] > 0): ?><span class="inv-restocked">+<?php echo (int) $row['restocked']; ?></span><?php else: ?><span class="inv-dash">—</span><?php endif; ?>
+                                </td>
+                                <td class="td-num"><?php echo (int) $row['total_quantity']; ?></td>
+                                <td class="td-num"><?php echo (int) $row['used_lost']; ?></td>
+                                <td class="td-num inv-remaining"><?php echo (int) $row['quantity']; ?></td>
+                                <td class="td-num">₱<?php echo number_format((float) $row['total_cost'], 2); ?></td>
                                 <td><?php echo inv_status_badge($row['status']); ?></td>
                                 <td onclick="event.stopPropagation()">
                                     <div class="td-actions">
-                                        <button class="icon-btn-sm icon-btn-sm--view" onclick="openView(<?php echo (int) $row['id']; ?>)"
-                                                title="View" aria-label="View <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>">
-                                            <?php echo inv_icon('eye', 'icon-sm'); ?>
-                                        </button>
-                                        <button class="icon-btn-sm icon-btn-sm--edit" onclick="openEdit(<?php echo (int) $row['id']; ?>)"
+                                        <button class="inv-btn inv-btn--edit" onclick="openEdit(<?php echo (int) $row['id']; ?>)"
                                                 title="Edit" aria-label="Edit <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>">
                                             <?php echo icon('edit', 'icon-sm'); ?>
+                                        </button>
+                                        <button class="inv-btn inv-btn--view" onclick="openView(<?php echo (int) $row['id']; ?>)"
+                                                title="View" aria-label="View <?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?>">
+                                            <?php echo inv_icon('eye', 'icon-sm'); ?>
                                         </button>
                                     </div>
                                 </td>
@@ -619,7 +702,8 @@ function applyFilter(key, val) {
     window.location.href = url.toString();
 }
 document.getElementById('categorySelect').addEventListener('change', function () { applyFilter('category', this.value); });
-document.getElementById('statusSelect').addEventListener('change', function () { applyFilter('stock_status', this.value); });
+var statusSelectEl = document.getElementById('statusSelect');   // old dropdown — the tabs replaced it
+if (statusSelectEl) statusSelectEl.addEventListener('change', function () { applyFilter('stock_status', this.value); });
 
 var stimer;
 document.getElementById('searchInput').addEventListener('input', function () {
