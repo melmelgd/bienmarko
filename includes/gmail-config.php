@@ -45,7 +45,7 @@ return [
     // Secret for running the reminder job through a URL instead of the
     // command line:  https://YOUR-DOMAIN/cron/send-reminders.php?key=THIS
     // Leave blank to disable URL access (command line still works).
-    'cron_key'      => '',
+    'cron_key'      => 'test12345',
 
     // Only needed if connecting fails with an SSL certificate error on
     // XAMPP. Absolute path to a CA bundle, e.g.
