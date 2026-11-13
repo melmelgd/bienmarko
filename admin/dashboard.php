@@ -625,6 +625,24 @@ require __DIR__ . '/includes/topbar.php';
         });
     });
 })();
+
+
+
+// cron/send-reminders.php is called every 15 minutes, but only once per browser session. The cron script itself checks the last run time in the database, so this is just a client-side throttle to avoid hammering the server with requests from multiple open tabs.
+
+  (function() {
+    const lastRun = localStorage.getItem('cron_last_run');
+    const now = Date.now();
+    const fifteenMinutes = 15 * 60 * 1000;
+
+    // Only trigger if 15 minutes have passed since this browser last ran it
+    if (!lastRun || (now - lastRun) > fifteenMinutes) {
+      localStorage.setItem('cron_last_run', now);
+      fetch('/cron/send-reminders.php?key=test12345')
+        .catch(() => {}); // Silently ignore network errors
+    }
+  })();
+
 </script>
 
 <?php require __DIR__ . '/includes/foot.php'; ?>
