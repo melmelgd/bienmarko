@@ -45,6 +45,10 @@ $today = date('Y-m-d');
 
 /* ------------------------------------------------------------------
    1. Next upcoming confirmed stay
+   NOTE: bookings.status = 'completed' only means "fully paid" (set by
+   admin Payments) - the guest may still be checked in. So we exclude
+   only 'cancelled' here instead of listing confirmed/pending, and rely
+   on checked_in_at / checked_out_at for the real stay stage.
 ------------------------------------------------------------------ */
 $stmtUpcoming = $pdo->prepare(
     "SELECT b.id, b.reference, b.check_in, b.check_out, b.guests_count,
@@ -53,7 +57,7 @@ $stmtUpcoming = $pdo->prepare(
      FROM bookings b
      JOIN accommodations a ON a.id = b.accommodation_id
      WHERE b.guest_id = :gid
-       AND b.status IN ('confirmed','pending')
+       AND b.status <> 'cancelled'
        AND b.check_in >= :today
        AND " . bk_not_checked_in_sql($pdo, 'b') . "
      ORDER BY b.check_in ASC
@@ -94,7 +98,7 @@ $featuredIsCurrent = $currentStay !== null;
 $stmtActive = $pdo->prepare(
     "SELECT COUNT(*) FROM bookings
      WHERE guest_id = :gid
-       AND status IN ('confirmed','pending')
+       AND status <> 'cancelled'
        AND check_out >= :today
        AND " . (bk_has_stay_columns($pdo) ? 'checked_out_at IS NULL' : '1=1')
 );

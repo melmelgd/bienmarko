@@ -13,6 +13,11 @@
  * `bookings.status` is NOT changed by those actions, so the guest pages
  * must read these two columns to show the same stage the admin sees.
  *
+ * IMPORTANT: `bookings.status = 'completed'` is NOT a signal that the stay
+ * is over. Admin Payments sets it as soon as a booking is fully paid
+ * (admin/api/payments.php), which can happen at check-in - long before
+ * the guest has been checked out. Only `checked_out_at` ends a stay.
+ *
  *   cancelled   status = 'cancelled'
  *   completed   not cancelled, checked_out_at IS NOT NULL
  *   checked_in  not cancelled, checked_in_at  IS NOT NULL, checked_out_at IS NULL
@@ -66,17 +71,20 @@ function bk_not_checked_in_sql(PDO $pdo, string $alias = 'b'): string
 }
 
 /**
- * SQL condition (no parameters): the stay is COMPLETED - either the admin
- * confirmed the check-out, or the booking carries the legacy 'completed'
- * status. Used by feedback, which is only open for finished stays.
+ * SQL condition (no parameters): the stay is COMPLETED - the admin has
+ * confirmed the check-out (checked_out_at is set).
+ *
+ * `status = 'completed'` is deliberately NOT used: Payments sets that value
+ * the moment a booking is fully paid, even while the guest is still
+ * checked in. Used by feedback, which is only open for finished stays.
  */
 function bk_completed_sql(PDO $pdo, string $alias = 'b'): string
 {
     $p = $alias === '' ? '' : $alias . '.';
     if (!bk_has_stay_columns($pdo)) {
-        return "{$p}status = 'completed'";
+        return '1=0';   // no front-desk columns yet -> nothing can be completed
     }
-    return "({$p}status = 'completed' OR ({$p}status <> 'cancelled' AND {$p}checked_out_at IS NOT NULL))";
+    return "({$p}status <> 'cancelled' AND {$p}checked_out_at IS NOT NULL)";
 }
 
 /** Stage of one booking row: upcoming | checked_in | completed | cancelled. */
@@ -85,7 +93,10 @@ function bk_stage(array $row): string
     if (($row['status'] ?? '') === 'cancelled') {
         return 'cancelled';
     }
-    if (!empty($row['checked_out_at']) || ($row['status'] ?? '') === 'completed') {
+    // Only the admin's "Confirm Check-out" ends a stay. Do NOT test
+    // status === 'completed' here: that is set by Payments once the
+    // booking is fully paid, which can be while the guest is still in.
+    if (!empty($row['checked_out_at'])) {
         return 'completed';
     }
     if (!empty($row['checked_in_at'])) {
