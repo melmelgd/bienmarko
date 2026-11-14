@@ -45,7 +45,7 @@ unset($accRow);
 
 /* Type tabs: the preset types first (in this order), then any custom type
    that exists, each with its count. */
-$typePlural = ['Room' => 'Rooms', 'Cottage' => 'Cottages', 'Event Hall' => 'Event halls', 'Swimming Pool' => 'Pools'];
+$typePlural = ['Room' => 'Rooms', 'Cottage' => 'Cottages', 'Event Hall' => 'Event halls', 'Swimming Pool' => 'Pool'];
 $typeCounts = [];
 foreach ($accommodations as $accRow) {
     $t = trim((string) $accRow['type']);
