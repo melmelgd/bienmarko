@@ -1,6 +1,7 @@
-/* Live inventory for the dedicated Rooms and Event Halls pages.
+/* Live inventory for the dedicated listing pages: Rooms, Event Halls, Cottages, Pool,
+   and the new "All Accommodations" page (data-listing-category="all").
    API categories used by the existing booking system:
-   "rooms" = bedrooms; "venues" = event spaces. */
+   "rooms" = bedrooms; "venues" = event spaces; "cottage" = cottages; "pool" = pool access. */
 document.addEventListener("DOMContentLoaded", () => {
     /* Mobile menu toggle — same behaviour as the landing page */
     const menuBtn = document.getElementById("menuBtn");
@@ -25,8 +26,21 @@ document.addEventListener("DOMContentLoaded", () => {
     const page = document.body;
     if (!grid || !page) return;
 
-    const category = page.dataset.listingCategory;
+    const category = page.dataset.listingCategory;      // "rooms" | "venues" | "cottage" | "pool" | "all"
     const label = page.dataset.listingLabel || "accommodations";
+    const showAll = category === "all";
+
+    /* Display order + headings used when showing everything */
+    const groups = [
+        { key: "rooms",   title: "Rooms",       suffix: "/night"  },
+        { key: "venues",  title: "Event Halls", suffix: "/day"    },
+        { key: "cottage", title: "Cottages",    suffix: "/day"    },
+        { key: "pool",    title: "Pool Access", suffix: "/person" }
+    ];
+    const suffixFor = (itemCategory) => {
+        const group = groups.find((g) => g.key === itemCategory);
+        return group ? group.suffix : "/day";
+    };
 
     const escapeHtml = (value) => String(value ?? "")
         .replace(/&/g, "&amp;")
@@ -63,6 +77,18 @@ document.addEventListener("DOMContentLoaded", () => {
         grid.appendChild(paragraph);
     };
 
+    const makeGroupHeading = (title) => {
+        const heading = document.createElement("h2");
+        heading.className = "listing-group-title";
+        heading.textContent = title;
+        // Inline styles so no stylesheet change is needed; spans the full grid row.
+        heading.style.cssText =
+            "grid-column:1 / -1;margin:18px 0 -6px;padding-bottom:12px;" +
+            "font-family:var(--serif);font-size:clamp(28px,3vw,38px);font-weight:600;" +
+            "color:var(--cream);border-bottom:1px solid var(--line);";
+        return heading;
+    };
+
     const makeCard = (item, index) => {
         const card = document.createElement("article");
         card.className = "room-card";
@@ -78,7 +104,8 @@ document.addEventListener("DOMContentLoaded", () => {
                    </svg>
                </div>`;
 
-        const priceSuffix = category === "rooms" ? "/night" : (category === "pool" ? "/person" : "/day");
+        // Price suffix follows each item's own category so mixed lists stay correct.
+        const priceSuffix = suffixFor(item.category);
         // "Book / Inquire" opens the details page first; "Book Now" there continues to the booking flow.
         const bookingUrl = "accommodation-details.php?" +
             (item.id ? "id=" + encodeURIComponent(item.id) + "&" : "") +
@@ -106,7 +133,8 @@ document.addEventListener("DOMContentLoaded", () => {
         .then((data) => {
             const allItems = data && data.success && Array.isArray(data.rooms) ? data.rooms : [];
             const availableItems = allItems.filter((item) =>
-                item.category === category && String(item.status || "").toLowerCase() !== "booked"
+                (showAll || item.category === category) &&
+                String(item.status || "").toLowerCase() !== "booked"
             );
 
             if (!availableItems.length) {
@@ -115,7 +143,25 @@ document.addEventListener("DOMContentLoaded", () => {
             }
 
             grid.innerHTML = "";
-            availableItems.forEach((item, index) => grid.appendChild(makeCard(item, index)));
+
+            if (showAll) {
+                // Grouped by type: Rooms, Event Halls, Cottages, Pool, then anything else.
+                const known = groups.map((g) => g.key);
+                const sections = groups.map((g) => ({
+                    title: g.title,
+                    items: availableItems.filter((item) => item.category === g.key)
+                }));
+                const others = availableItems.filter((item) => !known.includes(item.category));
+                if (others.length) sections.push({ title: "Other", items: others });
+
+                sections.forEach((section) => {
+                    if (!section.items.length) return;
+                    grid.appendChild(makeGroupHeading(section.title));
+                    section.items.forEach((item, index) => grid.appendChild(makeCard(item, index)));
+                });
+            } else {
+                availableItems.forEach((item, index) => grid.appendChild(makeCard(item, index)));
+            }
 
             grid.querySelectorAll(".room-card img").forEach((img) => {
                 img.addEventListener("error", () => {

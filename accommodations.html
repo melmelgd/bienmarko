@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>All Accommodations | Bien Marko's Pension House</title>
+    <link rel="icon" href="logo/palm-tree.png">
+    <meta name="description" content="Browse all rooms, event halls, cottages, and pool access at Bien Marko's Pension House in Tabango, Leyte.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@400;500;600;700&family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="listing-page" data-listing-category="all" data-listing-label="accommodations">
+    <header class="listing-header">
+        <nav class="navbar" aria-label="Primary navigation">
+            <div class="listing-brand">
+                <a href="index.html#home" class="logo" aria-label="Bien Marko's Pension House home">
+                    <strong>Bien Marko's</strong>
+                </a>
+                <a class="listing-back" href="index.html#accommodations">&larr; Our Accommodations</a>
+            </div>
+
+            <div class="nav-links" id="navLinks">
+                <a href="index.html#home">Home</a>
+                <a class="active" href="index.html#accommodations">Accommodation</a>
+                <a href="index.html#about">About</a>
+                <a href="index.html#contact">Contact</a>
+                <div class="nav-mobile-actions">
+                    <a href="login.php" class="login">Log in</a>
+                    <a href="register.php" class="signup">Sign up</a>
+                </div>
+            </div>
+
+            <div class="nav-actions">
+                <a href="login.php" class="login">Log in</a>
+                <a href="register.php" class="signup">Sign up</a>
+            </div>
+
+            <button class="menu-btn" id="menuBtn" type="button" aria-label="Open menu" aria-expanded="false" aria-controls="navLinks">
+                <span></span><span></span><span></span>
+            </button>
+        </nav>
+    </header>
+
+    <main class="listing-main">
+        <div class="section-heading">
+            <p class="section-label">OUR ACCOMMODATIONS</p>
+            <h1>All Accommodations</h1>
+            <p>Browse our rooms, event halls, cottages, and pool access, all in one place.</p>
+        </div>
+
+        <div class="room-grid" id="roomGrid" aria-live="polite">
+            <p class="room-grid-empty">Loading available accommodations…</p>
+        </div>
+        <p class="listing-footnote">Availability may change. Rooms are priced per night, event halls and cottages per day, and pool access per person. Final details are confirmed during booking.</p>
+    </main>
+
+    <footer class="site-footer">
+        <div class="footer-bottom">
+            <span>© 2026 Bien Marko's Pension House. All rights reserved.</span>
+            <a href="index.html#accommodations">Back to accommodations</a>
+        </div>
+    </footer>
+    <script src="accommodation-list.js"></script>
+</body>
+</html>
