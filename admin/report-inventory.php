@@ -10,6 +10,7 @@
  *
  *   Total Stock      = Beginning Stock + Added Stock (everything received)
  *   Used             = Total Stock - Remaining
+ *   Price per Unit   = cost_per_unit saved on the Inventory page
  *   Total Stock Cost = Total Stock x cost per unit
  * -----------------------------------------------------------------------
  */
@@ -62,6 +63,7 @@ foreach ($pdo->query('SELECT * FROM inventory_items ORDER BY created_at DESC, id
         'total'     => $total,
         'used'      => max(0, $total - $remaining),
         'remaining' => $remaining,
+        'unit_cost' => round((float) $it['cost_per_unit'], 2),
         'cost'      => round($total * (float) $it['cost_per_unit'], 2),
         'status'    => $st,
     ];
@@ -156,6 +158,7 @@ $statusMeta = [
               <th>Total Stock</th>
               <th>Used</th>
               <th>Remaining</th>
+              <th>Price per Unit</th>
               <th>Total Stock Cost</th>
               <th>Status</th>
             </tr>
@@ -173,6 +176,7 @@ $statusMeta = [
                 <td><?php echo (int) $it['total']; ?></td>
                 <td><?php echo (int) $it['used']; ?></td>
                 <td><?php echo (int) $it['remaining']; ?></td>
+                <td>₱<?php echo number_format($it['unit_cost'], 2); ?></td>
                 <td>₱<?php echo number_format($it['cost'], 2); ?></td>
                 <td><span class="sb <?php echo $st['class']; ?>"><?php echo $st['label']; ?></span></td>
               </tr>

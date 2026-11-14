@@ -1039,15 +1039,19 @@ $gbName  = $gbBrand['full'];
             var cls = 'gb-date-picker-cell';
             if (disabled)   cls += ' is-disabled';
             if (isSelected) cls += ' is-selected';
-            if (visualBooked && !beforeMin) cls += ' is-booked';
+            if (visualBooked && !beforeMin) cls += ' is-unavailable';
 
             html += '<button type="button" class="' + cls + '"' +
                 (disabled ? ' disabled' : (' data-gbdp-pick="' + iso + '" data-gbdp-which="' + which + '"')) +
-                (visualBooked && !beforeMin ? ' title="Already booked"' : '') +
+                (visualBooked && !beforeMin ? ' title="Not available"' : '') +
                 '>' + day + '</button>';
         }
         html += '</div>';
-        html += '<div class="gb-date-picker-legend"><span class="gb-dp-swatch"></span> Booked / unavailable</div>';
+        html += '<div class="gb-date-picker-legend">' +
+            '<span class="gb-dp-legend-item"><span class="gb-dp-swatch gb-dp-swatch--available"></span>Available</span>' +
+            '<span class="gb-dp-legend-item"><span class="gb-dp-swatch gb-dp-swatch--unavailable"></span>Unavailable</span>' +
+            '<span class="gb-dp-legend-item"><span class="gb-dp-swatch gb-dp-swatch--selected"></span>Selected</span>' +
+            '</div>';
 
         pop.innerHTML = html;
     }

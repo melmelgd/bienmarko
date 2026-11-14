@@ -4,7 +4,7 @@
  * -----------------------------------------------------------------------
  * Guest Insights: total / repeat / new guest counts for the selected
  * period, plus an all-time Top Returning Guests table (visits, most
- * booked accommodation, country and each guest's highest published
+ * booked accommodation, country and each guest's highest
  * rating from the same `feedback` table admin/feedback.php manages).
  * -----------------------------------------------------------------------
  */
@@ -35,8 +35,8 @@ $topbar_extra_right  = render_reports_topbar_controls('guest-insights', $period)
 /* New guests = everyone active this period who is not a repeat guest */
 $newGuests = max(0, (int) $data['totalGuests'] - (int) $data['repeatGuests']);
 
-/* Highest rating each returning guest has given (published feedback only) */
-$highRatingStmt = $pdo->prepare('SELECT MAX(rating) FROM feedback WHERE guest_id = :gid AND is_published = 1');
+/* Highest rating each returning guest has given (all feedback, published or not) */
+$highRatingStmt = $pdo->prepare('SELECT MAX(rating) FROM feedback WHERE guest_id = :gid');
 foreach ($data['topGuests'] as &$tg) {
     $highRatingStmt->execute(['gid' => $tg['id']]);
     $hr = $highRatingStmt->fetchColumn();

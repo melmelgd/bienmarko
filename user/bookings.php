@@ -984,8 +984,6 @@ require __DIR__ . '/includes/head.php';
   width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0;
 }
 .cal-legend-dot--available   { background: rgba(40,160,90,.7); }
-.cal-legend-dot--booked      { background: rgba(220,80,60,.7); }
-.cal-legend-dot--maintenance { background: rgba(5, 9, 205, 0.7); }
 .cal-legend-dot--unavailable { background: rgba(100,100,120,.7); }
 .cal-legend-dot--selected    { background: var(--ember); }
 
@@ -1055,17 +1053,6 @@ require __DIR__ . '/includes/head.php';
 .cal-pick-mode .cal-day--available:hover {
   background: rgba(232,163,61,.25);
   color: var(--ember-strong);
-}
-.cal-day--booked {
-  background: rgba(220,80,60,.2);
-  color: #f08080;
-  text-decoration: line-through;
-  cursor: not-allowed;
-}
-.cal-day--maintenance {
-  background: rgba(220,160,20,.2);
-  color: #e8c23d;
-  cursor: not-allowed;
 }
 .cal-day--unavailable {
   background: rgba(100,100,120,.18);
@@ -1954,8 +1941,6 @@ require __DIR__ . '/includes/head.php';
 
     <div class="cal-legend">
         <span class="cal-legend-item"><span class="cal-legend-dot cal-legend-dot--available"></span>Available</span>
-        <span class="cal-legend-item"><span class="cal-legend-dot cal-legend-dot--booked"></span>Booked</span>
-        <span class="cal-legend-item"><span class="cal-legend-dot cal-legend-dot--maintenance"></span>Maintenance</span>
         <span class="cal-legend-item"><span class="cal-legend-dot cal-legend-dot--unavailable"></span>Unavailable</span>
         <span class="cal-legend-item" id="calLegendSelected" style="display:none"><span class="cal-legend-dot cal-legend-dot--selected"></span>Selected</span>
     </div>
@@ -2526,23 +2511,20 @@ require __DIR__ . '/includes/head.php';
     closeCalModal();
   });
 
+  // The calendar only shows three states: available, unavailable and
+  // selected. Booked dates and rooms under maintenance are both shown
+  // as "unavailable" (still not clickable).
   function getDayStatus(isoDate) {
-    if (calRoomStatus === 'maintenance') return 'maintenance';
-    if (calRoomStatus === 'unavailable') return 'unavailable';
+    if (calRoomStatus === 'maintenance' || calRoomStatus === 'unavailable') return 'unavailable';
     for (var i = 0; i < calBookedRanges.length; i++) {
       var b = calBookedRanges[i];
-      if (isoDate >= b.check_in && isoDate < b.check_out) return 'booked';
+      if (isoDate >= b.check_in && isoDate < b.check_out) return 'unavailable';
     }
     return 'available';
   }
 
   function getDayTitle(status, isoDate) {
-    switch (status) {
-      case 'booked':      return 'Booked — ' + isoDate;
-      case 'maintenance': return 'Under maintenance';
-      case 'unavailable': return 'Not available';
-      default:            return 'Available — ' + isoDate;
-    }
+    return status === 'unavailable' ? 'Not available' : 'Available — ' + isoDate;
   }
 
   /* Month navigation */

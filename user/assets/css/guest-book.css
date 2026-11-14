@@ -489,7 +489,7 @@ h1, h2, h3, p { margin-top: 0; }
 }
 .gb-date-picker-cell.is-empty { cursor: default; }
 .gb-date-picker-cell.is-disabled { color: rgba(255, 247, 232, 0.28); cursor: not-allowed; }
-.gb-date-picker-cell.is-booked { color: var(--danger); text-decoration: line-through; }
+.gb-date-picker-cell.is-unavailable { color: rgba(255, 247, 232, 0.28); }
 .gb-date-picker-cell.is-selected { background: var(--gold); color: var(--black); font-weight: 700; }
 
 .gb-date-picker-note {
@@ -502,17 +502,25 @@ h1, h2, h3, p { margin-top: 0; }
     margin-top: 10px;
     display: flex;
     align-items: center;
-    gap: 6px;
+    flex-wrap: wrap;
+    gap: 6px 12px;
     font-size: 11px;
     color: var(--muted);
+}
+.gb-dp-legend-item {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
 }
 .gb-dp-swatch {
     width: 9px;
     height: 9px;
     display: inline-block;
-    background: var(--danger-bg);
-    border: 1px solid var(--danger);
+    border-radius: 2px;
 }
+.gb-dp-swatch--available   { background: rgba(40, 160, 90, 0.7); }
+.gb-dp-swatch--unavailable { background: rgba(100, 100, 120, 0.7); }
+.gb-dp-swatch--selected    { background: var(--gold); }
 
 /* ── ROOM SUMMARY PILL ────────────────────────────────────────────── */
 .gb-room-summary {

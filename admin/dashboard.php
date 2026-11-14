@@ -305,6 +305,28 @@ function dash_url(array $params): string
     return dash_e('bookings.php?' . http_build_query(['scope' => 'all'] + $params));
 }
 
+/** data-* attributes the confirmation dialog reads (see the script at the bottom). */
+function dash_stay_attrs(array $bk, string $action): string
+{
+    $room = $bk['room_name'] !== '' ? $bk['room_name'] : $bk['room_type'];
+    $attrs = [
+        'data-stay-action' => $action,
+        'data-id'          => (int) $bk['id'],
+        'data-name'        => dash_guest_name($bk),
+        'data-ref'         => $bk['reference'] ?? '',
+        'data-room'        => $room,
+        'data-in'          => date('M j, Y', strtotime($bk['check_in'])),
+        'data-out'         => date('M j, Y', strtotime($bk['check_out'])),
+        'data-pay'         => (string) $bk['pay_state'],
+        'data-balance'     => dash_peso((float) $bk['balance']),
+    ];
+    $out = '';
+    foreach ($attrs as $k => $v) {
+        $out .= ' ' . $k . '="' . dash_e($v) . '"';
+    }
+    return $out;
+}
+
 /**
  * One row of the Today panel.
  *   $mode 'arrive' : Check-in button on Upcoming rows, Checked-in badge once arrived.
@@ -329,7 +351,7 @@ function dash_render_row(array $bk, string $mode): void
             echo '<span class="ab ab--green">Checked-in</span>';
         }
         if ($stage === 'upcoming') {
-            echo '<button type="button" class="t-btn" data-stay-action="check_in" data-id="' . (int) $bk['id'] . '">Check-in</button>';
+            echo '<button type="button" class="t-btn"' . dash_stay_attrs($bk, 'check_in') . '>Check-in</button>';
         }
     } else {
         if ($stage === 'completed') {
@@ -337,7 +359,7 @@ function dash_render_row(array $bk, string $mode): void
         }
         if ($stage === 'checked_in') {
             if ($payment === 'paid') {
-                echo '<button type="button" class="t-btn" data-stay-action="check_out" data-id="' . (int) $bk['id'] . '">Check-out</button>';
+                echo '<button type="button" class="t-btn"' . dash_stay_attrs($bk, 'check_out') . '>Check-out</button>';
             } else {
                 // The API refuses check-out until fully paid; mirror that here.
                 echo '<button type="button" class="t-btn" disabled'
@@ -470,6 +492,56 @@ require __DIR__ . '/includes/topbar.php';
 .rev-bar    { height: 6px; margin-top: 10px; border-radius: var(--r-full); background: var(--panel-alt); overflow: hidden; }
 .rev-bar > span { display: block; height: 100%; border-radius: var(--r-full); }
 
+/* ---------- Check-in / check-out confirmation dialog (same look as Bookings) ---------- */
+.modal-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,.7);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 500; padding: 20px;
+    opacity: 0; pointer-events: none; transition: opacity .2s;
+}
+.modal-overlay.is-open { opacity: 1; pointer-events: auto; }
+.modal {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: var(--r-lg); width: 100%; max-width: 520px;
+    max-height: 90vh; overflow-y: auto;
+    transform: translateY(12px); transition: transform .2s;
+}
+.modal-overlay.is-open .modal { transform: translateY(0); }
+.modal-header { padding: 20px 24px 16px; display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.modal-title  { font-family: var(--font-display); font-size: 17px; font-weight: 700; }
+.modal-close  { background: none; border: none; color: var(--text-tertiary); cursor: pointer; padding: 4px 8px; font-size: 22px; line-height: 1; border-radius: var(--r-sm); }
+.modal-close:hover { color: var(--text); background: var(--panel-alt); }
+.modal-body   { padding: 20px 24px; }
+.modal-actions { padding: 16px 24px; border-top: 1px solid var(--border); display: flex; gap: 10px; flex-wrap: wrap; }
+.stay-notice { margin-bottom: 20px; padding: 12px 14px; border-radius: var(--r-md); font-size: 13.5px; line-height: 1.55; border: 1px solid var(--border); background: var(--panel-alt); color: var(--text-secondary); }
+.stay-notice strong { color: var(--text); }
+.stay-notice--arrive { border-color: var(--gold-600); background: var(--gold-tint-bg); }
+.stay-notice--depart { border-color: var(--emerald); background: var(--emerald-bg); }
+.stay-notice-warn { display: block; margin-top: 6px; color: var(--gold-400); font-weight: 600; }
+.detail-grid  { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 20px; }
+.detail-row   { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.detail-label { font-size: 11.5px; color: var(--text-secondary); }
+.detail-value { font-size: 14px; color: var(--text); font-weight: 500; overflow-wrap: anywhere; }
+.btn { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border-radius: var(--r-md); font-family: inherit; font-size: 14px; font-weight: 600; border: 1px solid transparent; cursor: pointer; transition: all var(--transition); }
+.btn-secondary { background: var(--panel-alt); color: var(--text); border-color: var(--border); }
+.btn-secondary:hover { border-color: var(--border-strong); }
+.btn-success   { background: var(--emerald-bg); color: var(--emerald); border-color: var(--emerald); }
+.btn-success:hover { background: var(--emerald); color: #fff; }
+.btn-success:disabled, .btn-success:disabled:hover { opacity: .45; cursor: not-allowed; background: var(--emerald-bg); color: var(--emerald); }
+
+/* ---------- Toasts ---------- */
+.toast-wrap { position: fixed; bottom: 28px; right: 28px; z-index: 900; display: flex; flex-direction: column; gap: 10px; }
+.toast {
+    padding: 12px 18px; border-radius: var(--r-md);
+    font-size: 13.5px; font-weight: 500;
+    box-shadow: 0 8px 30px rgba(0,0,0,.5);
+    transform: translateX(120%); opacity: 0;
+    transition: transform .3s, opacity .3s;
+}
+.toast.show { transform: translateX(0); opacity: 1; }
+.toast--success { background: var(--emerald-bg); border: 1px solid var(--emerald); color: var(--emerald); }
+.toast--error   { background: var(--red-bg);     border: 1px solid var(--red);     color: var(--red); }
+
 /* ---------- Responsive ---------- */
 @media (max-width: 1200px) {
     .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -567,6 +639,31 @@ require __DIR__ . '/includes/topbar.php';
 
 <div class="toast-wrap" id="toastWrap"></div>
 
+<!-- ===== Check-in / Check-out confirmation ===== -->
+<div class="modal-overlay" id="stayModal" aria-modal="true" role="dialog" aria-labelledby="stayTitle">
+    <div class="modal">
+        <div class="modal-header">
+            <div class="modal-title" id="stayTitle">Confirm check-in</div>
+            <button type="button" class="modal-close" id="stayClose" aria-label="Close">&times;</button>
+        </div>
+        <div class="modal-body">
+            <div class="stay-notice" id="stayNotice"></div>
+            <div class="detail-grid">
+                <div class="detail-row"><span class="detail-label">Guest</span><span class="detail-value" id="stayName">—</span></div>
+                <div class="detail-row"><span class="detail-label">Reference</span><span class="detail-value" id="stayRef">—</span></div>
+                <div class="detail-row"><span class="detail-label">Accommodation</span><span class="detail-value" id="stayRoom">—</span></div>
+                <div class="detail-row"><span class="detail-label">Payment</span><span class="detail-value" id="stayPay">—</span></div>
+                <div class="detail-row"><span class="detail-label">Check-in</span><span class="detail-value" id="stayIn">—</span></div>
+                <div class="detail-row"><span class="detail-label">Check-out</span><span class="detail-value" id="stayOut">—</span></div>
+            </div>
+        </div>
+        <div class="modal-actions">
+            <button type="button" class="btn btn-success" id="stayConfirm">Confirm Check-in</button>
+            <button type="button" class="btn btn-secondary" id="stayCancel">Cancel</button>
+        </div>
+    </div>
+</div>
+
 <script>
 (function () {
     var CSRF = <?php echo json_encode($csrf); ?>;
@@ -584,44 +681,99 @@ require __DIR__ . '/includes/topbar.php';
         }, 3500);
     }
 
-    // Check-in / Check-out buttons in the Today panel. Same endpoint and rules
-    // as the Bookings page (api/bookings.php); the page reloads on success so
-    // every card and list comes straight from the database.
-    document.querySelectorAll('[data-stay-action]').forEach(function (btn) {
-        btn.addEventListener('click', function () {
-            var action = btn.getAttribute('data-stay-action');
-            var id     = parseInt(btn.getAttribute('data-id'), 10);
-            var label  = btn.textContent;
-            btn.disabled = true;
-            btn.textContent = 'Saving…';
+    // Check-in / Check-out buttons in the Today panel. Clicking one opens a
+    // confirmation dialog (same verify-then-confirm flow as the Bookings page);
+    // the booking only changes when the admin presses Confirm. Same endpoint
+    // and rules as the Bookings page (api/bookings.php); the page reloads on
+    // success so every card and list comes straight from the database.
+    var modal      = document.getElementById('stayModal');
+    var confirmBtn = document.getElementById('stayConfirm');
+    var pending    = null;   // { action, id }
+    var PAY_LABEL  = { paid: 'Paid', partial: 'Partial', unpaid: 'Unpaid' };
 
-            fetch('api/bookings.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: action, id: id, csrf_token: CSRF })
-            })
-            .then(function (r) { return r.json(); })
-            .then(function (data) {
-                if (data.success) {
-                    toast(action === 'check_in'
-                        ? 'Guest checked in.'
-                        : 'Guest checked out — booking completed.', 'success');
-                    setTimeout(function () { window.location.reload(); }, 700);
+    function setText(id, v) { document.getElementById(id).textContent = v || '—'; }
+
+    function openStayModal(btn) {
+        var action = btn.getAttribute('data-stay-action');
+        var isIn   = action === 'check_in';
+        var pay    = btn.getAttribute('data-pay');
+        pending = { action: action, id: parseInt(btn.getAttribute('data-id'), 10) };
+
+        document.getElementById('stayTitle').textContent = isIn ? 'Confirm check-in' : 'Confirm check-out';
+        confirmBtn.textContent = isIn ? 'Confirm Check-in' : 'Confirm Check-out';
+        confirmBtn.disabled = false;
+
+        setText('stayName', btn.getAttribute('data-name'));
+        setText('stayRef',  btn.getAttribute('data-ref'));
+        setText('stayRoom', btn.getAttribute('data-room'));
+        setText('stayIn',   btn.getAttribute('data-in'));
+        setText('stayOut',  btn.getAttribute('data-out'));
+        setText('stayPay',  (PAY_LABEL[pay] || pay) +
+            (pay !== 'paid' ? ' · ' + btn.getAttribute('data-balance') + ' due' : ''));
+
+        var notice = document.getElementById('stayNotice');
+        notice.className = 'stay-notice ' + (isIn ? 'stay-notice--arrive' : 'stay-notice--depart');
+        notice.innerHTML = isIn
+            ? '<strong>Guest arriving at the front desk?</strong> Verify the guest\'s name, contact details, ' +
+              'accommodation and dates below match the reservation, then confirm their arrival.'
+            : '<strong>Guest leaving?</strong> Confirm check-out only once the guest has settled up and left. ' +
+              'The booking will move to Completed.';
+
+        modal.classList.add('is-open');
+        confirmBtn.focus();
+    }
+
+    function closeStayModal() {
+        modal.classList.remove('is-open');
+        pending = null;
+    }
+
+    document.querySelectorAll('[data-stay-action]').forEach(function (btn) {
+        btn.addEventListener('click', function () { openStayModal(btn); });
+    });
+    document.getElementById('stayClose').addEventListener('click', closeStayModal);
+    document.getElementById('stayCancel').addEventListener('click', closeStayModal);
+    modal.addEventListener('click', function (e) { if (e.target === modal) closeStayModal(); });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && modal.classList.contains('is-open')) closeStayModal();
+    });
+
+    confirmBtn.addEventListener('click', function () {
+        if (!pending) return;
+        var action = pending.action;
+        var id     = pending.id;
+        var label  = confirmBtn.textContent;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Saving…';
+
+        fetch('api/bookings.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: action, id: id, csrf_token: CSRF })
+        })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+            if (data.success) {
+                toast(action === 'check_in'
+                    ? 'Guest checked in.'
+                    : 'Guest checked out — booking completed.', 'success');
+                closeStayModal();
+                setTimeout(function () { window.location.reload(); }, 700);
+            } else {
+                toast(data.error || 'Could not update the booking.', 'error');
+                if (data.refresh) {
+                    closeStayModal();
+                    setTimeout(function () { window.location.reload(); }, 1800);
                 } else {
-                    toast(data.error || 'Could not update the booking.', 'error');
-                    if (data.refresh) {
-                        setTimeout(function () { window.location.reload(); }, 1800);
-                    } else {
-                        btn.disabled = false;
-                        btn.textContent = label;
-                    }
+                    confirmBtn.disabled = false;
+                    confirmBtn.textContent = label;
                 }
-            })
-            .catch(function () {
-                toast('Network error. Please try again.', 'error');
-                btn.disabled = false;
-                btn.textContent = label;
-            });
+            }
+        })
+        .catch(function () {
+            toast('Network error. Please try again.', 'error');
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = label;
         });
     });
 })();

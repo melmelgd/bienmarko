@@ -643,10 +643,14 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
 .date-picker-cell.is-empty { cursor: default; }
 .date-picker-cell.is-disabled { color: var(--text-muted); cursor: not-allowed; }
 .date-picker-cell.is-booked { color: var(--red); text-decoration: line-through; }
+.date-picker-cell.is-maintenance { color: var(--blue); background: var(--blue-bg); cursor: not-allowed; }
 .date-picker-cell.is-selected { background: var(--gold-500); color: var(--on-accent); font-weight: 700; }
 .date-picker-note { margin-top: 8px; font-size: 11.5px; color: var(--text-tertiary); text-align: center; }
-.date-picker-legend { margin-top: 8px; display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text-tertiary); }
+.date-picker-legend { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; font-size: 11px; color: var(--text-tertiary); }
+.date-picker-legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .dp-swatch { width: 9px; height: 9px; border-radius: 3px; display: inline-block; background: var(--red-bg); border: 1px solid var(--red); }
+.dp-swatch--maintenance { background: var(--blue-bg); border-color: var(--blue); }
+.date-picker-note--maintenance { color: var(--blue); }
 
 /* Table sub-heading */
 .view-hint { font-size: 12.5px; color: var(--text-secondary); margin-top: 2px; }
@@ -1237,7 +1241,7 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                             <select class="form-input" name="accommodation_id" required id="nbAccomSelect">
                                 <option value="">— Select a room —</option>
                                 <?php
-                                $rooms = $pdo->query("SELECT id, name, type, price, capacity FROM accommodations WHERE status = 'available' ORDER BY name")->fetchAll();
+                                $rooms = $pdo->query("SELECT id, name, type, price, capacity, status FROM accommodations WHERE status IN ('available','maintenance') ORDER BY name")->fetchAll();
                                 foreach ($rooms as $r):
                                     $rIsPool = strcasecmp(trim($r['type']), 'Swimming Pool') === 0;
                                 ?>
@@ -1245,8 +1249,9 @@ $bookingsJson = json_encode(array_map(function ($bk) use ($today, $pdo) {
                                             data-price="<?php echo (float) $r['price']; ?>"
                                             data-cap="<?php echo (int) $r['capacity']; ?>"
                                             data-type="<?php echo htmlspecialchars($r['type'], ENT_QUOTES, 'UTF-8'); ?>"
-                                            data-pool="<?php echo $rIsPool ? '1' : '0'; ?>">
-                                        <?php echo htmlspecialchars($r['name'] . ' (' . $r['type'] . ') — ₱' . number_format($r['price'], 2) . ($rIsPool ? '/person' : '/night'), ENT_QUOTES, 'UTF-8'); ?>
+                                            data-pool="<?php echo $rIsPool ? '1' : '0'; ?>"
+                                            data-maint="<?php echo $r['status'] === 'maintenance' ? '1' : '0'; ?>">
+                                        <?php echo htmlspecialchars($r['name'] . ' (' . $r['type'] . ') — ₱' . number_format($r['price'], 2) . ($rIsPool ? '/person' : '/night') . ($r['status'] === 'maintenance' ? ' — Under maintenance' : ''), ENT_QUOTES, 'UTF-8'); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -1792,7 +1797,7 @@ document.getElementById('nbCheckOut').addEventListener('change', calcTotal);
    existing transactional check in api/bookings.php (action=create) as
    the authoritative final check when Confirm Booking is clicked.
 ------------------------------------------------------------------- */
-var nbAvailability = null;                        // { capacity, isPool, bookings: [...] } for the selected room, or null
+var nbAvailability = null;                        // { capacity, isPool, maintenance, bookings: [...] } for the selected room, or null
 var nbOpenPicker    = null;                        // 'checkin' | 'checkout' | null
 var nbViewMonth      = { checkin: null, checkout: null }; // {y,m} currently shown in each calendar
 
@@ -1904,8 +1909,12 @@ function nbRenderCalendar(which) {
     for (var day = 1; day <= daysInMonth; day++) {
         var iso         = nbISO(view.y, view.m, day);
         var cellDate    = new Date(view.y, view.m, day);
-        var visualBooked = nbAvailability ? nbIsBlocked(iso, bookedMap, guestsWanted) : false;
         var beforeMin   = cellDate < minDate;
+        // Under maintenance: the whole room is closed, so every
+        // selectable-range date is blue and cannot be picked. This
+        // takes priority over the red "booked" state.
+        var isMaint     = !!(nbAvailability && nbAvailability.maintenance) && !beforeMin;
+        var visualBooked = (nbAvailability && !isMaint) ? nbIsBlocked(iso, bookedMap, guestsWanted) : false;
         var afterMax    = maxIso ? (iso > maxIso) : false;
 
         // Check-in must land on a genuinely open night. Check-out just
@@ -1913,24 +1922,33 @@ function nbRenderCalendar(which) {
         // occupied night — the checkout day itself is always fine even
         // if another booking starts that same day (same-day turnover).
         var disabled = which === 'checkin'
-            ? (!nbAvailability || visualBooked || beforeMin)
-            : (!nbAvailability || beforeMin || afterMax);
+            ? (!nbAvailability || isMaint || visualBooked || beforeMin)
+            : (!nbAvailability || isMaint || beforeMin || afterMax);
 
         var isSelected = (iso === selectedIso);
         var cls = 'date-picker-cell';
         if (disabled)   cls += ' is-disabled';
         if (isSelected) cls += ' is-selected';
         if (visualBooked && !beforeMin) cls += ' is-booked';
+        if (isMaint)    cls += ' is-maintenance';
 
         html += '<button type="button" class="' + cls + '"' +
             (disabled ? ' disabled' : (' data-nb-pick="' + iso + '" data-nb-which="' + which + '"')) +
-            (visualBooked && !beforeMin ? ' title="Already booked"' : '') +
+            (isMaint ? ' title="Under maintenance"' : (visualBooked && !beforeMin ? ' title="Already booked"' : '')) +
             '>' + day + '</button>';
     }
     html += '</div>';
-    html += !nbAvailability
-        ? '<div class="date-picker-note">Select an accommodation first.</div>'
-        : '<div class="date-picker-legend"><span class="dp-swatch"></span> Booked / unavailable</div>';
+    if (!nbAvailability) {
+        html += '<div class="date-picker-note">Select an accommodation first.</div>';
+    } else {
+        if (nbAvailability.maintenance) {
+            html += '<div class="date-picker-note date-picker-note--maintenance">This accommodation is under maintenance and can\u2019t be booked.</div>';
+        }
+        html += '<div class="date-picker-legend">' +
+            '<span class="date-picker-legend-item"><span class="dp-swatch"></span> Booked</span>' +
+            '<span class="date-picker-legend-item"><span class="dp-swatch dp-swatch--maintenance"></span> Under maintenance</span>' +
+            '</div>';
+    }
 
     pop.innerHTML = html;
 }
@@ -2050,6 +2068,7 @@ function nbLoadAvailability(accommodationId) {
                 nbAvailability = {
                     capacity: res.accommodation.capacity,
                     isPool:   res.accommodation.is_pool,
+                    maintenance: res.accommodation.status === 'maintenance',
                     bookings: res.bookings,
                 };
             } else {
@@ -2116,6 +2135,10 @@ function submitNewBooking(e) {
 
     if (!data.accommodation_id) {
         toast('Please select an accommodation.', 'error');
+        return;
+    }
+    if (nbAvailability && nbAvailability.maintenance) {
+        toast('This accommodation is under maintenance and can\u2019t be booked.', 'error');
         return;
     }
     if (!data.check_in || !data.check_out) {

@@ -37,14 +37,26 @@ $pdo->exec(
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
 );
 $pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `is_published` TINYINT(1) UNSIGNED NOT NULL DEFAULT 0 AFTER `is_read`");
+/* Columns the guest side fills in (which stay / accommodation the feedback is about). */
+$pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `booking_id` INT UNSIGNED NULL DEFAULT NULL AFTER `guest_id`");
+$pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_id` INT UNSIGNED NULL DEFAULT NULL AFTER `booking_id`");
+$pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_type` VARCHAR(100) NULL DEFAULT NULL AFTER `accommodation_id`");
+$pdo->exec("ALTER TABLE `feedback` ADD COLUMN IF NOT EXISTS `accommodation_name` VARCHAR(150) NULL DEFAULT NULL AFTER `accommodation_type`");
+
+/* Older feedback has no saved room name, so we look it up through its booking.
+   Only do that join if those tables exist. */
+$canJoinStay = true;
+try {
+    $pdo->query('SELECT 1 FROM bookings LIMIT 1');
+    $pdo->query('SELECT 1 FROM accommodations LIMIT 1');
+} catch (Throwable $e) {
+    $canJoinStay = false;
+}
 
 /* ------------------------------------------------------------------
    Stat cards
 ------------------------------------------------------------------ */
 $statTotal     = (int) $pdo->query('SELECT COUNT(*) FROM feedback')->fetchColumn();
-$statAvgRaw    = $pdo->query('SELECT AVG(rating) FROM feedback')->fetchColumn();
-$statAvg       = $statAvgRaw !== null ? number_format((float) $statAvgRaw, 1) : '--';
-$statUnread    = (int) $pdo->query('SELECT COUNT(*) FROM feedback WHERE is_read = 0')->fetchColumn();
 $statPublished = (int) $pdo->query('SELECT COUNT(*) FROM feedback WHERE is_published = 1')->fetchColumn();
 
 /* ------------------------------------------------------------------
@@ -60,11 +72,6 @@ if ($filterRating === false || $filterRating < 1 || $filterRating > 5) {
 $filterCategory = (string) ($_GET['category'] ?? '');
 if (!in_array($filterCategory, $allowedCategories, true)) {
     $filterCategory = '';
-}
-
-$filterStatus = (string) ($_GET['status'] ?? '');
-if (!in_array($filterStatus, ['', 'unread', 'read'], true)) {
-    $filterStatus = '';
 }
 
 $filterPublished = (string) ($_GET['published'] ?? '');
@@ -91,11 +98,6 @@ if ($filterCategory !== '') {
     $whereClauses[] = 'f.category = :category';
     $params['category'] = $filterCategory;
 }
-if ($filterStatus === 'unread') {
-    $whereClauses[] = 'f.is_read = 0';
-} elseif ($filterStatus === 'read') {
-    $whereClauses[] = 'f.is_read = 1';
-}
 if ($filterPublished === 'yes') {
     $whereClauses[] = 'f.is_published = 1';
 } elseif ($filterPublished === 'no') {
@@ -119,11 +121,21 @@ $totalPages  = max(1, (int) ceil($totalFeedback / $perPage));
 $currentPage = min($currentPage, $totalPages);
 $offset      = ($currentPage - 1) * $perPage;
 
+$stayCols  = $canJoinStay
+    ? "COALESCE(NULLIF(f.accommodation_name, ''), a.name) AS stay_name, COALESCE(NULLIF(f.accommodation_type, ''), a.type) AS stay_type"
+    : 'f.accommodation_name AS stay_name, f.accommodation_type AS stay_type';
+$stayJoins = $canJoinStay
+    ? 'LEFT JOIN bookings bk ON bk.id = f.booking_id
+       LEFT JOIN accommodations a ON a.id = COALESCE(f.accommodation_id, bk.accommodation_id)'
+    : '';
+
 $stmt = $pdo->prepare(
-    "SELECT f.id, f.rating, f.category, f.message, f.is_read, f.is_published, f.created_at,
-            g.first_name, g.last_name, g.email
+    "SELECT f.id, f.rating, f.category, f.message, f.is_published, f.created_at,
+            g.first_name, g.last_name, g.email,
+            {$stayCols}
      FROM feedback f
      LEFT JOIN guests g ON g.id = f.guest_id
+     {$stayJoins}
      {$where}
      ORDER BY f.created_at DESC
      LIMIT {$perPage} OFFSET {$offset}"
@@ -138,6 +150,12 @@ function fb_admin_name(array $row): string
 {
     $name = trim(($row['first_name'] ?? '') . ' ' . ($row['last_name'] ?? ''));
     return $name !== '' ? $name : 'Deleted account';
+}
+
+function fb_admin_stay_label(array $row): string
+{
+    $name = trim((string) ($row['stay_name'] ?? ''));
+    return $name !== '' ? $name : '—';
 }
 
 function fb_admin_category_label(string $category): string
@@ -201,6 +219,7 @@ tbody tr:last-child { border-bottom: none; }
 tbody tr:hover { background: var(--panel-alt); }
 tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-align: top; }
 .td-guest  { font-weight: 600; white-space: nowrap; }
+.td-stay   { font-weight: 600; white-space: nowrap; }
 .td-sub    { font-size: 11.5px; color: var(--text-secondary); margin-top: 1px; }
 .td-message { max-width: 360px; white-space: normal; line-height: 1.45; }
 .td-actions { display: flex; gap: 6px; white-space: nowrap; }
@@ -295,8 +314,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
     <div class="stat-grid">
         <?php
             render_stat_card('Total Feedback', (string) $statTotal, 'message', 'blue');
-            render_stat_card('Average Rating', $statAvg, 'star', 'amber');
-            render_stat_card('Unread', (string) $statUnread, 'mail', 'red');
             render_stat_card('Published on Site', (string) $statPublished, 'check', 'emerald');
         ?>
     </div>
@@ -325,25 +342,17 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                         <option value="<?php echo $cat; ?>" <?php echo $filterCategory === $cat ? 'selected' : ''; ?>><?php echo htmlspecialchars(fb_admin_category_label($cat)); ?></option>
                     <?php endforeach; ?>
                 </select>
-                <select class="filter-select" name="status" onchange="this.form.submit()">
-                    <option value="">All Status</option>
-                    <option value="unread" <?php echo $filterStatus === 'unread' ? 'selected' : ''; ?>>Unread</option>
-                    <option value="read" <?php echo $filterStatus === 'read' ? 'selected' : ''; ?>>Read</option>
-                </select>
                 <select class="filter-select" name="published" onchange="this.form.submit()">
-                    <option value="">Site: All</option>
+                    <option value="">All Status</option>
                     <option value="yes" <?php echo $filterPublished === 'yes' ? 'selected' : ''; ?>>Published</option>
-                    <option value="no" <?php echo $filterPublished === 'no' ? 'selected' : ''; ?>>Not Published</option>
+                    <option value="no" <?php echo $filterPublished === 'no' ? 'selected' : ''; ?>>Unpublished</option>
                 </select>
-                <?php if ($statUnread > 0): ?>
-                    <button type="button" class="btn-sm" id="markAllReadBtn"><?php echo icon('check', 'icon-sm'); ?> Mark All Read</button>
-                <?php endif; ?>
             </form>
         </div>
 
         <?php if (empty($feedbackRows)): ?>
             <?php render_table_empty(
-                ['Guest', 'Rating', 'Category', 'Message', 'Date Submitted', 'Status', 'Actions'],
+                ['Guest', 'Accommodation', 'Rating', 'Category', 'Message', 'Date Submitted', 'Status', 'Actions'],
                 'message',
                 'No feedback found',
                 $totalFeedback === 0
@@ -356,6 +365,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                     <thead>
                         <tr>
                             <th>Guest</th>
+                            <th>Accommodation</th>
                             <th>Rating</th>
                             <th>Category</th>
                             <th>Message</th>
@@ -371,6 +381,12 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                     <?php echo htmlspecialchars(fb_admin_name($row)); ?>
                                     <div class="td-sub"><?php echo htmlspecialchars($row['email'] ?? ''); ?></div>
                                 </td>
+                                <td class="td-stay">
+                                    <?php echo htmlspecialchars(fb_admin_stay_label($row)); ?>
+                                    <?php if (!empty($row['stay_type'])): ?>
+                                        <div class="td-sub"><?php echo htmlspecialchars($row['stay_type']); ?></div>
+                                    <?php endif; ?>
+                                </td>
                                 <td><?php echo fb_admin_stars((int) $row['rating']); ?></td>
                                 <td><span class="category-badge"><?php echo htmlspecialchars(fb_admin_category_label($row['category'])); ?></span></td>
                                 <td class="td-message"><?php echo htmlspecialchars($row['message']); ?></td>
@@ -381,7 +397,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                 <td>
                                     <div class="status-stack">
                                         <span class="ab <?php echo $row['is_published'] ? 'ab--gold' : 'ab--grey'; ?>" id="fb-published-<?php echo (int) $row['id']; ?>">
-                                            <?php echo $row['is_published'] ? 'On Site' : 'Hidden'; ?>
+                                            <?php echo $row['is_published'] ? 'Published' : 'Unpublished'; ?>
                                         </span>
                                     </div>
                                 </td>
@@ -394,6 +410,7 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                                             data-id="<?php echo (int) $row['id']; ?>"
                                             data-name="<?php echo htmlspecialchars(fb_admin_name($row), ENT_QUOTES, 'UTF-8'); ?>"
                                             data-email="<?php echo htmlspecialchars($row['email'] ?? '', ENT_QUOTES, 'UTF-8'); ?>"
+                                            data-stay="<?php echo htmlspecialchars(fb_admin_stay_label($row) . (!empty($row['stay_type']) ? ' (' . $row['stay_type'] . ')' : ''), ENT_QUOTES, 'UTF-8'); ?>"
                                             data-category="<?php echo htmlspecialchars(fb_admin_category_label($row['category']), ENT_QUOTES, 'UTF-8'); ?>"
                                             data-message="<?php echo htmlspecialchars($row['message'], ENT_QUOTES, 'UTF-8'); ?>"
                                             data-date="<?php echo htmlspecialchars(date('M j, Y · g:i A', strtotime($row['created_at'])), ENT_QUOTES, 'UTF-8'); ?>"
@@ -422,7 +439,6 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
                 array_filter([
                     'rating'    => $filterRating ?: null,
                     'category'  => $filterCategory ?: null,
-                    'status'    => $filterStatus ?: null,
                     'published' => $filterPublished ?: null,
                     'search'    => $filterSearch ?: null,
                 ]),
@@ -447,9 +463,10 @@ tbody td { padding: 12px 14px; font-size: 13.5px; color: var(--text); vertical-a
         <div class="modal-body">
             <div class="detail-box">
                 <div class="detail-row"><span class="detail-row-label">Rating</span><span class="detail-row-value" id="fbModalRating"></span></div>
+                <div class="detail-row"><span class="detail-row-label">Accommodation</span><span class="detail-row-value" id="fbModalStay">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Category</span><span class="detail-row-value" id="fbModalCategory">—</span></div>
                 <div class="detail-row"><span class="detail-row-label">Submitted</span><span class="detail-row-value" id="fbModalDate">—</span></div>
-                <div class="detail-row"><span class="detail-row-label">Status</span><span class="detail-row-value"><span class="ab ab--grey" id="fbModalStatus">Hidden</span></span></div>
+                <div class="detail-row"><span class="detail-row-label">Status</span><span class="detail-row-value"><span class="ab ab--grey" id="fbModalStatus">Unpublished</span></span></div>
             </div>
             <div class="modal-section-title">Message</div>
             <div class="fb-message-box" id="fbModalMessage"></div>
@@ -515,23 +532,6 @@ document.addEventListener('click', function (e) {
         openFeedbackModal(viewBtn);
         return;
     }
-
-    var markAllBtn = e.target.closest('#markAllReadBtn');
-    if (markAllBtn) {
-        markAllBtn.disabled = true;
-        feedbackApi({ action: 'mark_all_read' })
-            .then(function (result) {
-                if (!result.ok || !result.data.success) {
-                    throw new Error((result.data && result.data.error) || 'Could not update feedback.');
-                }
-                toast('All feedback marked as read.', 'success');
-                window.setTimeout(function () { window.location.reload(); }, 500);
-            })
-            .catch(function (err) {
-                markAllBtn.disabled = false;
-                toast(err.message, 'error');
-            });
-    }
 });
 
 /* ---------- View / moderate modal ---------- */
@@ -542,7 +542,7 @@ function renderFeedbackModalState() {
     if (!fbActiveBtn) return;
     var published = fbActiveBtn.getAttribute('data-published') === '1';
     var status = document.getElementById('fbModalStatus');
-    status.textContent = published ? 'On Site' : 'Hidden';
+    status.textContent = published ? 'Published' : 'Unpublished';
     status.className = 'ab ' + (published ? 'ab--gold' : 'ab--grey');
     // The action that doesn't apply to the current state is disabled.
     document.getElementById('fbPublishBtn').disabled = published;
@@ -553,6 +553,7 @@ function openFeedbackModal(btn) {
     fbActiveBtn = btn;
     document.getElementById('fbModalName').textContent     = btn.getAttribute('data-name');
     document.getElementById('fbModalEmail').textContent    = btn.getAttribute('data-email');
+    document.getElementById('fbModalStay').textContent     = btn.getAttribute('data-stay') || '—';
     document.getElementById('fbModalCategory').textContent = btn.getAttribute('data-category');
     document.getElementById('fbModalDate').textContent     = btn.getAttribute('data-date');
     document.getElementById('fbModalMessage').textContent  = btn.getAttribute('data-message');
@@ -587,11 +588,11 @@ function setFeedbackPublished(willPublish) {
             }
             var badge = document.getElementById('fb-published-' + id);
             if (badge) {
-                badge.textContent = willPublish ? 'On Site' : 'Hidden';
+                badge.textContent = willPublish ? 'Published' : 'Unpublished';
                 badge.className = 'ab ' + (willPublish ? 'ab--gold' : 'ab--grey');
             }
             btn.setAttribute('data-published', willPublish ? '1' : '0');
-            toast(willPublish ? 'Now showing on the landing page.' : 'Hidden from the landing page.', 'success');
+            toast(willPublish ? 'Feedback published on the landing page.' : 'Feedback unpublished from the landing page.', 'success');
         })
         .catch(function (err) {
             toast(err.message, 'error');
