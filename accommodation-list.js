@@ -56,11 +56,17 @@ document.addEventListener("DOMContentLoaded", () => {
             : "₱—";
     };
 
+    // "101" / "room 1" / "Rm. 2"  ->  "Room 101" / "Room 1" / "Room 2"  (never "Room room 1")
+    const roomLabel = (value) => {
+        const number = String(value ?? "").trim().replace(/^(room|rm)\b\.?\s*/i, "");
+        return number ? "Room " + number : "";
+    };
+
     const subtitle = (item) => {
         const capacity = Number(item.capacity) || 0;
         const details = [capacity + " Guest" + (capacity === 1 ? "" : "s")];
-        if (item.category === "rooms" && item.room_number) {
-            details.push("Room " + item.room_number);
+        if (item.category === "rooms" && roomLabel(item.room_number)) {
+            details.push(roomLabel(item.room_number));
         } else if (Array.isArray(item.amenities) && item.amenities.length) {
             details.push(item.amenities.slice(0, 2).join(", "));
         } else if (item.type) {

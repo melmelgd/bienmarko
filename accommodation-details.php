@@ -190,8 +190,9 @@ $bedConfig = $acc ? trim((string) ($acc['bed_config'] ?? '')) : '';
 $roomNo    = $acc ? trim((string) ($acc['room_number'] ?? '')) : '';
 $descr     = $acc ? trim((string) ($acc['description'] ?? '')) : '';
 
-if ($category === 'rooms' && $roomNo !== '') {
-    $eyebrow = preg_match('/^room/i', $roomNo) ? $roomNo : 'Room ' . $roomNo;
+$roomNoClean = trim((string) preg_replace('/^\s*(room|rm)\b\.?\s*/i', '', $roomNo));
+if ($category === 'rooms' && $roomNoClean !== '') {
+    $eyebrow = 'Room ' . $roomNoClean;
 } else {
     $eyebrow = $type;
 }

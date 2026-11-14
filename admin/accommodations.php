@@ -522,12 +522,21 @@ require_once __DIR__ . '/includes/ui.php';
               <h3 class="acc-card-name"><?php echo htmlspecialchars($row['name'], ENT_QUOTES, 'UTF-8'); ?></h3>
               <span class="acc-status-pill acc-status-pill--<?php echo $row['status'] === 'maintenance' ? 'maintenance' : 'available'; ?>"><?php echo $row['status'] === 'maintenance' ? 'Under maintenance' : 'Active'; ?></span>
             </div>
-            <p class="acc-card-type" style="margin-top:-8px;">
-              <?php echo htmlspecialchars($row['type'], ENT_QUOTES, 'UTF-8'); ?>
-              <?php if (acc_type_requires_room_number((string) $row['type']) && $row['room_number'] !== null && $row['room_number'] !== ''): ?>
-                &nbsp;&middot;&nbsp;Room <?php echo htmlspecialchars($row['room_number'], ENT_QUOTES, 'UTF-8'); ?>
-              <?php endif; ?>
-            </p>
+            <?php
+              /* Subtitle under the name. For rooms with a room number we show
+                 just "Room 101" (not "Room · Room 101"), and if the number was
+                 typed as "Room 1" / "room 1" we strip the leading word so it
+                 never reads "Room room 1". Other types show only the type. */
+              $cardTypeLabel = trim((string) $row['type']);
+              $cardRoomNo    = trim((string) ($row['room_number'] ?? ''));
+              if (acc_type_requires_room_number($cardTypeLabel) && $cardRoomNo !== '') {
+                  $cardRoomNo = trim((string) preg_replace('/^\s*(room|rm)\b\.?\s*/i', '', $cardRoomNo));
+              }
+              $cardSubtitle = (acc_type_requires_room_number($cardTypeLabel) && $cardRoomNo !== '')
+                  ? 'Room ' . $cardRoomNo
+                  : $cardTypeLabel;
+            ?>
+            <p class="acc-card-type" style="margin-top:-8px;"><?php echo htmlspecialchars($cardSubtitle, ENT_QUOTES, 'UTF-8'); ?></p>
 
             <div class="acc-card-meta">
               <span><?php echo (int) $row['capacity']; ?> guest<?php echo ((int) $row['capacity'] === 1) ? '' : 's'; ?></span>

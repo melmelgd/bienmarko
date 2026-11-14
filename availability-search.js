@@ -48,6 +48,12 @@ document.addEventListener("DOMContentLoaded", () => {
             : "₱—";
     };
 
+    // "101" / "room 1" / "Rm. 2"  ->  "Room 101" / "Room 1" / "Room 2"  (never "Room room 1")
+    const roomLabel = (value) => {
+        const number = String(value ?? "").trim().replace(/^(room|rm)\b\.?\s*/i, "");
+        return number ? "Room " + number : "";
+    };
+
     const categoryInfo = {
         all: { title: "Accommodations", label: "", singular: "accommodation", plural: "accommodations", unit: "accommodation", priceSuffix: "/day" },
         rooms: { title: "Rooms", label: "Room", singular: "room", plural: "rooms", unit: "room", priceSuffix: "/night" },
@@ -108,7 +114,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Show the type (Room, Event Hall, ...) when searching across all categories.
         if (typeSelect.value === "all" && categoryDetails.label) details.push(categoryDetails.label);
         details.push(capacity + " guest" + (capacity === 1 ? "" : "s"));
-        if (itemCategory === "rooms" && item.room_number) details.push("Room " + item.room_number);
+        if (itemCategory === "rooms" && roomLabel(item.room_number)) details.push(roomLabel(item.room_number));
         if (Array.isArray(item.amenities) && item.amenities.length) {
             details.push(item.amenities.slice(0, 2).join(", "));
         }

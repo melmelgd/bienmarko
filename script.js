@@ -891,8 +891,13 @@ document.addEventListener("DOMContentLoaded", () => {
             const capacity = Number(room.capacity) || 0;
             const parts = [capacity + " Guest" + (capacity === 1 ? "" : "s")];
 
-            if (room.category === "rooms" && room.room_number) {
-                parts.push("Room " + room.room_number);
+            // "101" / "room 1" / "Rm. 2" -> "Room 101" / "Room 1" / "Room 2" (never "Room room 1")
+            const roomNumberText = String(room.room_number == null ? "" : room.room_number)
+                .trim()
+                .replace(/^(room|rm)\b\.?\s*/i, "");
+
+            if (room.category === "rooms" && roomNumberText) {
+                parts.push("Room " + roomNumberText);
             } else if (room.amenities && room.amenities.length) {
                 parts.push(room.amenities.slice(0, 2).join(", "));
             } else if (room.type) {
