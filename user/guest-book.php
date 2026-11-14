@@ -122,6 +122,7 @@ $gbName  = $gbBrand['full'];
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Guest Booking — <?php echo gb_e($gbName); ?></title>
+<link rel="icon" href="../logo/palm-tree.png">
 <meta name="description" content="Book a room at <?php echo gb_e($gbName); ?> without creating an account.">
 <meta name="robots" content="noindex">
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -134,8 +135,10 @@ $gbName  = $gbBrand['full'];
 <!-- ═══ HEADER ═══════════════════════════════════════════════════════ -->
 <header class="gb-header">
     <a class="gb-brand" href="../index.html" aria-label="Back to <?php echo gb_e($gbName); ?> homepage">
-        <span><?php echo gb_e($gbBrand['short']); ?></span>
-        <strong><?php echo gb_e($gbBrand['rest']); ?></strong>
+        <span class="gb-brand__logo" aria-hidden="true">
+            <svg class="gb-brand__icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+        </span>
+        <span class="gb-brand__name"><?php echo gb_e($gbBrand['short']); ?></span>
     </a>
     <nav class="gb-header-nav">
         <a href="../login.php">Log in</a>

@@ -58,26 +58,42 @@ h1, h2, h3, p { margin-top: 0; }
     -webkit-backdrop-filter: blur(14px);
 }
 
+/* Brand — same logo as the rest of the user area (house tile + spaced gold caps) */
 .gb-brand {
-    display: grid;
-    line-height: 1;
-    color: var(--gold);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    line-height: 1.15;
+    color: #d9b56d;
     text-decoration: none;
 }
 
 .gb-brand:hover { text-decoration: none; }
 
-.gb-brand span {
-    font-size: 10px;
-    font-weight: 800;
-    letter-spacing: 0.26em;
-    text-transform: uppercase;
+.gb-brand__logo {
+    width: 40px;
+    height: 40px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: #e8a33d;
+    color: #1a1200;
 }
 
-.gb-brand strong {
-    font-family: var(--script);
-    font-size: 34px;
-    font-weight: 400;
+.gb-brand__icon { width: 24px; height: 24px; }
+
+.gb-brand__name {
+    font-family: var(--serif);
+    font-size: 24px;
+    font-weight: 500;
+    line-height: 1.05;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #d9b56d;
+    white-space: nowrap;
 }
 
 .gb-header-nav {
@@ -872,7 +888,7 @@ textarea:focus-visible {
 
 @media (max-width: 480px) {
     .gb-header-nav a:not(.gb-btn) { display: none; }
-    .gb-brand strong { font-size: 26px; }
+    .gb-brand__name { font-size: 20px; letter-spacing: 0.1em; }
 }
 
 /* ── 360° TOUR BUTTON (in room summary pill) ─────────────────────── */

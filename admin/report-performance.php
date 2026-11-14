@@ -2,17 +2,39 @@
 /**
  * admin/report-performance.php
  * -----------------------------------------------------------------------
- * Performance Reports for the selected period:
- *   - Busiest stretch (week / day / month) per accommodation type
- *   - Occupancy chart: booked nights ÷ available nights, 0–100%, one line
- *     per type, split into days (short periods), weeks or months (a year)
- *   - Rankings: bookings per type, with the individual units inside each
+ * Performance Reports. Every figure is a percentage of available capacity:
  *
- * Occupancy counts every booking that is not cancelled (so upcoming ones
- * are included) and leaves units under maintenance out of the available
- * nights. Rooms count nights; cottages, halls and the pool count booked
- * days. Everything is calculated here, so reports-data.php and the
- * PDF/XLSX export are untouched.
+ *   Occupancy % = booked unit-nights ÷ available unit-nights × 100
+ *   Available unit-nights = (units of that type − units under maintenance)
+ *                           × days in the period
+ *   Rounded to 1 decimal, capped at 100%.
+ *
+ * Rules
+ *   - Count nights, not bookings. A night is each date from check-in up to
+ *     the day before check-out (a same-day booking counts as 1).
+ *   - Cancelled bookings are excluded; upcoming bookings are included.
+ *   - Bookings that cross a week / month / year boundary are split by night.
+ *   - Partial weeks (Nov 1, Nov 30 …) use their real day count.
+ *   - Each unit type is calculated on its own; types are never combined.
+ *   - A type with no bookings shows "No data", never 0%.
+ *   - Ties for "busiest" go to the earlier period.
+ *
+ * Toggle
+ *   Week  -> cards show the busiest week  (all data); chart = weeks of the month
+ *   Month -> cards show the busiest month (all data); chart = weeks of the month
+ *   Year  -> cards show the busiest year  (all data); chart = months of the year
+ *
+ * Peak season: per type, for each calendar month the average occupancy
+ * across all years of data; Seasonality Index = month average ÷ yearly
+ * average (the 12 monthly averages summed ÷ 12). Only shown once all 12
+ * months have data.
+ *
+ * Maintenance: the accommodations table only stores a current status (no
+ * dates), so a unit whose status is "maintenance" is left out of the
+ * available nights for every period.
+ *
+ * Everything is calculated here, so reports-data.php and the PDF/XLSX
+ * export are untouched.
  * -----------------------------------------------------------------------
  */
 require_once __DIR__ . '/../includes/auth-common.php';
@@ -25,6 +47,148 @@ require_once __DIR__ . '/includes/ui.php';
 require_once __DIR__ . '/includes/reports-data.php';
 require_once __DIR__ . '/includes/reports-toolbar.php';
 
+/* ==================================================================
+   PURE CALCULATION HELPERS  (no database, no output)
+================================================================== */
+// >>> PERF-CALC-BEGIN
+
+/** 'Y-m-d' -> timestamp at 00:00 UTC (no daylight-saving surprises). */
+function perf_ts(string $d): int { return (int) strtotime($d . ' 00:00:00 UTC'); }
+function perf_date(int $ts): string { return gmdate('Y-m-d', $ts); }
+
+/**
+ * The nights a booking occupies: every date from check-in up to the day
+ * before check-out. A same-day (or bad) booking counts as 1 night.
+ * @return string[] list of 'Y-m-d'
+ */
+function perf_booking_nights(string $checkIn, string $checkOut): array
+{
+    $ci = perf_ts($checkIn);
+    $co = perf_ts($checkOut);
+    $last = max($ci, $co - 86400);
+    if ($last - $ci > 366 * 86400 * 2) { $last = $ci + 366 * 86400 * 2; }   // safety net
+    $out = [];
+    for ($ts = $ci; $ts <= $last; $ts += 86400) { $out[] = perf_date($ts); }
+    return $out;
+}
+
+/**
+ * The week / month / year bucket a date belongs to.
+ * Weeks run Mon–Sun but are cut at month ends, so partial weeks keep their
+ * real day count (e.g. "Nov 1" = 1 day, "Nov 30" = 1 day).
+ * @return array{key:string,start:string,end:string,days:int}
+ */
+function perf_bucket_of(string $date, string $gran): array
+{
+    $ts = perf_ts($date);
+    $y  = (int) gmdate('Y', $ts);
+    $m  = (int) gmdate('n', $ts);
+
+    if ($gran === 'year') {
+        $s = sprintf('%04d-01-01', $y);
+        $e = sprintf('%04d-12-31', $y);
+    } elseif ($gran === 'month') {
+        $s = sprintf('%04d-%02d-01', $y, $m);
+        $e = sprintf('%04d-%02d-%02d', $y, $m, (int) gmdate('t', perf_ts(sprintf('%04d-%02d-01', $y, $m))));
+    } else { // week
+        $monday = $ts - (((int) gmdate('N', $ts)) - 1) * 86400;
+        $sunday = $monday + 6 * 86400;
+        $mStart = perf_ts(sprintf('%04d-%02d-01', $y, $m));
+        $mEnd   = perf_ts(sprintf('%04d-%02d-%02d', $y, $m, (int) gmdate('t', perf_ts(sprintf('%04d-%02d-01', $y, $m)))));
+        $s = perf_date(max($monday, $mStart));
+        $e = perf_date(min($sunday, $mEnd));
+    }
+    $days = (int) ((perf_ts($e) - perf_ts($s)) / 86400) + 1;
+    return ['key' => $s, 'start' => $s, 'end' => $e, 'days' => $days];
+}
+
+/** Occupancy %: booked ÷ ((units − maintenance) × days) × 100, 1 decimal, max 100. null = nothing to measure. */
+function perf_occupancy(int $booked, int $bookableUnits, int $days): ?float
+{
+    $cap = $bookableUnits * $days;
+    if ($cap <= 0) { return null; }
+    return min(100.0, round($booked / $cap * 100, 1));
+}
+
+/** Total booked nights between two dates (inclusive) from a date => count map. */
+function perf_sum_nights(array $byDate, string $start, string $end): int
+{
+    $sum = 0;
+    for ($ts = perf_ts($start); $ts <= perf_ts($end); $ts += 86400) {
+        $sum += $byDate[perf_date($ts)] ?? 0;
+    }
+    return $sum;
+}
+
+/**
+ * Sum booked nights into week / month / year buckets for ONE type.
+ * @return array<string,array{start:string,end:string,days:int,booked:int}> sorted oldest first
+ */
+function perf_group_nights(array $byDate, string $gran): array
+{
+    $out = [];
+    foreach ($byDate as $d => $n) {
+        $b = perf_bucket_of((string) $d, $gran);
+        if (!isset($out[$b['key']])) { $out[$b['key']] = $b + ['booked' => 0]; }
+        $out[$b['key']]['booked'] += $n;
+    }
+    ksort($out);
+    return $out;
+}
+
+/** Busiest bucket (ties -> earlier). Returns bucket + 'pct', or null if no bookings. */
+function perf_busiest(array $grouped, int $bookableUnits): ?array
+{
+    $best = null;
+    foreach ($grouped as $b) {          // oldest first, so a tie never replaces the earlier one
+        $pct = perf_occupancy($b['booked'], $bookableUnits, $b['days']);
+        if ($pct === null) { continue; }
+        if ($best === null || $pct > $best['pct']) { $best = $b + ['pct' => $pct]; }
+    }
+    return $best;
+}
+
+/**
+ * Peak season for ONE type.
+ * A calendar month "has data" when it has at least one booked night in some year.
+ * Month average = mean of that month's occupancy over the years that have bookings in it.
+ * @return array{months:int,complete:bool,yearly:?float,rows:array}
+ */
+function perf_peak_season(array $byDate, int $bookableUnits): array
+{
+    $perMonth = [];                                     // 1..12 => list of yearly occupancy %
+    foreach (perf_group_nights($byDate, 'month') as $b) {
+        $pct = perf_occupancy($b['booked'], $bookableUnits, $b['days']);
+        if ($pct === null) { continue; }
+        $perMonth[(int) substr($b['start'], 5, 2)][] = $pct;
+    }
+    $have = count($perMonth);
+    if ($have < 12) { return ['months' => $have, 'complete' => false, 'yearly' => null, 'rows' => []]; }
+
+    $avg = [];
+    for ($m = 1; $m <= 12; $m++) { $avg[$m] = array_sum($perMonth[$m]) / count($perMonth[$m]); }
+    $yearly = array_sum($avg) / 12;
+
+    $rows = [];
+    for ($m = 1; $m <= 12; $m++) {
+        $idx = $yearly > 0 ? round($avg[$m] / $yearly, 2) : 0.0;
+        $rows[] = [
+            'month' => $m,
+            'avg'   => round($avg[$m], 1),
+            'index' => $idx,
+            'class' => $idx >= 1.20 ? 'Peak' : ($idx >= 0.80 ? 'Regular' : 'Low'),
+        ];
+    }
+    return ['months' => 12, 'complete' => true, 'yearly' => round($yearly, 1), 'rows' => $rows];
+}
+
+function perf_pct_str(float $v): string { return rtrim(rtrim(number_format($v, 1), '0'), '.') . '%'; }
+
+// <<< PERF-CALC-END
+
+/* ==================================================================
+   PAGE SETUP
+================================================================== */
 $pdo = bienmarko_db();
 reports_ensure_core_tables($pdo);
 
@@ -37,130 +201,152 @@ $page_action_label   = null;
 $show_period_toggle  = false;
 $topbar_extra_right  = render_reports_topbar_controls('performance', $period);
 
-/* ------------------------------------------------------------------
-   Types, labels, colours
------------------------------------------------------------------- */
 $types      = ['Room', 'Event Hall', 'Cottage', 'Swimming Pool'];
 $typeShort  = ['Room' => 'Room', 'Event Hall' => 'Event hall', 'Cottage' => 'Cottage', 'Swimming Pool' => 'Pool'];
 $typeColor  = ['Room' => '#f5a623', 'Event Hall' => '#4c8df6', 'Cottage' => '#2fd08f', 'Swimming Pool' => '#a78bfa'];
 $unitNoun   = ['Room' => 'rooms', 'Event Hall' => 'halls', 'Cottage' => 'cottages', 'Swimming Pool' => 'pool units'];
 
 /* ------------------------------------------------------------------
-   Units: how many exist, and how many can be booked (not in maintenance)
+   Units: total per type, and how many are bookable (not in maintenance)
 ------------------------------------------------------------------ */
-$units = [];        // id => [name, type, status]
-$avail = array_fill_keys($types, 0);
+$units     = [];                                    // id => [name, type, status]
+$unitTotal = array_fill_keys($types, 0);
+$unitMaint = array_fill_keys($types, 0);
 foreach ($pdo->query('SELECT id, name, type, status FROM accommodations ORDER BY name ASC')->fetchAll() as $u) {
     $t = trim((string) $u['type']);
     if (!in_array($t, $types, true)) { continue; }
     $units[(int) $u['id']] = ['name' => $u['name'], 'type' => $t, 'status' => $u['status']];
-    if ($u['status'] !== 'maintenance') { $avail[$t]++; }
+    $unitTotal[$t]++;
+    if ($u['status'] === 'maintenance') { $unitMaint[$t]++; }
 }
+$avail = [];                                        // bookable units per type
+foreach ($types as $t) { $avail[$t] = $unitTotal[$t] - $unitMaint[$t]; }
 
 /* ------------------------------------------------------------------
-   Booked nights per type per calendar day (only days inside the period)
+   Every non-cancelled booking, split into booked nights per type per date.
+   Upcoming bookings are included. Also kept per booking for the rankings.
 ------------------------------------------------------------------ */
-$stmt = $pdo->prepare(
+$rows = $pdo->query(
     "SELECT b.accommodation_id, a.type, b.check_in, b.check_out
      FROM bookings b JOIN accommodations a ON a.id = b.accommodation_id
-     WHERE b.status <> 'cancelled' AND b.check_in <= :e AND b.check_out >= :s"
-);
-$stmt->execute(['s' => $period['start'], 'e' => $period['end']]);
+     WHERE b.status <> 'cancelled'"
+)->fetchAll();
 
-$nightsByDate = [];
-$nightsTotal  = array_fill_keys($types, 0);
-$pStartTs = strtotime($period['start']);
-$pEndTs   = strtotime($period['end']);
-foreach ($stmt->fetchAll() as $b) {
-    $t = trim((string) $b['type']);
+$nightsByDate = array_fill_keys($types, []);        // type => [date => nights]
+$bookingNights = [];                                // list of [accId, type, [dates]]
+foreach ($rows as $r) {
+    $t = trim((string) $r['type']);
     if (!in_array($t, $types, true)) { continue; }
-    $ciTs = strtotime($b['check_in']);
-    $coTs = strtotime($b['check_out']);
-    $lastTs = max($ciTs, $coTs - 86400);          // a same-day booking still counts 1 day
-    for ($ts = max($ciTs, $pStartTs); $ts <= min($lastTs, $pEndTs); $ts += 86400) {
-        $d = date('Y-m-d', $ts);
-        $nightsByDate[$t][$d] = ($nightsByDate[$t][$d] ?? 0) + 1;
-        $nightsTotal[$t]++;
-    }
+    $dates = perf_booking_nights((string) $r['check_in'], (string) $r['check_out']);
+    foreach ($dates as $d) { $nightsByDate[$t][$d] = ($nightsByDate[$t][$d] ?? 0) + 1; }
+    $bookingNights[] = [(int) $r['accommodation_id'], $t, $dates];
 }
 
 /* ------------------------------------------------------------------
-   Buckets for the chart: days, weeks (Mon–Sun) or months
+   Cards: busiest week / month / year across ALL data, per type
 ------------------------------------------------------------------ */
-$pStart   = new DateTime($period['start']);
-$pEnd     = new DateTime($period['end']);
-$spanDays = (int) $pStart->diff($pEnd)->days + 1;
-$mode     = ($period['period'] === 'week' || $spanDays <= 10) ? 'day' : ($spanDays <= 130 ? 'week' : 'month');
+$gran     = $period['period'] === 'week' ? 'week' : ($period['period'] === 'year' ? 'year' : 'month');
+$modeWord = $gran;                                  // "week" | "month" | "year"
+$curYear  = (int) substr($period['start'], 0, 4);
+
+$busiest = [];                                      // type => bucket|null
+$hasData = [];
+foreach ($types as $t) {
+    $busiest[$t] = perf_busiest(perf_group_nights($nightsByDate[$t], $gran), $avail[$t]);
+    $hasData[$t] = $busiest[$t] !== null;
+}
+
+$perf_label = function (array $b) use ($gran, $curYear): string {
+    $s = new DateTime($b['start']);
+    $e = new DateTime($b['end']);
+    if ($gran === 'year')  { return $s->format('Y'); }
+    if ($gran === 'month') { return $s->format('M Y'); }
+    $label = $b['start'] === $b['end'] ? $s->format('M j') : $s->format('M j') . '–' . $e->format('j');
+    return ((int) $s->format('Y') !== $curYear) ? $label . ', ' . $s->format('Y') : $label;
+};
+
+/* ------------------------------------------------------------------
+   Chart: weeks (Week / Month, or a short custom range) or months (Year)
+------------------------------------------------------------------ */
+$todayDt = new DateTime('today');
+if ($period['period'] === 'week') {
+    $chartStart = $todayDt->format('Y-m-01');
+    $chartEnd   = $todayDt->format('Y-m-t');
+} else {
+    $chartStart = $period['start'];
+    $chartEnd   = $period['end'];
+}
+$cStart   = new DateTime($chartStart);
+$cEnd     = new DateTime($chartEnd);
+$spanDays = (int) $cStart->diff($cEnd)->days + 1;
+$chartMode = ($period['period'] === 'year' || $spanDays > 130) ? 'month' : 'week';
+$modeChart = $chartMode;                            // used in the headings
+$multiYear = $cStart->format('Y') !== $cEnd->format('Y');
 
 $buckets = [];
-if ($mode === 'day') {
-    for ($c = clone $pStart; $c <= $pEnd; $c->modify('+1 day')) {
-        $buckets[] = ['label' => $c->format('M j'), 'start' => $c->format('Y-m-d'), 'end' => $c->format('Y-m-d')];
+for ($ts = perf_ts($chartStart); $ts <= perf_ts($chartEnd); ) {
+    $b = perf_bucket_of(perf_date($ts), $chartMode);
+    $bs = max(perf_ts($b['start']), perf_ts($chartStart));
+    $be = min(perf_ts($b['end']),   perf_ts($chartEnd));
+    $s = new DateTime(perf_date($bs));
+    $e = new DateTime(perf_date($be));
+    if ($chartMode === 'month') {
+        $label = $s->format($multiYear ? 'M y' : 'M');
+    } else {
+        $label = $bs === $be ? $s->format('M j') : $s->format('M j') . '–' . $e->format('j');
     }
-} elseif ($mode === 'week') {
-    $c = clone $pStart;
-    while ($c <= $pEnd) {
-        $e = (clone $c)->modify('+' . (7 - (int) $c->format('N')) . ' days');   // up to Sunday
-        if ($e > $pEnd) { $e = clone $pEnd; }
-        if ($c->format('Y-m-d') === $e->format('Y-m-d'))      { $label = $c->format('M j'); }
-        elseif ($c->format('m') === $e->format('m'))          { $label = $c->format('M j') . '–' . $e->format('j'); }
-        else                                                  { $label = $c->format('M j') . '–' . $e->format('M j'); }
-        $buckets[] = ['label' => $label, 'start' => $c->format('Y-m-d'), 'end' => $e->format('Y-m-d')];
-        $c = (clone $e)->modify('+1 day');
-    }
-} else {
-    $multiYear = $pStart->format('Y') !== $pEnd->format('Y');
-    $c = new DateTime($pStart->format('Y-m-01'));
-    while ($c <= $pEnd) {
-        $mEnd = (clone $c)->modify('last day of this month');
-        $bs = $c < $pStart ? $pStart : $c;
-        $be = $mEnd > $pEnd ? $pEnd : $mEnd;
-        $buckets[] = ['label' => $c->format($multiYear ? 'M y' : 'M'), 'start' => $bs->format('Y-m-d'), 'end' => $be->format('Y-m-d')];
-        $c = (clone $c)->modify('first day of next month');
-    }
+    $buckets[] = ['label' => $label, 'start' => perf_date($bs), 'end' => perf_date($be),
+                  'days' => (int) (($be - $bs) / 86400) + 1];
+    $ts = $be + 86400;
 }
 $nB = count($buckets);
 
-/* Occupancy % per type per bucket */
-$series = [];
+$series = [];                                       // type => [bucket index => %]
 foreach ($types as $t) {
     foreach ($buckets as $i => $bk) {
-        $days = (int) (new DateTime($bk['start']))->diff(new DateTime($bk['end']))->days + 1;
-        $sum = 0;
-        for ($ts = strtotime($bk['start']); $ts <= strtotime($bk['end']); $ts += 86400) {
-            $sum += $nightsByDate[$t][date('Y-m-d', $ts)] ?? 0;
-        }
-        $cap = $avail[$t] * $days;
-        $series[$t][$i] = $cap > 0 ? min(100, round($sum / $cap * 100, 1)) : 0.0;
+        $booked = perf_sum_nights($nightsByDate[$t], $bk['start'], $bk['end']);
+        $series[$t][$i] = perf_occupancy($booked, $avail[$t], $bk['days']) ?? 0.0;
     }
 }
-
-/* Busiest bucket per type + overall (for the bold axis label) */
-$hasData = [];
-$busiest = [];
 $overallIdx = -1; $overallVal = 0;
 foreach ($types as $t) {
-    $hasData[$t] = $nightsTotal[$t] > 0;
-    $bi = -1; $bv = 0;
     foreach ($series[$t] as $i => $v) {
-        if ($v > $bv) { $bv = $v; $bi = $i; }
+        if ($v > $overallVal) { $overallVal = $v; $overallIdx = $i; }
     }
-    $busiest[$t] = $bi >= 0 ? ['label' => $buckets[$bi]['label'], 'pct' => $bv] : null;
-    if ($bv > $overallVal) { $overallVal = $bv; $overallIdx = $bi; }
 }
-$modeWord = ['day' => 'day', 'week' => 'week', 'month' => 'month'][$mode];
 
 /* ------------------------------------------------------------------
-   Rankings: bookings per unit in the period
+   "How is this calculated?" lines, with the real numbers
 ------------------------------------------------------------------ */
-$stmt = $pdo->prepare(
-    "SELECT accommodation_id, COUNT(*) AS c FROM bookings
-     WHERE status <> 'cancelled' AND check_in BETWEEN :s AND :e
-     GROUP BY accommodation_id"
-);
-$stmt->execute(['s' => $period['start'], 'e' => $period['end']]);
+$calcLines = [];
+foreach ($types as $t) {
+    $b = $busiest[$t];
+    if (!$b) { continue; }
+    $unitsTxt = $unitMaint[$t] > 0 ? '(' . $unitTotal[$t] . ' − ' . $unitMaint[$t] . ')' : (string) $avail[$t];
+    $calcLines[] = [
+        'type'  => $t,
+        'label' => $perf_label($b),
+        'text'  => $b['booked'] . ' ÷ (' . $unitsTxt . ' × ' . $b['days'] . ') = ' . perf_pct_str((float) $b['pct']),
+    ];
+}
+/* ------------------------------------------------------------------
+   Peak season (per type, all data)
+------------------------------------------------------------------ */
+$peak = [];
+foreach ($types as $t) { $peak[$t] = perf_peak_season($nightsByDate[$t], $avail[$t]); }
+
+/* ------------------------------------------------------------------
+   Rankings: bookings per unit with at least one night in the period
+------------------------------------------------------------------ */
 $unitBookings = [];
-foreach ($stmt->fetchAll() as $r) { $unitBookings[(int) $r['accommodation_id']] = (int) $r['c']; }
+foreach ($bookingNights as [$accId, $t, $dates]) {
+    foreach ($dates as $d) {
+        if ($d >= $period['start'] && $d <= $period['end']) {
+            $unitBookings[$accId] = ($unitBookings[$accId] ?? 0) + 1;   // one count per booking
+            break;
+        }
+    }
+}
 
 $rank = [];
 foreach ($types as $order => $t) {
@@ -194,14 +380,15 @@ $xFor = function (int $i) use ($nB, $mL, $plotW, $padX) {
 };
 $yFor = function (float $v) use ($mT, $plotH) { return $mT + (1 - max(0, min(100, $v)) / 100) * $plotH; };
 
-/* Period line (same as the Financial page) */
+$pStart = new DateTime($period['start']);
+$pEnd   = new DateTime($period['end']);
 $rangeText = '';
 if (in_array($period['period'], ['month', 'year'], true)) {
     $rangeText = ($pStart->format('Y-m') === $pEnd->format('Y-m'))
         ? $pStart->format('M j') . ' – ' . $pEnd->format('j, Y')
         : $pStart->format('M j') . ' – ' . $pEnd->format('M j, Y');
 }
-function perf_pct(float $v): string { return rtrim(rtrim(number_format($v, 1), '0'), '.') . '%'; }
+function perf_pct(float $v): string { return perf_pct_str($v); }
 
 require __DIR__ . '/includes/head.php';
 require __DIR__ . '/includes/sidebar.php';
@@ -259,6 +446,29 @@ require __DIR__ . '/includes/reports-styles.php';
 @media (max-width: 1000px) { .perf-grid { grid-template-columns: 1fr; } }
 @media (max-width: 600px)  { .perf-kpi-grid { grid-template-columns: 1fr; } .perf-panel { padding: 20px; } }
 @media print { .perf-kpi, .perf-panel { background: #fff !important; border: 1px solid #ddd !important; break-inside: avoid; } }
+
+/* How is this calculated? */
+.perf-calc { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 18px 26px; }
+.perf-calc summary { cursor: pointer; font-size: 16px; color: var(--gold-400, #f5a623); list-style-position: inside; }
+.perf-calc-body { margin-top: 14px; font-size: 16px; color: var(--text-secondary); display: flex; flex-direction: column; gap: 10px; }
+.perf-calc-body code, .perf-calc-line code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: var(--text); }
+.perf-calc-line { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.perf-calc-line .perf-dot { width: 10px; height: 10px; }
+
+/* Peak season */
+.perf-peak-type { padding: 18px 0; border-top: 1px solid var(--border); }
+.perf-peak-type:first-of-type { border-top: none; padding-top: 6px; }
+.perf-peak-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+.perf-peak-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+.perf-peak-cell { background: var(--panel-alt); border: 1px solid var(--border); border-radius: var(--r-md, 10px); padding: 12px 14px; }
+.perf-peak-cell b { display: block; font-size: 15px; color: var(--text); }
+.perf-peak-cell span { display: block; font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+.perf-badge { display: inline-block; margin-top: 8px; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+.perf-badge--Peak    { background: rgba(245,166,35,.18); color: #f5a623; }
+.perf-badge--Regular { background: rgba(148,163,184,.16); color: var(--text-secondary); }
+.perf-badge--Low     { background: rgba(76,141,246,.16); color: #4c8df6; }
+@media (max-width: 1000px) { .perf-peak-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 600px)  { .perf-peak-grid { grid-template-columns: repeat(2, 1fr); } .perf-calc { padding: 16px; } }
 </style>
 
 <div class="stack">
@@ -268,29 +478,49 @@ require __DIR__ . '/includes/reports-styles.php';
     <strong><?php echo htmlspecialchars($period['label'], ENT_QUOTES, 'UTF-8'); ?></strong><?php if ($rangeText !== ''): ?> · <?php echo htmlspecialchars($rangeText, ENT_QUOTES, 'UTF-8'); ?><?php endif; ?>
   </div>
 
-  <!-- ===== Busiest stretch per type ===== -->
+  <!-- ===== Busiest week / month / year per type ===== -->
   <div class="perf-kpi-grid">
     <?php foreach ($types as $t): ?>
       <?php $b = $busiest[$t]; ?>
       <div class="perf-kpi">
         <div class="perf-kpi-label"><span class="perf-dot" style="background: <?php echo $typeColor[$t]; ?>"></span><?php echo htmlspecialchars($typeShort[$t], ENT_QUOTES, 'UTF-8'); ?></div>
-        <?php if ($hasData[$t] && $b): ?>
-          <span class="perf-kpi-value"><?php echo htmlspecialchars($b['label'], ENT_QUOTES, 'UTF-8'); ?></span>
+        <?php if ($b): ?>
+          <span class="perf-kpi-value"><?php echo htmlspecialchars($perf_label($b), ENT_QUOTES, 'UTF-8'); ?></span>
           <div class="perf-kpi-sub">Busiest <?php echo $modeWord; ?> · <?php echo perf_pct((float) $b['pct']); ?> occupied</div>
+          <div class="perf-track" style="margin-top:14px;"><div class="perf-fill" style="width: <?php echo (float) $b['pct']; ?>%; background: <?php echo $typeColor[$t]; ?>"></div></div>
         <?php else: ?>
           <span class="perf-kpi-value perf-kpi-value--muted">No data</span>
-          <div class="perf-kpi-sub">No bookings in this period</div>
+          <div class="perf-kpi-sub">No bookings yet</div>
         <?php endif; ?>
       </div>
     <?php endforeach; ?>
   </div>
 
+  <!-- ===== How is this calculated? ===== -->
+  <details class="perf-calc" open>
+    <summary>How is this calculated?</summary>
+    <div class="perf-calc-body">
+      <div><?php echo ucfirst($modeWord); ?> occupancy = booked nights ÷ ((units − units under maintenance) × days in <?php echo $modeWord; ?>) × 100</div>
+      <?php if (!$calcLines): ?>
+        <div>No bookings yet, so there is nothing to calculate.</div>
+      <?php endif; ?>
+      <?php foreach ($calcLines as $cl): ?>
+        <div class="perf-calc-line">
+          <i class="perf-dot" style="background: <?php echo $typeColor[$cl['type']]; ?>"></i>
+          <span><?php echo htmlspecialchars($typeShort[$cl['type']], ENT_QUOTES, 'UTF-8'); ?> · <?php echo htmlspecialchars($cl['label'], ENT_QUOTES, 'UTF-8'); ?>:</span>
+          <code><?php echo htmlspecialchars($cl['text'], ENT_QUOTES, 'UTF-8'); ?></code>
+        </div>
+      <?php endforeach; ?>
+      <div class="perf-others">Rooms count nights. Halls, cottages and the pool count booked days. Each type is calculated on its own.</div>
+    </div>
+  </details>
+
   <div class="perf-grid">
     <!-- ===== Occupancy chart ===== -->
     <div class="perf-panel">
       <div class="perf-panel-head">
-        <h2 class="perf-panel-title">Occupancy by <?php echo $modeWord; ?></h2>
-        <span class="perf-pill"><?php echo htmlspecialchars($period['label'], ENT_QUOTES, 'UTF-8'); ?></span>
+        <h2 class="perf-panel-title">Occupancy by <?php echo $modeChart; ?></h2>
+        <span class="perf-pill"><?php echo htmlspecialchars($chartMode === 'week' ? $cStart->format('F Y') : $period['label'], ENT_QUOTES, 'UTF-8'); ?></span>
       </div>
       <p class="perf-sub">Booked nights ÷ available nights, 0–100% for each type</p>
 
@@ -300,7 +530,7 @@ require __DIR__ . '/includes/reports-styles.php';
         <?php endforeach; ?>
       </div>
 
-      <svg class="perf-svg" viewBox="0 0 <?php echo $svgW; ?> <?php echo $svgH; ?>" role="img" aria-label="Occupancy by <?php echo $modeWord; ?>">
+      <svg class="perf-svg" viewBox="0 0 <?php echo $svgW; ?> <?php echo $svgH; ?>" role="img" aria-label="Occupancy by <?php echo $modeChart; ?>">
         <?php foreach ([0, 25, 50, 75, 100] as $g): ?>
           <line x1="<?php echo $mL; ?>" y1="<?php echo $yFor($g); ?>" x2="<?php echo $svgW - $mR; ?>" y2="<?php echo $yFor($g); ?>" stroke="var(--border)" stroke-width="1"></line>
           <text x="<?php echo $mL - 12; ?>" y="<?php echo $yFor($g) + 5; ?>" text-anchor="end" class="perf-axis"><?php echo $g; ?>%</text>
@@ -330,8 +560,8 @@ require __DIR__ . '/includes/reports-styles.php';
         <?php /* invisible hover areas — the browser shows the <title> as a tooltip */ ?>
         <?php foreach ($buckets as $i => $bk): ?>
           <?php
-            $tip = $bk['label'];
-            foreach ($types as $t) { $tip .= "\n" . $typeShort[$t] . ': ' . perf_pct((float) $series[$t][$i]); }
+            $tip = $bk['label'] . ' (' . $bk['days'] . ' day' . ($bk['days'] === 1 ? '' : 's') . ')';
+            foreach ($types as $t) { $tip .= "\n" . $typeShort[$t] . ': ' . ($hasData[$t] ? perf_pct((float) $series[$t][$i]) : 'No data'); }
             $slot = $nB > 1 ? ($plotW - 2 * $padX) / ($nB - 1) : $plotW;
           ?>
           <rect x="<?php echo round($xFor($i) - $slot / 2, 2); ?>" y="<?php echo $mT; ?>" width="<?php echo round($slot, 2); ?>" height="<?php echo $plotH; ?>" fill="transparent">
@@ -340,7 +570,7 @@ require __DIR__ . '/includes/reports-styles.php';
         <?php endforeach; ?>
       </svg>
 
-      <p class="perf-note">Includes upcoming bookings. Cancelled bookings and units under maintenance are excluded. Cottages, halls and the pool count booked days.</p>
+      <p class="perf-note">Includes upcoming bookings. Excludes cancelled bookings and units under maintenance.</p>
     </div>
 
     <!-- ===== Rankings ===== -->
@@ -381,6 +611,41 @@ require __DIR__ . '/includes/reports-styles.php';
         <?php endforeach; ?>
       </div>
     </div>
+  </div>
+
+  <!-- ===== Peak season ===== -->
+  <div class="perf-panel">
+    <div class="perf-panel-head">
+      <h2 class="perf-panel-title">Peak season</h2>
+    </div>
+    <p class="perf-sub">Seasonality Index = month average ÷ yearly average. 1.20 or higher is Peak, 0.80 to 1.19 is Regular, below 0.80 is Low.</p>
+
+    <?php $monthNames = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']; ?>
+    <?php foreach ($types as $t): $pk = $peak[$t]; ?>
+      <div class="perf-peak-type">
+        <div class="perf-peak-head">
+          <span class="perf-rank-name"><i class="perf-dot" style="background: <?php echo $typeColor[$t]; ?>"></i><?php echo htmlspecialchars($typeShort[$t], ENT_QUOTES, 'UTF-8'); ?></span>
+          <?php if ($pk['complete']): ?>
+            <span class="perf-pill">Yearly average <?php echo perf_pct((float) $pk['yearly']); ?></span>
+          <?php else: ?>
+            <span class="perf-pill">Needs 12 months of data (<?php echo (int) $pk['months']; ?> of 12)</span>
+          <?php endif; ?>
+        </div>
+        <?php if ($pk['complete']): ?>
+          <div class="perf-peak-grid">
+            <?php foreach ($pk['rows'] as $r): ?>
+              <div class="perf-peak-cell">
+                <b><?php echo $monthNames[$r['month']]; ?></b>
+                <span><?php echo perf_pct((float) $r['avg']); ?> avg · index <?php echo number_format($r['index'], 2); ?></span>
+                <i class="perf-badge perf-badge--<?php echo $r['class']; ?>"><?php echo $r['class']; ?></i>
+              </div>
+            <?php endforeach; ?>
+          </div>
+        <?php endif; ?>
+      </div>
+    <?php endforeach; ?>
+
+    <p class="perf-note">Includes upcoming bookings. Excludes cancelled bookings and units under maintenance.</p>
   </div>
 </div>
 
